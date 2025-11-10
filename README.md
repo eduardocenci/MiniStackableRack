@@ -29,7 +29,7 @@ Easy to make, deploy and remotely manage Home Automation/Monitoring/Server flexi
 	• Smaller form factor: As wide and deep as the largest component, the MiniPC/NUC. I love the 10 inch Mini Rack (don't get me wrong, all hail), but sometimes it feels unnecessarily wide and deep.
 	• This Git Page: 
 		○ Food-for-thought for you hopefully.
-		○ E2E solution.
+		○ E2E solution (design considerations/files, BOM, bring-up instructions, deployment step-by-step, direct device Tailscale network links and credencials)
 
 ## Who maintains:
 
@@ -83,10 +83,6 @@ Easy to make, deploy and remotely manage Home Automation/Monitoring/Server flexi
 		
 
 ## HW:
-
-HW:
----
-Purchase Link | HW Short | HW Detailed | Cost (Nov 2025)
 
 | Purchase Link                                                                 | HW Short                | HW Detailed                                                                                                        | Cost (approx) |
 |-------------------------------------------------------------------------------|-------------------------|--------------------------------------------------------------------------------------------------------------------|---------------|
