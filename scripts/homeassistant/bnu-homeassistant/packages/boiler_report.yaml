@@ -1,0 +1,71 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Boiler Monthly Report — HA Package
+# Deploy to: /config/packages/boiler_report.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Keep enough history for 13-month lookback
+recorder:
+  purge_keep_days: 400
+  include:
+    entities:
+      - sensor.boiler_current_temperature
+      - switch.boiler_termostato
+
+# ── Template sensor (turns water_heater attribute into a recorded sensor) ──────
+template:
+  - sensor:
+      - name: "Boiler Current Temperature"
+        unique_id: "boiler_current_temperature_report"
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+        state: >
+          {{ state_attr('water_heater.boiler_boiler', 'current_temperature') | float(0) }}
+        availability: >
+          {{ state_attr('water_heater.boiler_boiler', 'current_temperature') is not none
+             and states('water_heater.boiler_boiler') not in ['unavailable', 'unknown'] }}
+
+  - button:
+      - name: "Send Boiler Report Now"
+        unique_id: "send_boiler_report_button"
+        icon: mdi:email-send
+        press:
+          - action: script.boiler_monthly_report
+
+# ── Recipients list (edit in HA UI or add comma-separated emails) ───────────
+input_text:
+  boiler_report_recipients:
+    name: "Boiler Report Recipients"
+    icon: mdi:email-multiple
+    initial: "eduardocenci@gmail.com"
+    max: 255
+
+# ── Shell command (invokes the Python report script) ─────────────────────────
+shell_command:
+  run_boiler_report: "python3 /config/scripts/boiler_report.py >> /config/boiler_report.log 2>&1"
+
+# ── Script (callable from UI / button / automation) ──────────────────────────
+script:
+  boiler_monthly_report:
+    alias: "Send Boiler Monthly Report"
+    icon: mdi:chart-line
+    mode: single
+    sequence:
+      - action: shell_command.run_boiler_report
+        alias: "Generate and send report"
+
+# ── Automation (fires at 23:55 on the last day of each month) ────────────────
+automation:
+  - id: "boiler_end_of_month_report"
+    alias: "Boiler — End of Month Report"
+    description: "Auto-send boiler report on the last day of each month"
+    trigger:
+      - platform: time
+        at: "23:55:00"
+    condition:
+      - condition: template
+        value_template: >
+          {{ (now() + timedelta(days=1)).day == 1 }}
+    action:
+      - action: script.boiler_monthly_report
+    mode: single
