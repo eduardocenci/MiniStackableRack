@@ -1,3 +1,6 @@
 [submodule "netoverview"]
 	path = netoverview
 	url = https://github.com/eduardocenci/netoverview
+[submodule "globalnet"]
+	path = globalnet
+	url = https://github.com/eduardocenci/globalnet
