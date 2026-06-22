@@ -1,0 +1,7 @@
+services:
+  globalnet:
+    container_name: globalnet
+    image: cenci/globalnet:latest
+    restart: unless-stopped
+    ports:
+      - "5001:5050"
