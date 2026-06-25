@@ -1,0 +1,83 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Frigate Review Alerts — HA Package (Email + WhatsApp)
+# Deploy to: /config/packages/frigate_email.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Notification channel toggles ──────────────────────────────────────────────
+input_boolean:
+  frigate_notify_email:
+    name: "Frigate — Email Alerts"
+    icon: mdi:email-alert-outline
+
+  frigate_notify_whatsapp:
+    name: "Frigate — WhatsApp Alerts"
+    icon: mdi:whatsapp
+
+# ── Shell commands (invoke the Python alert scripts) ──────────────────────────
+shell_command:
+  frigate_send_email: "python3 /config/scripts/frigate_email.py '{{ review_id }}'"
+  frigate_send_whatsapp: "python3 /config/scripts/frigate_whatsapp.py '{{ review_id }}'"
+
+# ── Script wrappers (allow parallel execution for concurrent reviews) ──────────
+script:
+  frigate_send_review_email:
+    alias: "Frigate — Send Review Email"
+    icon: mdi:email-alert-outline
+    mode: parallel
+    max: 5
+    sequence:
+      - action: shell_command.frigate_send_email
+        data:
+          review_id: "{{ review_id }}"
+
+  frigate_send_review_whatsapp:
+    alias: "Frigate — Send Review WhatsApp"
+    icon: mdi:whatsapp
+    mode: parallel
+    max: 5
+    sequence:
+      - action: shell_command.frigate_send_whatsapp
+        data:
+          review_id: "{{ review_id }}"
+
+# ── Automation ─────────────────────────────────────────────────────────────────
+# Trigger: any frigate/reviews MQTT message where:
+#   - the review has ended (end_time is not null)
+#   - the GenAI description is available (non-empty string)
+# This fires on both 'end' messages (if GenAI completed in time) and later
+# 'update' messages (if GenAI finished asynchronously after the review ended).
+# The Python scripts deduplicate by checking if the GIF already exists.
+# Each channel is only invoked if its toggle (input_boolean) is enabled.
+automation:
+  - id: "frigate_review_email_trigger"
+    alias: "Frigate — Send Review Email on GenAI Ready"
+    description: "Sends GIF + GenAI summary via email and/or WhatsApp when a Frigate review completes"
+    trigger:
+      - platform: mqtt
+        topic: frigate/reviews
+    condition:
+      - condition: template
+        value_template: >
+          {{ trigger.payload_json.after.end_time is not none
+             and (
+               trigger.payload_json.after.data.description | default('') | length > 0
+               or trigger.payload_json.after.data.metadata.title | default('') | length > 0
+             ) }}
+    action:
+      - if:
+          - condition: state
+            entity_id: input_boolean.frigate_notify_email
+            state: "on"
+        then:
+          - action: script.frigate_send_review_email
+            data:
+              review_id: "{{ trigger.payload_json.after.id }}"
+      - if:
+          - condition: state
+            entity_id: input_boolean.frigate_notify_whatsapp
+            state: "on"
+        then:
+          - action: script.frigate_send_review_whatsapp
+            data:
+              review_id: "{{ trigger.payload_json.after.id }}"
+    mode: parallel
