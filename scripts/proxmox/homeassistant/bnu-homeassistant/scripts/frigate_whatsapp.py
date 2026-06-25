@@ -8,7 +8,7 @@ Usage: python3 frigate_whatsapp.py <review_id>
 SECURITY CONSTRAINTS (enforced in code):
   - Sends to exactly ONE destination: secrets["whatsapp_group_jid"] (Casa Blumenau)
   - Makes ZERO read calls to the WhatsApp API (no fetchMessages, fetchChats, etc.)
-  - Only ONE outbound API call: sendMedia with caption, to ALLOWED_JID
+  - Outbound API calls: sendText (guaranteed) + sendMedia GIF attempt, both to ALLOWED_JID
 
 Reads config from /config/secrets.yaml. Reuses the GIF already downloaded by
 frigate_email.py if present; otherwise downloads it itself.
@@ -129,26 +129,44 @@ def build_message(review: dict, title: str, summary: str,
 
 
 # ── WhatsApp sender (outbound-only) ───────────────────────────────────────────
-def send_media_with_caption(api_url: str, api_key: str, instance: str,
-                             jid: str, gif_data: bytes, caption: str, review_id: str) -> None:
-    gif_b64 = base64.b64encode(gif_data).decode()
-    url = f"{api_url}/message/sendMedia/{instance}"
+def send_text(api_url: str, api_key: str, instance: str, jid: str, text: str) -> None:
+    url = f"{api_url}/message/sendText/{instance}"
     r = requests.post(
         url,
-        json={
-            "number": jid,
-            "mediaMessage": {
-                "mediatype": "image",
-                "media": gif_b64,
-                "caption": caption,
-                "fileName": f"frigate_{review_id}.gif",
-            },
-        },
+        json={"number": jid, "textMessage": {"text": text}},
         headers={"apikey": api_key},
-        timeout=60,
+        timeout=30,
     )
     r.raise_for_status()
-    log.info("Media+caption sent (status %s)", r.status_code)
+    log.info("Text sent (status %s)", r.status_code)
+
+
+def try_send_gif(api_url: str, api_key: str, instance: str,
+                 jid: str, gif_data: bytes, review_id: str) -> None:
+    """Best-effort GIF send — logs warning on failure, never raises."""
+    gif_b64 = base64.b64encode(gif_data).decode()
+    url = f"{api_url}/message/sendMedia/{instance}"
+    try:
+        r = requests.post(
+            url,
+            json={
+                "number": jid,
+                "mediaMessage": {
+                    "mediatype": "video",
+                    "mimetype": "video/mp4",
+                    "media": gif_b64,
+                    "caption": "",
+                    "fileName": f"frigate_{review_id}.mp4",
+                    "gifPlayback": True,
+                },
+            },
+            headers={"apikey": api_key},
+            timeout=60,
+        )
+        r.raise_for_status()
+        log.info("GIF sent (status %s)", r.status_code)
+    except Exception as exc:
+        log.warning("GIF send failed (non-fatal): %s", exc)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -222,10 +240,12 @@ def main() -> None:
     log.info("Sending to %s (%d chars)", ALLOWED_JID, len(message))
 
     try:
-        send_media_with_caption(api_url, api_key, instance, ALLOWED_JID, gif_data, message, review_id)
+        send_text(api_url, api_key, instance, ALLOWED_JID, message)
     except requests.RequestException as exc:
-        log.error("WhatsApp API error: %s", exc)
+        log.error("WhatsApp sendText error: %s", exc)
         sys.exit(1)
+
+    try_send_gif(api_url, api_key, instance, ALLOWED_JID, gif_data, review_id)
 
     log.info("Done — review %s", review_id)
 
