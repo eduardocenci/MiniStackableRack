@@ -18,7 +18,9 @@ import base64
 import datetime
 import logging
 import os
+import subprocess
 import sys
+import tempfile
 import time
 
 import requests
@@ -141,10 +143,45 @@ def send_text(api_url: str, api_key: str, instance: str, jid: str, text: str) ->
     log.info("Text sent (status %s)", r.status_code)
 
 
+_FFMPEG = "/usr/bin/ffmpeg"
+
+
+def gif_to_mp4(gif_data: bytes) -> bytes:
+    """Convert GIF bytes to MP4 bytes via ffmpeg. Raises on failure."""
+    gif_tmp = mp4_tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".gif", delete=False) as f:
+            f.write(gif_data)
+            gif_tmp = f.name
+        mp4_tmp = gif_tmp.replace(".gif", ".mp4")
+        subprocess.run(
+            [_FFMPEG, "-y", "-i", gif_tmp,
+             "-movflags", "+faststart",
+             "-pix_fmt", "yuv420p",
+             "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+             mp4_tmp],
+            check=True, capture_output=True,
+        )
+        with open(mp4_tmp, "rb") as f:
+            return f.read()
+    finally:
+        for p in (gif_tmp, mp4_tmp):
+            if p and os.path.exists(p):
+                os.unlink(p)
+
+
 def try_send_gif(api_url: str, api_key: str, instance: str,
                  jid: str, gif_data: bytes, review_id: str) -> None:
-    """Best-effort GIF send — logs warning on failure, never raises."""
-    gif_b64 = base64.b64encode(gif_data).decode()
+    """Best-effort GIF send as MP4 with gifPlayback — logs warning on failure, never raises."""
+    try:
+        log.info("Converting GIF → MP4 ...")
+        mp4_data = gif_to_mp4(gif_data)
+        log.info("Conversion done (%d bytes)", len(mp4_data))
+    except Exception as exc:
+        log.warning("GIF→MP4 conversion failed (non-fatal): %s", exc)
+        return
+
+    mp4_b64 = base64.b64encode(mp4_data).decode()
     url = f"{api_url}/message/sendMedia/{instance}"
     try:
         r = requests.post(
@@ -154,7 +191,7 @@ def try_send_gif(api_url: str, api_key: str, instance: str,
                 "mediaMessage": {
                     "mediatype": "video",
                     "mimetype": "video/mp4",
-                    "media": gif_b64,
+                    "media": mp4_b64,
                     "caption": "",
                     "fileName": f"frigate_{review_id}.mp4",
                     "gifPlayback": True,
