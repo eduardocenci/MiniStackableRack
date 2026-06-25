@@ -124,7 +124,7 @@ def send_text(api_url: str, api_key: str, instance: str, jid: str, text: str) ->
     url = f"{api_url}/message/sendText/{instance}"
     r = requests.post(
         url,
-        json={"number": jid, "text": text},
+        json={"number": jid, "textMessage": {"text": text}},
         headers={"apikey": api_key},
         timeout=30,
     )
@@ -139,11 +139,12 @@ def send_gif(api_url: str, api_key: str, instance: str, jid: str, gif_data: byte
         url,
         json={
             "number": jid,
-            "mediatype": "image",
-            "mimetype": "image/gif",
-            "media": gif_b64,
-            "caption": "",
-            "fileName": f"frigate_{review_id}.gif",
+            "mediaMessage": {
+                "mediatype": "image",
+                "media": gif_b64,
+                "caption": "",
+                "fileName": f"frigate_{review_id}.gif",
+            },
         },
         headers={"apikey": api_key},
         timeout=60,
