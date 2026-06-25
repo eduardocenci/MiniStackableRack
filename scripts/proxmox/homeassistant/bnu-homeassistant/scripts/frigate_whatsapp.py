@@ -107,8 +107,6 @@ def build_message(review: dict, title: str, summary: str,
                   threat_level: int, other_concerns: str | None) -> str:
     camera   = review.get("camera", "unknown")
     severity = review.get("severity", "detection")
-    objects  = (review.get("data") or {}).get("objects") or []
-    obj_str  = ", ".join(objects) if objects else "object"
 
     # 🔴 only when there is an actual concern; 🟡 for normal alerts; 🔵 for detections
     if threat_level > 0 or other_concerns:
@@ -116,15 +114,14 @@ def build_message(review: dict, title: str, summary: str,
     else:
         emoji = _SEVERITY_EMOJI.get(severity, "🔵")
 
-    header   = f"*{emoji} {severity.capitalize()}: {camera}*"
-    body     = title if title else summary
+    header = f"*{emoji} Câmera: {camera}*"
+    body   = title if title else summary
 
-    base_len = len(header) + 1 + len(obj_str) + 2
-    remaining = MAX_MSG_CHARS - base_len
+    remaining = MAX_MSG_CHARS - len(header) - 2
     if body and len(body) > remaining:
         body = body[:remaining - 1] + "…"
 
-    parts = [header, obj_str]
+    parts = [header]
     if body:
         parts += ["", body]
     return "\n".join(parts)
