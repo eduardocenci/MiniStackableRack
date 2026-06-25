@@ -1,0 +1,317 @@
+mqtt:
+  enabled: true
+  host: 10.1.1.124 # the address of your HA server that's running the MQTT integration
+  user: mqtt-frigate
+  password: mqtt-frigate
+
+auth:
+  enabled: false
+
+ui:
+  timezone: America/Sao_Paulo
+
+go2rtc:
+  streams:
+    frente_principal:
+      - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/801
+    lateral_direita:
+      - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/201
+    frente_pedestres:
+      - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/601
+    frente_overview:
+      - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/401
+    frente_garagem:
+      - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/301
+    lateral_esquerda:
+      - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/501
+    fundos_overview:
+      - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/101
+    frente_campainha:
+      # HikVision doorbell — not a continuous camera; pauses RTSP stream when idle.
+      # Raw rtsp:// source causes RTP seq gaps (lost PPS) when the doorbell reconnects,
+      # crashing Frigate's ffmpeg decoder. The ffmpeg: source type handles reconnects
+      # internally and outputs a clean stream without sequence gaps.
+      - "ffmpeg:rtsp://admin:<BNU_CAMERA_PASSWORD>@10.1.1.65:554/Streaming/Channels/101#video=copy#audio=copy"
+ffmpeg:
+  hwaccel_args: auto
+  input_args: preset-rtsp-restream
+
+detectors:
+  detector01:
+    type: cpu
+
+model:
+  path: /models/cpu_model.tflite
+
+detect:
+  enabled: true
+  fps: 2
+  stationary:
+    interval: 50
+    threshold: 50
+
+record:
+  enabled: true
+
+snapshots:
+  enabled: true
+
+
+cameras:
+  frente_principal:
+    ffmpeg:
+      hwaccel_args: []
+      inputs:
+        - path: rtsp://localhost:8554/frente_principal
+          roles:
+            - detect
+    lpr:
+      enabled: false
+    review:
+      genai:
+        enabled: true
+        activity_context_prompt: Analyze the these images from the {camera}
+          security camera from my home. At the left side of the image is the
+          house. Left side center portion there is a garage gate from the house,
+          at the left top side a pedestrian entrance through a gate and at the
+          bottom a pedestrian entrance through a door. At the right of the image
+          is the main street. At the center of the image a pathway for both
+          vehicles and pedestrians. Describe what vehicles, pedestrians or
+          animals are doing. These are the customary vehicles at this house, a
+          GWM Ora, a Jeep Cherokee, a Mercedes EQE and a Ford Fusion.
+
+    motion:
+      threshold: 29
+      contour_area: 32
+      improve_contrast: true
+      mask:
+        - 0.716,0.184,0.759,0.173,0.793,1,0.739,1
+        - 0.491,0.009,0.448,0.162,0.641,0.209,0.734,0.182,0.87,0.17,1,0.199,0.999,0
+        - 0.085,0.754,0.226,0.525,0.168,0.199,0,0.317,0.001,0.423
+    zones:
+      estacionamento_portao:
+        coordinates:
+          0.2,0.307,0.357,0.186,0.647,0.136,0.688,0.339,0.483,0.462,0.235,0.516
+        loitering_time: 0
+        objects: car
+        friendly_name: Estacionamento Portao
+  frente_pedestres:
+    lpr:
+      enabled: false
+    enabled: true
+    friendly_name: Frente Pedestres
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/frente_pedestres
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+            - record
+    detect:
+      width: 1280
+      height: 720
+    live:
+      streams:
+        Stream 1: frente_pedestres
+    motion:
+      mask:
+        - 0.002,0.287,0.996,0.156,0.998,0,0,0
+        - 0.776,0.199,0.839,0.57,0.897,0.331,0.998,0.227,0.995,0.16
+        - 0.034,0.294,0.098,0.713,0.203,0.86,0.384,0.905,0.465,0.849,0.404,0.667,0.299,0.242
+  frente_overview:
+    lpr:
+      enabled: false
+    enabled: true
+    friendly_name: Frente Overview
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/frente_overview
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+            - record
+    detect:
+      width: 1280
+      height: 720
+    live:
+      streams:
+        Stream 1: frente_overview
+    motion:
+      mask: 0.805,0.582,0.87,0.412,0.909,0.263,0,0.017,0,0.203
+      threshold: 45
+      contour_area: 57
+      improve_contrast: true
+  frente_garagem:
+    enabled: true
+    friendly_name: Frente Garagem
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/frente_garagem
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+            - record
+    detect:
+      width: 1280
+      height: 720
+    live:
+      streams:
+        Stream 1: frente_garagem
+    review:
+      genai:
+        enabled: true
+        activity_context_prompt: Analyze these images from the {camera} security
+          camera at the garage entrance. At the top of the image is the street.
+          At the center of the image is the driveway. At the bottom left of the
+          image is a pedestrian pathway through a gate on the right side of the
+          house. At the bottom center/right of the image is the garage entrance
+          door.
+    motion:
+      mask: 0.532,0,0.995,0.002,0.999,0.289
+  lateral_direita:
+    lpr:
+      enabled: false
+    enabled: true
+    friendly_name: Lateral Direita
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/lateral_direita
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+            - record
+    detect:
+      width: 960
+      height: 480
+    live:
+      streams:
+        Stream 1: lateral_direita
+  lateral_esquerda:
+    enabled: true
+    friendly_name: Lateral Esquerda
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/lateral_esquerda
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+            - record
+    detect:
+      width: 1280
+      height: 720
+    live:
+      streams:
+        Stream 1: lateral_esquerda
+  fundos_overview:
+    lpr:
+      enabled: false
+    enabled: true
+    friendly_name: Fundos Overview
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/fundos_overview
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+            - record
+    detect:
+      width: 1280
+      height: 720
+    live:
+      streams:
+        Stream 1: fundos_overview
+    motion:
+      mask: 0.003,0.672,0,0.363,0.095,0.3,0.087,0.449
+    zones:
+      clothes_hanger:
+        coordinates: 0,0.611,0.408,0.515,0.678,0.991,0.004,0.996
+        inertia: 3
+        loitering_time: 0
+        friendly_name: Clothes Hanger
+    review:
+      genai:
+        enabled: true
+        activity_context_prompt: Analyze the these images from a security camera
+          from my home located at it's back. At the right side of the image
+          there is a pathway to the left side of the house. At the Bottom right
+          side of the image is a small garden. At the bottom left side of the
+          image is a clothes hanger. At the top left side is a table obscured by
+          the tree, and to the left of it a cooking area and some trash cans.
+          There are two entrance doors to the house on the right side of the
+          image, one more in the center of the image, another higher in the
+          image. Describe what a person or animal is doing in the images.
+  frente_campainha:
+    lpr:
+      enabled: false
+    enabled: true
+    friendly_name: Frente Campainha
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/frente_campainha
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+            - record
+    detect:
+      width: 1280
+      height: 720
+    live:
+      streams:
+        Stream 1: frente_campainha
+    motion:
+      mask:
+        - 0.822,0.66,0.821,0.371,0.001,0.397,0,0.624
+        - 0.008,0.056,0.432,0.03,0.441,0.389,0,0.404
+      threshold: 59
+      contour_area: 75
+      improve_contrast: true
+objects:
+  track:
+    - person
+    - car
+    - bus
+    - bicycle
+    - motorcycle
+version: 0.17-0
+semantic_search:
+  enabled: false
+  model_size: small
+face_recognition:
+  enabled: true
+  model_size: small
+lpr:
+  enabled: true
+classification:
+  bird:
+    enabled: false
+  custom:
+    Cortina Sala:
+      enabled: true
+      name: Cortina Sala
+      threshold: 0.8
+      state_config:
+        cameras:
+          frente_principal:
+            crop:
+              - 0.0012056278512199603
+              - 0.1766093823325877
+              - 0.22730967348907286
+              - 0.5785721301332151
+        motion: true
+genai:
+  provider: ollama
+  base_url: http://ply-desktop:11434
+  model: qwen3-vl:8b
+
+review:
+  genai:
+    enabled: true
+    image_source: recordings
+    alerts: true
+    detections: true
+    preferred_language: Portuguese
+
+logger:
+  default: warning
+  logs:
+    frigate.genai: debug
