@@ -8,7 +8,7 @@ Usage: python3 frigate_whatsapp.py <review_id>
 SECURITY CONSTRAINTS (enforced in code):
   - Sends to exactly ONE destination: secrets["whatsapp_group_jid"] (Casa Blumenau)
   - Makes ZERO read calls to the WhatsApp API (no fetchMessages, fetchChats, etc.)
-  - Only two outbound API calls: sendText and sendMedia, both to ALLOWED_JID
+  - Only ONE outbound API call: sendMedia with caption, to ALLOWED_JID
 
 Reads config from /config/secrets.yaml. Reuses the GIF already downloaded by
 frigate_email.py if present; otherwise downloads it itself.
@@ -39,7 +39,7 @@ _handler.setFormatter(logging.Formatter(
 logging.basicConfig(level=logging.INFO, handlers=[_handler])
 log = logging.getLogger(__name__)
 
-_SEVERITY_EMOJI = {"alert": "🔴", "detection": "🔵"}
+_SEVERITY_EMOJI = {"alert": "🟡", "detection": "🔵"}
 
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
@@ -80,59 +80,57 @@ def _fix_encoding(text: str) -> str:
         return text
 
 
-def extract_genai(review: dict) -> tuple[str, str, str]:
+def extract_genai(review: dict) -> tuple[str, str, str, int, str | None]:
+    """Returns (title, shortSummary, scene, potential_threat_level, other_concerns)."""
     data = review.get("data") or {}
     if data.get("description"):
-        return "", _fix_encoding(data["description"]), ""
+        return "", _fix_encoding(data["description"]), "", 0, None
     meta = data.get("metadata") or {}
     return (
         _fix_encoding(meta.get("title") or ""),
         _fix_encoding(meta.get("shortSummary") or ""),
         _fix_encoding(meta.get("scene") or ""),
+        int(meta.get("potential_threat_level") or 0),
+        _fix_encoding(meta.get("other_concerns") or "") or None,
     )
 
 
 def has_genai(review: dict) -> bool:
-    return any(extract_genai(review))
+    title, summary, scene, _, _ = extract_genai(review)
+    return any((title, summary, scene))
 
 
 # ── Message builder ───────────────────────────────────────────────────────────
-def build_message(review: dict, title: str, summary: str) -> str:
+def build_message(review: dict, title: str, summary: str,
+                  threat_level: int, other_concerns: str | None) -> str:
     camera   = review.get("camera", "unknown")
     severity = review.get("severity", "detection")
     objects  = (review.get("data") or {}).get("objects") or []
-    emoji    = _SEVERITY_EMOJI.get(severity, "🔵")
     obj_str  = ", ".join(objects) if objects else "object"
 
-    header  = f"*{emoji} {severity.capitalize()}: {camera}*"
-    obj_line = obj_str
-    body    = title if title else summary
+    # 🔴 only when there is an actual concern; 🟡 for normal alerts; 🔵 for detections
+    if threat_level > 0 or other_concerns:
+        emoji = "🔴"
+    else:
+        emoji = _SEVERITY_EMOJI.get(severity, "🔵")
 
-    base_len = len(header) + 1 + len(obj_line) + 2
+    header   = f"*{emoji} {severity.capitalize()}: {camera}*"
+    body     = title if title else summary
+
+    base_len = len(header) + 1 + len(obj_str) + 2
     remaining = MAX_MSG_CHARS - base_len
     if body and len(body) > remaining:
         body = body[:remaining - 1] + "…"
 
-    parts = [header, obj_line]
+    parts = [header, obj_str]
     if body:
         parts += ["", body]
     return "\n".join(parts)
 
 
 # ── WhatsApp sender (outbound-only) ───────────────────────────────────────────
-def send_text(api_url: str, api_key: str, instance: str, jid: str, text: str) -> None:
-    url = f"{api_url}/message/sendText/{instance}"
-    r = requests.post(
-        url,
-        json={"number": jid, "textMessage": {"text": text}},
-        headers={"apikey": api_key},
-        timeout=30,
-    )
-    r.raise_for_status()
-    log.info("Text message sent (status %s)", r.status_code)
-
-
-def send_gif(api_url: str, api_key: str, instance: str, jid: str, gif_data: bytes, review_id: str) -> None:
+def send_media_with_caption(api_url: str, api_key: str, instance: str,
+                             jid: str, gif_data: bytes, caption: str, review_id: str) -> None:
     gif_b64 = base64.b64encode(gif_data).decode()
     url = f"{api_url}/message/sendMedia/{instance}"
     r = requests.post(
@@ -142,7 +140,7 @@ def send_gif(api_url: str, api_key: str, instance: str, jid: str, gif_data: byte
             "mediaMessage": {
                 "mediatype": "image",
                 "media": gif_b64,
-                "caption": "",
+                "caption": caption,
                 "fileName": f"frigate_{review_id}.gif",
             },
         },
@@ -150,7 +148,7 @@ def send_gif(api_url: str, api_key: str, instance: str, jid: str, gif_data: byte
         timeout=60,
     )
     r.raise_for_status()
-    log.info("GIF sent (status %s)", r.status_code)
+    log.info("Media+caption sent (status %s)", r.status_code)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -178,10 +176,12 @@ def main() -> None:
     log.info("Fetching review %s ...", review_id)
     review = {}
     title = summary = scene = ""
+    threat_level = 0
+    other_concerns = None
     for attempt in range(1, POLL_ATTEMPTS + 1):
         try:
             review = fetch_review(base, review_id)
-            title, summary, scene = extract_genai(review)
+            title, summary, scene, threat_level, other_concerns = extract_genai(review)
             if has_genai(review):
                 log.info("GenAI content ready (attempt %d)", attempt)
                 break
@@ -218,12 +218,11 @@ def main() -> None:
             f.write(gif_data)
         log.info("GIF saved to %s (%d bytes)", gif_path, len(gif_data))
 
-    message = build_message(review, title, summary)
+    message = build_message(review, title, summary, threat_level, other_concerns)
     log.info("Sending to %s (%d chars)", ALLOWED_JID, len(message))
 
     try:
-        send_text(api_url, api_key, instance, ALLOWED_JID, message)
-        send_gif(api_url, api_key, instance, ALLOWED_JID, gif_data, review_id)
+        send_media_with_caption(api_url, api_key, instance, ALLOWED_JID, gif_data, message, review_id)
     except requests.RequestException as exc:
         log.error("WhatsApp API error: %s", exc)
         sys.exit(1)
