@@ -1,0 +1,26 @@
+input_boolean:
+  notify_whatsapp:
+    name: "WhatsApp Notifications"
+    icon: mdi:whatsapp
+
+rest_command:
+  send_whatsapp_bg:
+    url: "http://192.168.0.120:8081/message/sendText/bnu"
+    method: POST
+    headers:
+      apikey: !secret whatsapp_api_key
+      content_type: application/json
+    payload: '{"number": "{{ number }}", "textMessage": {"text": {{ message | to_json }}}}'
+
+script:
+  notify_whatsapp_bg:
+    alias: "WhatsApp Notification (BG)"
+    mode: queued
+    max: 5
+    variables:
+      jid: !secret whatsapp_group_jid
+    sequence:
+      - action: rest_command.send_whatsapp_bg
+        data:
+          number: "{{ jid }}"
+          message: "{{ message }}"
