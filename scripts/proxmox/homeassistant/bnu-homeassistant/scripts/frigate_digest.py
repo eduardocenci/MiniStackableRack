@@ -21,6 +21,7 @@ import glob as glob_module
 import json
 import logging
 import os
+import signal
 import smtplib
 import subprocess
 import sys
@@ -43,6 +44,7 @@ OPENAI_MODEL     = "gpt-4o"
 OPENAI_IN_PRICE  = 2.50 / 1_000_000    # USD per input token (gpt-4o)
 OPENAI_OUT_PRICE = 10.0 / 1_000_000    # USD per output token (gpt-4o)
 LOG_FILE         = "/config/frigate_digest.log"
+LOCK_FILE        = "/config/frigate_digest.lock"
 PROPERTY_CTX     = "/config/frigate_property_context.txt"
 BASELINES_DIR    = "/config/frigate_baselines"
 CLIP_DIR         = "/config/www"
@@ -367,6 +369,10 @@ def _build_prompt(events: list[dict], context: str, baselines: dict[str, bytes],
 
 
 # ── Ollama ─────────────────────────────────────────────────────────────────────
+class _OllamaTimeout(Exception):
+    pass
+
+
 def call_ollama(events: list[dict], context: str, baselines: dict[str, bytes],
                 snapshots: dict[str, bytes | None], window_min: int) -> str | None:
     prompt, images = _build_prompt(events, context, baselines, snapshots, window_min)
@@ -381,11 +387,18 @@ def call_ollama(events: list[dict], context: str, baselines: dict[str, bytes],
     }
     if images:
         payload["images"] = [base64.b64encode(img).decode() for img in images]
+
+    def _alarm_handler(signum, frame):
+        raise _OllamaTimeout()
+
+    old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
+    signal.alarm(LLM_TIMEOUT)  # hard wall-clock deadline; won't be reset by trickling tokens
     try:
-        log.info("Calling Ollama (%s images)...", len(images))
+        log.info("Calling Ollama (%d images)...", len(images))
         r = requests.post(
             f"http://{OLLAMA_HOST}:{OLLAMA_PORT}/api/generate",
-            json=payload, timeout=LLM_TIMEOUT,
+            json=payload,
+            # No requests timeout — SIGALRM is the authoritative deadline
         )
         r.raise_for_status()
         data     = r.json()
@@ -394,9 +407,15 @@ def call_ollama(events: list[dict], context: str, baselines: dict[str, bytes],
         log.info("Ollama response (%d chars, thinking=%d chars, done=%s): %s...",
                  len(response), len(thinking), data.get("done_reason"), response[:120])
         return response or None
+    except _OllamaTimeout:
+        log.error("Ollama call timed out after %ds", LLM_TIMEOUT)
+        return None
     except requests.RequestException as exc:
         log.error("Ollama call failed: %s", exc)
         return None
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
 
 
 # ── OpenAI ────────────────────────────────────────────────────────────────────
@@ -570,6 +589,10 @@ def send_email_digest(events: list[dict], narrative: str,
         return
 
     timestamp    = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    locations    = list(dict.fromkeys(e["location"] for e in events))
+    ts_start     = events[0]["time"] if events else ""
+    ts_end       = events[-1]["time"] if events else ""
+    ts_range     = f"{ts_start}–{ts_end}" if ts_start != ts_end else ts_start
     event_rows   = "".join(
         f"<tr><td>{e['time']}</td><td>{e['location']}</td>"
         f"<td>{''.join(f'<span class=\"chip\">{o}</span>' for o in e['objects'])}</td>"
@@ -595,11 +618,7 @@ def send_email_digest(events: list[dict], narrative: str,
         video_note    = video_note,
         llm_label     = llm_label,
     )
-    locations = list(dict.fromkeys(e["location"] for e in events))
-    ts_start  = events[0]["time"] if events else ""
-    ts_end    = events[-1]["time"] if events else ""
-    ts_range  = f"{ts_start}–{ts_end}" if ts_start != ts_end else ts_start
-    subject   = f"[Frigate] Resumo: {', '.join(locations)} — {ts_range}"
+    subject = f"[Frigate] Resumo: {', '.join(locations)} — {ts_range}"
 
     for recipient in recipients:
         msg            = MIMEMultipart("mixed")
@@ -640,8 +659,50 @@ def cleanup_old_files(pattern: str, max_age_hours: float) -> None:
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+def _lock_is_held() -> bool:
+    """Return True only if a live process holds the lock; removes stale locks."""
+    if not os.path.exists(LOCK_FILE):
+        return False
+    try:
+        with open(LOCK_FILE) as f:
+            pid = int(f.read().strip())
+        os.kill(pid, 0)  # signal 0 = existence check, no signal sent
+        return True       # process is alive → lock is valid
+    except (ValueError, ProcessLookupError, PermissionError, OSError):
+        log.info("Removing stale lock (process gone or unreadable)")
+        try:
+            os.unlink(LOCK_FILE)
+        except OSError:
+            pass
+        return False
+
+
 def main() -> None:
     mode = (sys.argv[1].strip() if len(sys.argv) > 1 else "auto").lower()
+
+    # Single-instance guard: HA runs this via setsid in background; the lock file
+    # prevents concurrent runs and is cleaned up on exit (normal or SIGTERM).
+    if _lock_is_held():
+        log.info("Digest already running — skipping trigger")
+        sys.exit(0)
+    lock_written = False
+    try:
+        with open(LOCK_FILE, "w") as _lf:
+            _lf.write(str(os.getpid()))
+        lock_written = True
+    except OSError as exc:
+        log.warning("Cannot create lock file (%s) — proceeding without lock", exc)
+    try:
+        _run(mode)
+    finally:
+        if lock_written:
+            try:
+                os.unlink(LOCK_FILE)
+            except OSError:
+                pass
+
+
+def _run(mode: str) -> None:
     log.info("=== Digest run starting (mode=%s) ===", mode)
 
     secrets  = load_secrets()
