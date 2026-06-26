@@ -35,6 +35,8 @@ from email.mime.text import MIMEText
 import requests
 import yaml
 
+from waha import WahaClient  # shared WAHA (WhatsApp HTTP API) client, /config/scripts/waha.py
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 HA_URL           = "http://localhost:8123"
 OLLAMA_HOST      = "10.1.1.50"  # bnu-proxmox LAN IP — socat proxy forwards to ply-desktop:11434
@@ -500,46 +502,21 @@ def call_openai(events: list[dict], context: str, baselines: dict[str, bytes],
         return None, 0, 0
 
 
-# ── WhatsApp sender ───────────────────────────────────────────────────────────
-def _post_with_retry(url: str, payload: dict, api_key: str, timeout: int,
-                     what: str) -> tuple[bool, str]:
-    """POST with up to SEND_ATTEMPTS tries and linear backoff.
-
-    Returns (ok, detail). detail carries the failure reason (HTTP status + body
-    snippet, or the exception) so callers can surface *what went wrong*.
-    """
-    last = "no attempt"
-    for i in range(1, SEND_ATTEMPTS + 1):
-        try:
-            r = requests.post(url, json=payload, headers={"apikey": api_key}, timeout=timeout)
-            if r.status_code >= 400:
-                last = f"HTTP {r.status_code}: {r.text[:160]}"
-                log.warning("%s attempt %d/%d → %s", what, i, SEND_ATTEMPTS, last)
-            else:
-                return True, f"HTTP {r.status_code}"
-        except requests.RequestException as exc:
-            last = f"{type(exc).__name__}: {exc}"
-            log.warning("%s attempt %d/%d → %s", what, i, SEND_ATTEMPTS, last)
-        if i < SEND_ATTEMPTS:
-            time.sleep(2 * i)
-    return False, last
-
-
+# ── WhatsApp sender (WAHA) ────────────────────────────────────────────────────
 def send_whatsapp_digest(events: list[dict], narrative: str,
                          video_path: str | None, secrets: dict) -> tuple[bool, str]:
-    """Send the digest text (+video) to the Casa Blumenau group.
+    """Send the digest text (+video) to the Casa Blumenau group via WAHA.
 
     Returns (text_ok, detail) — detail describes the failure when text_ok is False.
     """
-    api_url  = secrets["whatsapp_api_url"].rstrip("/")
-    api_key  = secrets["whatsapp_api_key"]
-    instance = secrets["whatsapp_instance"]
-    jid      = secrets["whatsapp_group_jid"]
+    jid = secrets["whatsapp_group_jid"]
 
     # SECURITY: only group JIDs allowed
     if not jid or "@g.us" not in jid:
         log.error("whatsapp_group_jid missing or not a group JID — aborting")
         return False, "group_jid missing/invalid"
+
+    client = WahaClient(secrets, attempts=SEND_ATTEMPTS)
 
     locations = list(dict.fromkeys(e["location"] for e in events))
     ts_start = events[0]["time"] if events else ""
@@ -551,11 +528,7 @@ def send_whatsapp_digest(events: list[dict], narrative: str,
         f"_{len(events)} evento(s) · {', '.join(locations)}_"
     )
 
-    ok, detail = _post_with_retry(
-        f"{api_url}/message/sendText/{instance}",
-        {"number": jid, "textMessage": {"text": text}},
-        api_key, timeout=30, what="WhatsApp sendText",
-    )
+    ok, detail = client.send_text(jid, text, timeout=30)
     if not ok:
         log.error("WhatsApp sendText failed after %d attempts: %s", SEND_ATTEMPTS, detail)
         return False, detail
@@ -565,16 +538,9 @@ def send_whatsapp_digest(events: list[dict], narrative: str,
         return True, detail
 
     filename = os.path.basename(video_path)
-    # Serve via HA local web server so the gateway downloads it directly (avoids ~17 MB JSON payload)
+    # Serve via HA local web server so WAHA fetches it directly (avoids a large base64 payload)
     video_url = f"http://10.1.1.124:8123/local/{filename}"
-    vok, vdetail = _post_with_retry(
-        f"{api_url}/message/sendMedia/{instance}",
-        {"number": jid, "mediaMessage": {
-            "mediatype": "video", "mimetype": "video/mp4",
-            "media": video_url, "caption": "", "fileName": filename,
-        }},
-        api_key, timeout=120, what="WhatsApp sendMedia",
-    )
+    vok, vdetail = client.send_video_url(jid, video_url, filename, timeout=120)
     if vok:
         log.info("WhatsApp video sent via URL")
     else:
@@ -620,17 +586,11 @@ def send_debug_whatsapp(text: str, secrets: dict) -> bool:
     Uses whatsapp_smoketest_jid — completely separate from the Casa Blumenau group
     JID used for real notifications. Returns True if delivered by either channel.
     """
-    api_url  = secrets["whatsapp_api_url"].rstrip("/")
-    api_key  = secrets["whatsapp_api_key"]
-    instance = secrets["whatsapp_instance"]
-    jid      = secrets.get("whatsapp_smoketest_jid", "")
+    jid = secrets.get("whatsapp_smoketest_jid", "")
 
     if jid and "@g.us" in jid:
-        ok, detail = _post_with_retry(
-            f"{api_url}/message/sendText/{instance}",
-            {"number": jid, "textMessage": {"text": text}},
-            api_key, timeout=15, what="[DEBUG] sendText",
-        )
+        client = WahaClient(secrets, attempts=SEND_ATTEMPTS)
+        ok, detail = client.send_text(jid, text, timeout=15)
         if ok:
             log.info("[DEBUG] Debug message sent (WhatsApp)")
             return True

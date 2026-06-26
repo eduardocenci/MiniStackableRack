@@ -26,6 +26,8 @@ import time
 import requests
 import yaml
 
+from waha import WahaClient  # shared WAHA (WhatsApp HTTP API) client, /config/scripts/waha.py
+
 # ── Config ────────────────────────────────────────────────────────────────────
 GIF_DIR        = "/config/www"
 LOG_FILE       = "/config/frigate_whatsapp.log"
@@ -127,17 +129,12 @@ def build_message(review: dict, title: str, summary: str,
     return "\n".join(parts)
 
 
-# ── WhatsApp sender (outbound-only) ───────────────────────────────────────────
-def send_text(api_url: str, api_key: str, instance: str, jid: str, text: str) -> None:
-    url = f"{api_url}/message/sendText/{instance}"
-    r = requests.post(
-        url,
-        json={"number": jid, "textMessage": {"text": text}},
-        headers={"apikey": api_key},
-        timeout=30,
-    )
-    r.raise_for_status()
-    log.info("Text sent (status %s)", r.status_code)
+# ── WhatsApp sender (outbound-only, WAHA) ─────────────────────────────────────
+def send_text(client: WahaClient, jid: str, text: str) -> tuple[bool, str]:
+    ok, detail = client.send_text(jid, text, timeout=30)
+    if ok:
+        log.info("Text sent")
+    return ok, detail
 
 
 _FFMPEG = "/usr/bin/ffmpeg"
@@ -167,9 +164,8 @@ def gif_to_mp4(gif_data: bytes) -> bytes:
                 os.unlink(p)
 
 
-def try_send_gif(api_url: str, api_key: str, instance: str,
-                 jid: str, gif_data: bytes, review_id: str) -> None:
-    """Best-effort GIF send as MP4 with gifPlayback — logs warning on failure, never raises."""
+def try_send_gif(client: WahaClient, jid: str, gif_data: bytes, review_id: str) -> None:
+    """Best-effort short clip send (GIF→MP4) — logs warning on failure, never raises."""
     try:
         log.info("Converting GIF → MP4 ...")
         mp4_data = gif_to_mp4(gif_data)
@@ -179,28 +175,11 @@ def try_send_gif(api_url: str, api_key: str, instance: str,
         return
 
     mp4_b64 = base64.b64encode(mp4_data).decode()
-    url = f"{api_url}/message/sendMedia/{instance}"
-    try:
-        r = requests.post(
-            url,
-            json={
-                "number": jid,
-                "mediaMessage": {
-                    "mediatype": "video",
-                    "mimetype": "video/mp4",
-                    "media": mp4_b64,
-                    "caption": "",
-                    "fileName": f"frigate_{review_id}.mp4",
-                    "gifPlayback": True,
-                },
-            },
-            headers={"apikey": api_key},
-            timeout=60,
-        )
-        r.raise_for_status()
-        log.info("GIF sent (status %s)", r.status_code)
-    except Exception as exc:
-        log.warning("GIF send failed (non-fatal): %s", exc)
+    ok, detail = client.send_video_b64(jid, mp4_b64, f"frigate_{review_id}.mp4", timeout=60)
+    if ok:
+        log.info("GIF (as video) sent")
+    else:
+        log.warning("GIF send failed (non-fatal): %s", detail)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -212,10 +191,8 @@ def main() -> None:
     review_id = sys.argv[1].strip()
     gif_path  = os.path.join(GIF_DIR, f"frigate_{review_id}.gif")
 
-    secrets  = load_secrets()
-    api_url  = secrets["whatsapp_api_url"].rstrip("/")
-    api_key  = secrets["whatsapp_api_key"]
-    instance = secrets["whatsapp_instance"]
+    secrets = load_secrets()
+    client  = WahaClient(secrets)
 
     # SECURITY: enforce single allowed destination — no other JID may be used
     ALLOWED_JID = secrets["whatsapp_group_jid"]
@@ -273,13 +250,12 @@ def main() -> None:
     message = build_message(review, title, summary, threat_level, other_concerns)
     log.info("Sending to %s (%d chars)", ALLOWED_JID, len(message))
 
-    try:
-        send_text(api_url, api_key, instance, ALLOWED_JID, message)
-    except requests.RequestException as exc:
-        log.error("WhatsApp sendText error: %s", exc)
+    ok, detail = send_text(client, ALLOWED_JID, message)
+    if not ok:
+        log.error("WhatsApp sendText error: %s", detail)
         sys.exit(1)
 
-    try_send_gif(api_url, api_key, instance, ALLOWED_JID, gif_data, review_id)
+    try_send_gif(client, ALLOWED_JID, gif_data, review_id)
 
     log.info("Done — review %s", review_id)
 
