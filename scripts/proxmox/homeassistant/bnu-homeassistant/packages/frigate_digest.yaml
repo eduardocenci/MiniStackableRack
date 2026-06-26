@@ -94,22 +94,15 @@ automation:
           entity_id: timer.frigate_digest_cooldown
 
   - alias: "Frigate: Send digest after quiet window"
+    # Fires once per burst: the cooldown timer is restarted on every review and only
+    # finishes after 1 min of quiet. No minimum-gap throttle here — the script groups
+    # events by the cooldown gap and sends just the latest burst, and its lock file
+    # dedupes overlapping runs. This keeps distant bursts in separate digests.
     trigger:
       - platform: event
         event_type: timer.finished
         event_data:
           entity_id: timer.frigate_digest_cooldown
-    condition:
-      - condition: template
-        # Enforce a 5-minute minimum gap between auto digests.
-        # Events arriving within 5 min of the previous digest will be rolled into the next one.
-        value_template: >
-          {% set last = states('input_datetime.frigate_digest_last_run') %}
-          {% if last in ('unknown', 'unavailable', '') %}
-            true
-          {% else %}
-            {{ (now() | as_timestamp) - (last | as_datetime | as_timestamp) > 300 }}
-          {% endif %}
     action:
       - action: script.frigate_trigger_digest
 

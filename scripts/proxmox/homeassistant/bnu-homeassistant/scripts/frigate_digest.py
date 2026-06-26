@@ -25,8 +25,8 @@ import signal
 import smtplib
 import subprocess
 import sys
-import tempfile
 import time
+import traceback
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
@@ -53,6 +53,14 @@ RELEVANT_OBJECTS = {"person", "car", "dog", "cat", "animal", "bicycle", "motorcy
 LLM_TIMEOUT      = 600   # seconds — generation can be slow on first call
 DAY_START        = 6     # 06:00
 DAY_END          = 20    # 20:00
+# Burst grouping: events whose gap (prev end_time → next start_time) exceeds this
+# are treated as separate bursts. Matches the 60 s cooldown timer in the HA package.
+COOLDOWN_GAP_S   = 60
+# Video output — single-pass CFR re-encode eliminates frame jumps from VFR source clips.
+VIDEO_FPS        = 15
+VIDEO_W          = 854
+VIDEO_H          = 480
+SEND_ATTEMPTS    = 3     # WhatsApp send retries (rides over transient gateway hiccups)
 
 _handler = logging.FileHandler(LOG_FILE)
 _handler.setFormatter(logging.Formatter(
@@ -106,19 +114,6 @@ def update_ha_state(entity_id: str, state: str, attributes: dict, token: str) ->
 
 def update_ha_number(entity_id: str, value: float, token: str) -> None:
     update_ha_state(entity_id, str(round(value, 4)), {}, token)
-
-
-def read_ha_datetime(entity_id: str, token: str) -> datetime.datetime | None:
-    state = get_ha_state(entity_id, token)
-    if not state or state in ("unknown", "unavailable", "None", ""):
-        return None
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S%z"):
-        try:
-            dt = datetime.datetime.strptime(state, fmt)
-            return dt.replace(tzinfo=None) if dt.tzinfo else dt
-        except ValueError:
-            pass
-    return None
 
 
 def update_ha_datetime(entity_id: str, dt: datetime.datetime, token: str) -> None:
@@ -192,6 +187,28 @@ def is_relevant(review: dict) -> bool:
     return bool(objects & RELEVANT_OBJECTS)
 
 
+def cluster_by_gap(reviews: list[dict], max_gap_s: float) -> list[list[dict]]:
+    """Split reviews into bursts ordered by start_time.
+
+    A new burst begins whenever the gap between the previous review's end_time and
+    the next review's start_time exceeds max_gap_s. Reviews still in progress
+    (end_time is None) fall back to their start_time. Returns clusters oldest→newest,
+    each cluster already sorted by start_time.
+    """
+    if not reviews:
+        return []
+    ordered = sorted(reviews, key=lambda r: r.get("start_time") or 0)
+    clusters: list[list[dict]] = [[ordered[0]]]
+    for r in ordered[1:]:
+        prev = clusters[-1][-1]
+        prev_end = prev.get("end_time") or prev.get("start_time") or 0
+        if (r.get("start_time") or 0) - prev_end > max_gap_s:
+            clusters.append([r])
+        else:
+            clusters[-1].append(r)
+    return clusters
+
+
 # ── Property context ──────────────────────────────────────────────────────────
 def load_property_context(path: str) -> tuple[str, dict[str, str]]:
     """Returns (raw_text, camera_to_location_dict).
@@ -247,67 +264,66 @@ def load_baselines(cameras: list[str], baselines_dir: str, is_night: bool) -> di
 
 # ── Video compilation ─────────────────────────────────────────────────────────
 def compile_digest_video(events: list[dict], clips: dict[str, str | None]) -> str | None:
+    """Stitch event clips into one MP4, chronological (oldest→newest).
+
+    Single ffmpeg pass with a concat filter: each input is normalised to a constant
+    frame rate (VIDEO_FPS), padded to VIDEO_W×VIDEO_H with square pixels, then
+    concatenated. A single CFR re-encode eliminates the frame jumps that occur when
+    variable-frame-rate Frigate clips are stream-copied together.
+    """
+    # Order strictly by event start timestamp so the montage is chronological.
     valid = [
         (e, clips[e["detection_id"]])
-        for e in events
+        for e in sorted(events, key=lambda e: e.get("start_ts") or 0)
         if e.get("detection_id") and clips.get(e["detection_id"])
     ]
     if not valid:
         log.info("No valid clips available — skipping video compilation")
         return None
 
-    tmp_dir = tempfile.mkdtemp(prefix="frigate_digest_")
-    labeled_clips: list[str] = []
-    tmp_clips:    list[str] = []   # only temp files we created (safe to delete)
-
-    for i, (event, clip_path) in enumerate(valid):
-        out = os.path.join(tmp_dir, f"labeled_{i:03d}.mp4")
-        cmd = [
-            FFMPEG, "-y", "-i", clip_path,
-            "-vf", "scale=854:480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2",
-            "-c:v", "libx264", "-crf", "28", "-preset", "fast", "-an", out,
-        ]
-        try:
-            subprocess.run(cmd, check=True, capture_output=True, timeout=180)
-            labeled_clips.append(out)
-            tmp_clips.append(out)
-            log.info("Clip %d scaled: %s", i, out)
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-            log.warning("Failed to scale clip %d (%s): %s — using original", i, clip_path, exc)
-            labeled_clips.append(clip_path)  # original stays; don't delete it
-
-    if not labeled_clips:
-        log.error("No clips available — cannot compile video")
-        return None
-
-    concat_file = os.path.join(tmp_dir, "filelist.txt")
-    with open(concat_file, "w") as f:
-        for clip in labeled_clips:
-            f.write(f"file '{clip}'\n")
+    inputs: list[str]  = []
+    filters: list[str] = []
+    for i, (_event, clip_path) in enumerate(valid):
+        inputs += ["-i", clip_path]
+        filters.append(
+            f"[{i}:v]fps={VIDEO_FPS},"
+            f"scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=decrease,"
+            f"pad={VIDEO_W}:{VIDEO_H}:(ow-iw)/2:(oh-ih)/2,"
+            f"setsar=1,format=yuv420p[v{i}]"
+        )
+    concat_in = "".join(f"[v{i}]" for i in range(len(valid)))
+    filter_complex = ";".join(filters) + f";{concat_in}concat=n={len(valid)}:v=1:a=0[out]"
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     output = os.path.join(CLIP_DIR, f"frigate_digest_{timestamp}.mp4")
 
+    # The per-input fps filter plus output -r both force constant frame rate, so the
+    # montage has one continuous, jump-free timeline regardless of source VFR clips.
+    cmd = [FFMPEG, "-y", *inputs,
+           "-filter_complex", filter_complex, "-map", "[out]",
+           "-r", str(VIDEO_FPS),
+           "-c:v", "libx264", "-crf", "28", "-preset", "veryfast",
+           "-pix_fmt", "yuv420p", "-movflags", "+faststart", output]
+    timeout = min(600, 60 + 25 * len(valid))
     try:
-        subprocess.run(
-            [FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", concat_file, "-c", "copy", output],
-            check=True, capture_output=True, timeout=300,
-        )
-        log.info("Digest video compiled: %s (%d bytes)", output, os.path.getsize(output))
+        subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)
+        log.info("Digest video compiled: %s (%d bytes, %d clips, CFR %dfps)",
+                 output, os.path.getsize(output), len(valid), VIDEO_FPS)
         return output
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
-        log.error("Video concat failed: %s", exc)
+    except subprocess.CalledProcessError as exc:
+        log.error("Video compile failed: %s", _ffmpeg_err(exc))
         return None
-    finally:
-        for p in tmp_clips + [concat_file]:
-            try:
-                os.unlink(p)
-            except OSError:
-                pass
-        try:
-            os.rmdir(tmp_dir)
-        except OSError:
-            pass
+    except subprocess.TimeoutExpired as exc:
+        log.error("Video compile timed out after %ds: %s", timeout, exc)
+        return None
+
+
+def _ffmpeg_err(exc: Exception) -> str:
+    stderr = getattr(exc, "stderr", None)
+    if isinstance(stderr, bytes):
+        tail = stderr.decode("utf-8", "replace").strip().splitlines()[-3:]
+        return " | ".join(tail) if tail else str(exc)
+    return str(exc)
 
 
 # ── LLM prompt builder ────────────────────────────────────────────────────────
@@ -485,8 +501,36 @@ def call_openai(events: list[dict], context: str, baselines: dict[str, bytes],
 
 
 # ── WhatsApp sender ───────────────────────────────────────────────────────────
+def _post_with_retry(url: str, payload: dict, api_key: str, timeout: int,
+                     what: str) -> tuple[bool, str]:
+    """POST with up to SEND_ATTEMPTS tries and linear backoff.
+
+    Returns (ok, detail). detail carries the failure reason (HTTP status + body
+    snippet, or the exception) so callers can surface *what went wrong*.
+    """
+    last = "no attempt"
+    for i in range(1, SEND_ATTEMPTS + 1):
+        try:
+            r = requests.post(url, json=payload, headers={"apikey": api_key}, timeout=timeout)
+            if r.status_code >= 400:
+                last = f"HTTP {r.status_code}: {r.text[:160]}"
+                log.warning("%s attempt %d/%d → %s", what, i, SEND_ATTEMPTS, last)
+            else:
+                return True, f"HTTP {r.status_code}"
+        except requests.RequestException as exc:
+            last = f"{type(exc).__name__}: {exc}"
+            log.warning("%s attempt %d/%d → %s", what, i, SEND_ATTEMPTS, last)
+        if i < SEND_ATTEMPTS:
+            time.sleep(2 * i)
+    return False, last
+
+
 def send_whatsapp_digest(events: list[dict], narrative: str,
-                         video_path: str | None, secrets: dict) -> None:
+                         video_path: str | None, secrets: dict) -> tuple[bool, str]:
+    """Send the digest text (+video) to the Casa Blumenau group.
+
+    Returns (text_ok, detail) — detail describes the failure when text_ok is False.
+    """
     api_url  = secrets["whatsapp_api_url"].rstrip("/")
     api_key  = secrets["whatsapp_api_key"]
     instance = secrets["whatsapp_instance"]
@@ -495,7 +539,7 @@ def send_whatsapp_digest(events: list[dict], narrative: str,
     # SECURITY: only group JIDs allowed
     if not jid or "@g.us" not in jid:
         log.error("whatsapp_group_jid missing or not a group JID — aborting")
-        return
+        return False, "group_jid missing/invalid"
 
     locations = list(dict.fromkeys(e["location"] for e in events))
     ts_start = events[0]["time"] if events else ""
@@ -507,51 +551,43 @@ def send_whatsapp_digest(events: list[dict], narrative: str,
         f"_{len(events)} evento(s) · {', '.join(locations)}_"
     )
 
-    try:
-        r = requests.post(
-            f"{api_url}/message/sendText/{instance}",
-            json={"number": jid, "textMessage": {"text": text}},
-            headers={"apikey": api_key}, timeout=30,
-        )
-        r.raise_for_status()
-        log.info("WhatsApp text sent (status %s)", r.status_code)
-    except requests.RequestException as exc:
-        log.error("WhatsApp sendText failed: %s", exc)
-        return
+    ok, detail = _post_with_retry(
+        f"{api_url}/message/sendText/{instance}",
+        {"number": jid, "textMessage": {"text": text}},
+        api_key, timeout=30, what="WhatsApp sendText",
+    )
+    if not ok:
+        log.error("WhatsApp sendText failed after %d attempts: %s", SEND_ATTEMPTS, detail)
+        return False, detail
+    log.info("WhatsApp text sent")
 
     if not video_path or not os.path.exists(video_path):
-        return
+        return True, detail
 
     filename = os.path.basename(video_path)
     # Serve via HA local web server so the gateway downloads it directly (avoids ~17 MB JSON payload)
     video_url = f"http://10.1.1.124:8123/local/{filename}"
-    try:
-        r = requests.post(
-            f"{api_url}/message/sendMedia/{instance}",
-            json={
-                "number": jid,
-                "mediaMessage": {
-                    "mediatype": "video",
-                    "mimetype":  "video/mp4",
-                    "media":     video_url,
-                    "caption":   "",
-                    "fileName":  filename,
-                },
-            },
-            headers={"apikey": api_key}, timeout=120,
-        )
-        r.raise_for_status()
-        log.info("WhatsApp video sent via URL (status %s)", r.status_code)
-    except requests.RequestException as exc:
-        log.warning("WhatsApp video send failed (non-fatal): %s", exc)
+    vok, vdetail = _post_with_retry(
+        f"{api_url}/message/sendMedia/{instance}",
+        {"number": jid, "mediaMessage": {
+            "mediatype": "video", "mimetype": "video/mp4",
+            "media": video_url, "caption": "", "fileName": filename,
+        }},
+        api_key, timeout=120, what="WhatsApp sendMedia",
+    )
+    if vok:
+        log.info("WhatsApp video sent via URL")
+    else:
+        log.warning("WhatsApp video send failed (non-fatal): %s", vdetail)
+    return True, detail
 
 
 # ── Debug WhatsApp (SmokeTests group) ────────────────────────────────────────
-def send_debug_whatsapp(text: str, secrets: dict) -> None:
-    """Send a debug/diagnostic message to the SmokeTests group.
+def send_debug_whatsapp(text: str, secrets: dict) -> bool:
+    """Send a diagnostic message to the SmokeTests group. Best-effort, with retries.
 
-    Uses whatsapp_smoketest_jid from secrets — completely separate from the
-    Casa Blumenau group JID used for real notifications.
+    Uses whatsapp_smoketest_jid — completely separate from the Casa Blumenau group
+    JID used for real notifications. Returns True on success.
     """
     api_url  = secrets["whatsapp_api_url"].rstrip("/")
     api_key  = secrets["whatsapp_api_key"]
@@ -560,18 +596,18 @@ def send_debug_whatsapp(text: str, secrets: dict) -> None:
 
     if not jid or "@g.us" not in jid:
         log.warning("[DEBUG] whatsapp_smoketest_jid missing or not a group JID — debug send skipped")
-        return
+        return False
 
-    try:
-        r = requests.post(
-            f"{api_url}/message/sendText/{instance}",
-            json={"number": jid, "textMessage": {"text": text}},
-            headers={"apikey": api_key}, timeout=15,
-        )
-        r.raise_for_status()
-        log.info("[DEBUG] Debug message sent (status %s)", r.status_code)
-    except requests.RequestException as exc:
-        log.warning("[DEBUG] Debug send failed: %s", exc)
+    ok, detail = _post_with_retry(
+        f"{api_url}/message/sendText/{instance}",
+        {"number": jid, "textMessage": {"text": text}},
+        api_key, timeout=15, what="[DEBUG] sendText",
+    )
+    if ok:
+        log.info("[DEBUG] Debug message sent")
+    else:
+        log.warning("[DEBUG] Debug send failed after %d attempts: %s", SEND_ATTEMPTS, detail)
+    return ok
 
 
 # ── Email sender ──────────────────────────────────────────────────────────────
@@ -770,23 +806,43 @@ def main() -> None:
                 pass
 
 
-def _run(mode: str) -> None:
-    log.info("=== Digest run starting (mode=%s) ===", mode)
+class _DigestSkip(Exception):
+    """Graceful no-op exit (e.g. no relevant events) — not a failure."""
 
+
+def _run(mode: str) -> None:
+    """Wrapper: reads the debug flag up front and reports any hard failure to the
+    SmokeTests channel, so the debug channel surfaces *failed* attempts too."""
+    log.info("=== Digest run starting (mode=%s) ===", mode)
     secrets  = load_secrets()
     ha_token = secrets.get("boiler_ha_token", "")
+    debug_mode = get_ha_state("input_boolean.frigate_debug", ha_token) == "on"
+    try:
+        _run_inner(mode, secrets, ha_token, debug_mode)
+    except _DigestSkip as skip:
+        log.info("Digest skipped: %s", skip)
+    except Exception as exc:
+        log.exception("Digest run FAILED")
+        if debug_mode:
+            tb = traceback.format_exc().strip().splitlines()
+            where = tb[-2].strip() if len(tb) >= 2 else ""
+            send_debug_whatsapp(
+                f"❌ *Digest FALHOU* ({mode})\n"
+                f"{type(exc).__name__}: {str(exc)[:200]}\n"
+                f"`{where[:160]}`",
+                secrets,
+            )
+        raise
+
+
+def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> None:
     now      = datetime.datetime.now()
     is_night = not (DAY_START <= now.hour < DAY_END)
 
-    # Time window
-    if mode == "manual":
-        since      = now - datetime.timedelta(minutes=30)
-        window_min = 30
-    else:
-        since_dt   = read_ha_datetime("input_datetime.frigate_digest_last_run", ha_token)
-        since      = since_dt if since_dt else now - datetime.timedelta(hours=1)
-        window_min = max(1, int((now - since).total_seconds() / 60))
-
+    # Fixed 30-min lookback for both modes; clustering (below) isolates the real
+    # burst for auto, while manual deliberately reports the whole 30-min window.
+    since      = now - datetime.timedelta(minutes=30)
+    window_min = 30
     log.info("Window: %s → %s (%d min)", since.strftime("%H:%M:%S"), now.strftime("%H:%M:%S"), window_min)
 
     # Fetch and filter reviews
@@ -794,36 +850,48 @@ def _run(mode: str) -> None:
     try:
         reviews = fetch_reviews(base, since)
     except requests.RequestException as exc:
-        log.error("Failed to fetch reviews from Frigate: %s", exc)
-        sys.exit(1)
+        raise RuntimeError(f"Frigate fetch failed: {exc}") from exc
 
     log.info("Fetched %d total reviews; filtering for relevant objects...", len(reviews))
     reviews = [r for r in reviews if is_relevant(r)]
     if not reviews:
-        log.info("No relevant events (person/car/animal) in window — skipping digest")
-        sys.exit(0)
+        raise _DigestSkip("no relevant events (person/car/animal) in window")
+
+    # Group into bursts; an auto digest sends ONLY the most recent burst so events
+    # separated by more than the cooldown are never lumped together.
+    clusters = cluster_by_gap(reviews, COOLDOWN_GAP_S)
+    if mode == "auto" and len(clusters) > 1:
+        dropped = sum(len(c) for c in clusters[:-1])
+        log.info("Auto: %d bursts in window; sending latest (%d events), dropping %d older",
+                 len(clusters), len(clusters[-1]), dropped)
+        reviews = clusters[-1]
+    else:
+        reviews = [r for c in clusters for r in c]   # manual: keep all, still ordered
 
     cameras_seen = list(dict.fromkeys(r.get("camera", "?") for r in reviews))
     log.info("%d relevant reviews across cameras: %s", len(reviews), cameras_seen)
 
-    debug_mode = get_ha_state("input_boolean.frigate_debug", ha_token) == "on"
-
-    # Build event list with location labels
+    # Build event list with location labels (chronological by start_time)
     context, camera_to_location = load_property_context(PROPERTY_CTX)
     events: list[dict] = []
-    for r in sorted(reviews, key=lambda x: x.get("start_time", 0)):
+    for r in sorted(reviews, key=lambda x: x.get("start_time") or 0):
         det_list = (r.get("data") or {}).get("detections") or []
         det_id   = det_list[0] if det_list else None
         cam      = r.get("camera", "unknown")
+        start_ts = r.get("start_time") or 0
         events.append({
             "camera":       cam,
             "location":     camera_to_location.get(cam, cam),
-            "time":         datetime.datetime.fromtimestamp(
-                r.get("start_time", 0)).strftime("%H:%M"),
+            "time":         datetime.datetime.fromtimestamp(start_ts).strftime("%H:%M"),
+            "start_ts":     start_ts,
+            "end_ts":       r.get("end_time") or start_ts,
             "text":         extract_genai_text(r),
             "objects":      (r.get("data") or {}).get("objects") or [],
             "detection_id": det_id,
         })
+
+    span_start = datetime.datetime.fromtimestamp(events[0]["start_ts"]).strftime("%H:%M:%S")
+    span_end   = datetime.datetime.fromtimestamp(events[-1]["end_ts"]).strftime("%H:%M:%S")
 
     # Download clips (actual recordings) and snapshots (keyframes for LLM)
     clips: dict[str, str | None]     = {}
@@ -834,7 +902,7 @@ def _run(mode: str) -> None:
             clips[det_id]     = download_clip(base, det_id, CLIP_DIR)
             snapshots[det_id] = fetch_snapshot(base, det_id)
 
-    # Compile video
+    # Compile video (single-pass CFR, chronological)
     video_path = compile_digest_video(events, clips)
 
     # Load baseline images
@@ -845,17 +913,17 @@ def _run(mode: str) -> None:
     llm_mode = get_ha_state("input_select.frigate_digest_llm", ha_token) or "Ollama (local)"
     log.info("LLM mode: %s", llm_mode)
 
-    # Debug: "triggered" message — sent before inference so the user knows the digest is running
+    # Debug D1: "triggered" — as soon as a burst is in hand, before inference.
     if debug_mode:
         n_snaps = sum(1 for s in snapshots.values() if s)
-        trigger_msg = (
+        send_debug_whatsapp(
             f"🔍 *Frigate Digest* · {mode}\n"
-            f"⏱ {since.strftime('%H:%M')} → {now.strftime('%H:%M')} · {window_min} min\n"
+            f"⏱ burst {span_start} → {span_end}\n"
             f"📸 {len(events)} event(s) · {', '.join(cameras_seen)}\n"
-            f"🖼 {n_snaps} snapshot(s) → {llm_mode}\n"
-            f"⏳ Inference starting…"
+            f"🖼 {n_snaps} snapshot(s) · 🎞 {'ok' if video_path else 'none'} → {llm_mode}\n"
+            f"⏳ Inference starting…",
+            secrets,
         )
-        send_debug_whatsapp(trigger_msg, secrets)
 
     narrative_ollama: str | None = None
     narrative_openai: str | None = None
@@ -865,23 +933,23 @@ def _run(mode: str) -> None:
     if llm_mode in ("Ollama (local)", "Both"):
         narrative_ollama, ollama_stats = call_ollama(events, context, baselines, snapshots, window_min)
 
-        # Debug: post-inference stats
+        # Debug D2: post-inference stats / failure detail.
         if debug_mode:
             if ollama_stats.get("timed_out"):
                 status = f"⏰ TIMED OUT ({LLM_TIMEOUT}s)"
             elif ollama_stats.get("error"):
-                status = f"❌ {ollama_stats['error']}"
+                status = f"❌ {ollama_stats['error'][:160]}"
             else:
                 status = f"✅ {ollama_stats['elapsed_s']:.1f}s"
-            stats_msg = (
+            send_debug_whatsapp(
                 f"*Ollama* {status}\n"
-                f"📥 {ollama_stats['n_images']} image(s)"
+                f"📥 {ollama_stats.get('n_images', 0)} image(s)"
                 + (f" · prompt={ollama_stats['prompt_tokens']} tok" if ollama_stats.get("prompt_tokens") else "")
-                + f"\n📤 {ollama_stats['response_chars']} chars · {ollama_stats['output_tokens']} tok out"
-                + f"\n💭 thinking={ollama_stats['thinking_chars']} chars"
-                + (f" · done={ollama_stats['done_reason']}" if ollama_stats.get("done_reason") else "")
+                + f"\n📤 {ollama_stats.get('response_chars', 0)} chars · {ollama_stats.get('output_tokens', 0)} tok out"
+                + f"\n💭 thinking={ollama_stats.get('thinking_chars', 0)} chars"
+                + (f" · done={ollama_stats['done_reason']}" if ollama_stats.get("done_reason") else ""),
+                secrets,
             )
-            send_debug_whatsapp(stats_msg, secrets)
 
     if llm_mode in ("OpenAI (cloud)", "Both"):
         api_key = secrets.get("openai_api_key", "")
@@ -904,8 +972,7 @@ def _run(mode: str) -> None:
 
     narrative = narrative_ollama or narrative_openai
     if not narrative:
-        log.error("No LLM narrative produced — aborting")
-        sys.exit(1)
+        raise RuntimeError("no LLM narrative produced (inference failed/timed out)")
 
     llm_label = (
         "Ollama" if (narrative_ollama and not narrative_openai) else
@@ -918,7 +985,14 @@ def _run(mode: str) -> None:
     notify_email    = get_ha_state("input_boolean.frigate_notify_email",    ha_token)
 
     if notify_whatsapp == "on":
-        send_whatsapp_digest(events, narrative, video_path, secrets)
+        wa_ok, wa_detail = send_whatsapp_digest(events, narrative, video_path, secrets)
+        if debug_mode:
+            # Debug D3: did the real notification actually go out?
+            send_debug_whatsapp(
+                "📤 *Notificação enviada* ✅ (Casa Blumenau)" if wa_ok
+                else f"📤 *Envio FALHOU* ❌\n{wa_detail[:200]}",
+                secrets,
+            )
     else:
         log.info("WhatsApp disabled (frigate_notify_whatsapp=off) — skipping")
 
