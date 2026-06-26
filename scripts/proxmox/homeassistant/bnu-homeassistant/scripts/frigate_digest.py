@@ -582,32 +582,66 @@ def send_whatsapp_digest(events: list[dict], narrative: str,
     return True, detail
 
 
-# ── Debug WhatsApp (SmokeTests group) ────────────────────────────────────────
+# ── Debug channel (SmokeTests group, email fallback) ─────────────────────────
+def _send_debug_email(text: str, secrets: dict, reason: str = "") -> bool:
+    """Transport-independent fallback for debug messages (Gmail SMTP).
+
+    Lets the debug channel survive a WhatsApp outage — the very situation where a
+    WhatsApp-only debug channel would go silent.
+    """
+    smtp_user  = secrets.get("boiler_smtp_user")
+    smtp_pass  = secrets.get("boiler_smtp_pass")
+    recipients = [e.strip() for e in secrets.get("frigate_email_recipients", "").split(",") if e.strip()]
+    if not (smtp_user and smtp_pass and recipients):
+        log.warning("[DEBUG] Email fallback unavailable (missing SMTP creds/recipients)")
+        return False
+
+    first = (text.strip().splitlines() or ["debug"])[0]
+    body  = text + (f"\n\n— WhatsApp debug delivery failed: {reason}" if reason else "")
+    msg = MIMEText(body, "plain", "utf-8")
+    msg["Subject"] = f"[Frigate Debug] {first[:80]}"
+    msg["From"]    = smtp_user
+    msg["To"]      = ", ".join(recipients)
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(smtp_user, smtp_pass)
+            server.send_message(msg)
+        log.info("[DEBUG] Fallback email sent to %d recipient(s)", len(recipients))
+        return True
+    except smtplib.SMTPException as exc:
+        log.warning("[DEBUG] Fallback email failed: %s", exc)
+        return False
+
+
 def send_debug_whatsapp(text: str, secrets: dict) -> bool:
-    """Send a diagnostic message to the SmokeTests group. Best-effort, with retries.
+    """Send a diagnostic message to the SmokeTests group, retrying, then falling
+    back to email if the WhatsApp transport is unavailable.
 
     Uses whatsapp_smoketest_jid — completely separate from the Casa Blumenau group
-    JID used for real notifications. Returns True on success.
+    JID used for real notifications. Returns True if delivered by either channel.
     """
     api_url  = secrets["whatsapp_api_url"].rstrip("/")
     api_key  = secrets["whatsapp_api_key"]
     instance = secrets["whatsapp_instance"]
     jid      = secrets.get("whatsapp_smoketest_jid", "")
 
-    if not jid or "@g.us" not in jid:
-        log.warning("[DEBUG] whatsapp_smoketest_jid missing or not a group JID — debug send skipped")
-        return False
-
-    ok, detail = _post_with_retry(
-        f"{api_url}/message/sendText/{instance}",
-        {"number": jid, "textMessage": {"text": text}},
-        api_key, timeout=15, what="[DEBUG] sendText",
-    )
-    if ok:
-        log.info("[DEBUG] Debug message sent")
+    if jid and "@g.us" in jid:
+        ok, detail = _post_with_retry(
+            f"{api_url}/message/sendText/{instance}",
+            {"number": jid, "textMessage": {"text": text}},
+            api_key, timeout=15, what="[DEBUG] sendText",
+        )
+        if ok:
+            log.info("[DEBUG] Debug message sent (WhatsApp)")
+            return True
+        log.warning("[DEBUG] WhatsApp debug failed after %d attempts: %s — falling back to email",
+                    SEND_ATTEMPTS, detail)
+        reason = detail
     else:
-        log.warning("[DEBUG] Debug send failed after %d attempts: %s", SEND_ATTEMPTS, detail)
-    return ok
+        log.warning("[DEBUG] whatsapp_smoketest_jid missing/invalid — falling back to email")
+        reason = "smoketest_jid missing/invalid"
+
+    return _send_debug_email(text, secrets, reason)
 
 
 # ── Email sender ──────────────────────────────────────────────────────────────
