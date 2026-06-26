@@ -3,6 +3,12 @@
 # Deploy to: /config/packages/frigate_digest.yaml
 # ──────────────────────────────────────────────────────────────────────────────
 
+input_boolean:
+  frigate_debug:
+    name: "Frigate Debug"
+    icon: mdi:bug
+    initial: off
+
 input_select:
   frigate_alert_mode:
     name: "Frigate Alert Mode"

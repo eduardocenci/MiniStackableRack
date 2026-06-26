@@ -374,7 +374,12 @@ class _OllamaTimeout(Exception):
 
 
 def call_ollama(events: list[dict], context: str, baselines: dict[str, bytes],
-                snapshots: dict[str, bytes | None], window_min: int) -> str | None:
+                snapshots: dict[str, bytes | None], window_min: int) -> tuple[str | None, dict]:
+    """Returns (narrative_or_None, stats_dict).
+
+    stats keys: n_images, elapsed_s, timed_out, error,
+                prompt_tokens, output_tokens, response_chars, thinking_chars, done_reason.
+    """
     prompt, images = _build_prompt(events, context, baselines, snapshots, window_min)
     payload: dict = {
         "model":   OLLAMA_MODEL,
@@ -388,11 +393,19 @@ def call_ollama(events: list[dict], context: str, baselines: dict[str, bytes],
     if images:
         payload["images"] = [base64.b64encode(img).decode() for img in images]
 
+    stats: dict = {
+        "n_images": len(images), "elapsed_s": 0.0,
+        "timed_out": False, "error": None,
+        "prompt_tokens": 0, "output_tokens": 0,
+        "response_chars": 0, "thinking_chars": 0, "done_reason": None,
+    }
+
     def _alarm_handler(signum, frame):
         raise _OllamaTimeout()
 
     old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
     signal.alarm(LLM_TIMEOUT)  # hard wall-clock deadline; won't be reset by trickling tokens
+    t0 = time.monotonic()
     try:
         log.info("Calling Ollama (%d images)...", len(images))
         r = requests.post(
@@ -404,15 +417,25 @@ def call_ollama(events: list[dict], context: str, baselines: dict[str, bytes],
         data     = r.json()
         response = data.get("response", "").strip()
         thinking = data.get("thinking", "")
+        stats.update({
+            "elapsed_s":      time.monotonic() - t0,
+            "response_chars": len(response),
+            "thinking_chars": len(thinking),
+            "done_reason":    data.get("done_reason"),
+            "prompt_tokens":  data.get("prompt_eval_count", 0),
+            "output_tokens":  data.get("eval_count", 0),
+        })
         log.info("Ollama response (%d chars, thinking=%d chars, done=%s): %s...",
                  len(response), len(thinking), data.get("done_reason"), response[:120])
-        return response or None
+        return response or None, stats
     except _OllamaTimeout:
+        stats.update({"elapsed_s": time.monotonic() - t0, "timed_out": True})
         log.error("Ollama call timed out after %ds", LLM_TIMEOUT)
-        return None
+        return None, stats
     except requests.RequestException as exc:
+        stats.update({"elapsed_s": time.monotonic() - t0, "error": str(exc)})
         log.error("Ollama call failed: %s", exc)
-        return None
+        return None, stats
     finally:
         signal.alarm(0)
         signal.signal(signal.SIGALRM, old_handler)
@@ -521,6 +544,34 @@ def send_whatsapp_digest(events: list[dict], narrative: str,
         log.info("WhatsApp video sent via URL (status %s)", r.status_code)
     except requests.RequestException as exc:
         log.warning("WhatsApp video send failed (non-fatal): %s", exc)
+
+
+# ── Debug WhatsApp (SmokeTests group) ────────────────────────────────────────
+def send_debug_whatsapp(text: str, secrets: dict) -> None:
+    """Send a debug/diagnostic message to the SmokeTests group.
+
+    Uses whatsapp_smoketest_jid from secrets — completely separate from the
+    Casa Blumenau group JID used for real notifications.
+    """
+    api_url  = secrets["whatsapp_api_url"].rstrip("/")
+    api_key  = secrets["whatsapp_api_key"]
+    instance = secrets["whatsapp_instance"]
+    jid      = secrets.get("whatsapp_smoketest_jid", "")
+
+    if not jid or "@g.us" not in jid:
+        log.warning("[DEBUG] whatsapp_smoketest_jid missing or not a group JID — debug send skipped")
+        return
+
+    try:
+        r = requests.post(
+            f"{api_url}/message/sendText/{instance}",
+            json={"number": jid, "textMessage": {"text": text}},
+            headers={"apikey": api_key}, timeout=15,
+        )
+        r.raise_for_status()
+        log.info("[DEBUG] Debug message sent (status %s)", r.status_code)
+    except requests.RequestException as exc:
+        log.warning("[DEBUG] Debug send failed: %s", exc)
 
 
 # ── Email sender ──────────────────────────────────────────────────────────────
@@ -755,6 +806,8 @@ def _run(mode: str) -> None:
     cameras_seen = list(dict.fromkeys(r.get("camera", "?") for r in reviews))
     log.info("%d relevant reviews across cameras: %s", len(reviews), cameras_seen)
 
+    debug_mode = get_ha_state("input_boolean.frigate_debug", ha_token) == "on"
+
     # Build event list with location labels
     context, camera_to_location = load_property_context(PROPERTY_CTX)
     events: list[dict] = []
@@ -792,12 +845,43 @@ def _run(mode: str) -> None:
     llm_mode = get_ha_state("input_select.frigate_digest_llm", ha_token) or "Ollama (local)"
     log.info("LLM mode: %s", llm_mode)
 
+    # Debug: "triggered" message — sent before inference so the user knows the digest is running
+    if debug_mode:
+        n_snaps = sum(1 for s in snapshots.values() if s)
+        trigger_msg = (
+            f"🔍 *Frigate Digest* · {mode}\n"
+            f"⏱ {since.strftime('%H:%M')} → {now.strftime('%H:%M')} · {window_min} min\n"
+            f"📸 {len(events)} event(s) · {', '.join(cameras_seen)}\n"
+            f"🖼 {n_snaps} snapshot(s) → {llm_mode}\n"
+            f"⏳ Inference starting…"
+        )
+        send_debug_whatsapp(trigger_msg, secrets)
+
     narrative_ollama: str | None = None
     narrative_openai: str | None = None
     openai_cost: float | None    = None
+    ollama_stats: dict            = {}
 
     if llm_mode in ("Ollama (local)", "Both"):
-        narrative_ollama = call_ollama(events, context, baselines, snapshots, window_min)
+        narrative_ollama, ollama_stats = call_ollama(events, context, baselines, snapshots, window_min)
+
+        # Debug: post-inference stats
+        if debug_mode:
+            if ollama_stats.get("timed_out"):
+                status = f"⏰ TIMED OUT ({LLM_TIMEOUT}s)"
+            elif ollama_stats.get("error"):
+                status = f"❌ {ollama_stats['error']}"
+            else:
+                status = f"✅ {ollama_stats['elapsed_s']:.1f}s"
+            stats_msg = (
+                f"*Ollama* {status}\n"
+                f"📥 {ollama_stats['n_images']} image(s)"
+                + (f" · prompt={ollama_stats['prompt_tokens']} tok" if ollama_stats.get("prompt_tokens") else "")
+                + f"\n📤 {ollama_stats['response_chars']} chars · {ollama_stats['output_tokens']} tok out"
+                + f"\n💭 thinking={ollama_stats['thinking_chars']} chars"
+                + (f" · done={ollama_stats['done_reason']}" if ollama_stats.get("done_reason") else "")
+            )
+            send_debug_whatsapp(stats_msg, secrets)
 
     if llm_mode in ("OpenAI (cloud)", "Both"):
         api_key = secrets.get("openai_api_key", "")
