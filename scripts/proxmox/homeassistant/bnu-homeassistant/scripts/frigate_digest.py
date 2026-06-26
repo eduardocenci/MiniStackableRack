@@ -262,7 +262,6 @@ def compile_digest_video(events: list[dict], clips: dict[str, str | None]) -> st
         out = os.path.join(tmp_dir, f"labeled_{i:03d}.mp4")
         cmd = [
             FFMPEG, "-y", "-i", clip_path,
-            "-t", "5",   # cap each clip at 5 s to keep total file size small
             "-vf", "scale=854:480:force_original_aspect_ratio=decrease,pad=854:480:(ow-iw)/2:(oh-ih)/2",
             "-c:v", "libx264", "-crf", "28", "-preset", "fast", "-an", out,
         ]
@@ -457,9 +456,11 @@ def send_whatsapp_digest(events: list[dict], narrative: str,
         return
 
     locations = list(dict.fromkeys(e["location"] for e in events))
-    ts = events[0]["time"] if events else ""
+    ts_start = events[0]["time"] if events else ""
+    ts_end   = events[-1]["time"] if events else ""
+    ts_range = f"{ts_start}–{ts_end}" if ts_start != ts_end else ts_start
     text = (
-        f"*📹 Resumo — {ts}*\n\n"
+        f"*📹 Resumo — {ts_range}*\n\n"
         f"{narrative}\n\n"
         f"_{len(events)} evento(s) · {', '.join(locations)}_"
     )
@@ -585,7 +586,7 @@ def send_email_digest(events: list[dict], narrative: str,
         video_note = f'<p class="meta">📎 Vídeo compilado em anexo ({size_mb:.1f} MB)</p>'
 
     html = _DIGEST_HTML.format(
-        timestamp     = timestamp,
+        timestamp     = f"{ts_range} — {timestamp}",
         n_events      = len(events),
         window_min    = window_min,
         narrative_html = narrative.replace("\n", "<br>"),
@@ -595,8 +596,10 @@ def send_email_digest(events: list[dict], narrative: str,
         llm_label     = llm_label,
     )
     locations = list(dict.fromkeys(e["location"] for e in events))
-    ts        = events[0]["time"] if events else ""
-    subject   = f"[Frigate] Resumo: {', '.join(locations)} — {ts}"
+    ts_start  = events[0]["time"] if events else ""
+    ts_end    = events[-1]["time"] if events else ""
+    ts_range  = f"{ts_start}–{ts_end}" if ts_start != ts_end else ts_start
+    subject   = f"[Frigate] Resumo: {', '.join(locations)} — {ts_range}"
 
     for recipient in recipients:
         msg            = MIMEMultipart("mixed")

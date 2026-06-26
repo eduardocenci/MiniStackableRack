@@ -90,6 +90,17 @@ automation:
         event_type: timer.finished
         event_data:
           entity_id: timer.frigate_digest_cooldown
+    condition:
+      - condition: template
+        # Enforce a 5-minute minimum gap between auto digests.
+        # Events arriving within 5 min of the previous digest will be rolled into the next one.
+        value_template: >
+          {% set last = states('input_datetime.frigate_digest_last_run') %}
+          {% if last in ('unknown', 'unavailable', '') %}
+            true
+          {% else %}
+            {{ (now() | as_timestamp) - (last | as_datetime | as_timestamp) > 300 }}
+          {% endif %}
     action:
       - action: script.frigate_trigger_digest
 
