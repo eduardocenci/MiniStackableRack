@@ -1,0 +1,34 @@
+# Contexto da propriedade para o Digest de Câmeras
+# O LLM usa este arquivo para descrever eventos usando linguagem familiar,
+# evitando nomes técnicos de câmeras.
+#
+# Edite este arquivo com os detalhes da SUA propriedade.
+# Após editar, implante em: /config/frigate_property_context.txt
+
+[Propriedade]
+# Descreva a orientação e referências gerais da propriedade
+Frente da casa: voltada para a rua
+Fundos da casa: quintal / área de lazer
+Lado esquerdo: (preencher — ex: muro do vizinho, portão lateral)
+Lado direito: (preencher — ex: garagem, corredor lateral)
+
+[Câmeras]
+# Mapeie cada nome técnico de câmera para uma referência de localização humana.
+# Formato: nome_tecnico_da_camera: Referência de localização
+#
+# Exemplo:
+# frente_principal: Frente da casa (entrada principal)
+# frente_campainha: Campainha / portão de entrada
+# lateral_esquerda: Lateral esquerda
+# quintal: Fundos da casa / quintal
+# garagem: Garagem
+#
+# Preencha abaixo com as câmeras reais do sistema:
+
+[Referências]
+# Defina termos locais usados na propriedade para que o LLM fale a mesma linguagem.
+# Exemplo:
+# "portão" = portão principal de entrada (frente)
+# "portãozinho" = portão lateral de pedestres
+# "varanda" = área coberta nos fundos
+

@@ -1,0 +1,5 @@
+# Baseline images are too large to commit — add them directly on the device at
+# /config/frigate_baselines/<camera_name>_day.jpg and <camera_name>_night.jpg
+*.jpg
+*.jpeg
+*.png

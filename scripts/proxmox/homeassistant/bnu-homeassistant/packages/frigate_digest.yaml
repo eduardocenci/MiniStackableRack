@@ -1,0 +1,101 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Frigate Cross-Camera Digest — HA Package
+# Deploy to: /config/packages/frigate_digest.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+
+input_select:
+  frigate_alert_mode:
+    name: "Frigate Alert Mode"
+    icon: mdi:camera-outline
+    options:
+      - "Individual only"       # current behaviour — no digest
+      - "Individual + Digest"   # individual alerts + cooldown digest
+      - "Digest only"           # suppress individual alerts; digest only
+    initial: "Individual only"
+
+  frigate_digest_llm:
+    name: "Digest LLM"
+    icon: mdi:robot
+    options:
+      - "Ollama (local)"        # ply-desktop qwen3-vl:8b — free
+      - "OpenAI (cloud)"        # gpt-4o — billed
+      - "Both"                  # run both; log comparison; send Ollama narrative
+    initial: "Ollama (local)"
+
+input_datetime:
+  frigate_digest_last_run:
+    name: "Frigate Digest Last Run"
+    has_date: true
+    has_time: true
+
+input_number:
+  frigate_digest_openai_cost_total:
+    name: "OpenAI Digest Cost (USD)"
+    min: 0
+    max: 1000
+    step: 0.0001
+    unit_of_measurement: "USD"
+    mode: box
+    icon: mdi:currency-usd
+
+timer:
+  frigate_digest_cooldown:
+    name: "Frigate Digest Cooldown"
+    duration: "00:01:00"
+
+button:
+  frigate_digest_now:
+    name: "Enviar Digest Agora (30 min)"
+    icon: mdi:camera-burst
+
+shell_command:
+  frigate_send_digest: "python3 /config/scripts/frigate_digest.py {{ mode }}"
+
+script:
+  frigate_trigger_digest:
+    alias: "Frigate — Send Cross-Camera Digest"
+    mode: single
+    sequence:
+      - action: shell_command.frigate_send_digest
+        data:
+          mode: "auto"
+
+  frigate_trigger_digest_manual:
+    alias: "Frigate — Digest Now (30 min)"
+    mode: single
+    sequence:
+      - action: shell_command.frigate_send_digest
+        data:
+          mode: "manual"
+
+automation:
+  - alias: "Frigate: Reset digest cooldown on new review"
+    trigger:
+      - platform: mqtt
+        topic: frigate/reviews
+    condition:
+      - condition: template
+        value_template: >
+          {{ trigger.payload_json.after.end_time is not none and
+             states('input_select.frigate_alert_mode') in
+               ['Individual + Digest', 'Digest only'] }}
+    action:
+      - action: timer.start
+        target:
+          entity_id: timer.frigate_digest_cooldown
+
+  - alias: "Frigate: Send digest after quiet window"
+    trigger:
+      - platform: event
+        event_type: timer.finished
+        event_data:
+          entity_id: timer.frigate_digest_cooldown
+    action:
+      - action: script.frigate_trigger_digest
+
+  - alias: "Frigate: On-demand digest button"
+    trigger:
+      - platform: state
+        entity_id: button.frigate_digest_now
+    action:
+      - action: script.frigate_trigger_digest_manual
