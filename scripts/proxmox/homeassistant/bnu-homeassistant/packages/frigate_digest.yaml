@@ -49,10 +49,10 @@ button:
     icon: mdi:camera-burst
 
 shell_command:
-  # setsid creates a new session (new PGID), fully detaching from HA's process group.
-  # This prevents HA's 60-second shell_command timeout from killing the long-running
-  # Ollama call via process-group SIGKILL. The script manages its own log and lock file.
-  frigate_send_digest: "setsid python3 /config/scripts/frigate_digest.py {{ mode }} >> /config/frigate_digest.log 2>&1 &"
+  # The script self-daemonizes: it spawns a worker with start_new_session=True and
+  # exits immediately, so HA's 60-second shell_command timeout never fires.
+  # The worker runs fully independent of HA's process group and handles its own logging.
+  frigate_send_digest: "python3 /config/scripts/frigate_digest.py {{ mode }}"
 
 script:
   frigate_trigger_digest:

@@ -680,8 +680,25 @@ def _lock_is_held() -> bool:
 def main() -> None:
     mode = (sys.argv[1].strip() if len(sys.argv) > 1 else "auto").lower()
 
-    # Single-instance guard: HA runs this via setsid in background; the lock file
-    # prevents concurrent runs and is cleaned up on exit (normal or SIGTERM).
+    if not os.environ.get("_FRIGATE_WORKER"):
+        # Launcher: spawn an independent worker and exit immediately.
+        # HA's shell_command sees the launcher exit in < 0.1 s, so its 60-second
+        # timeout never fires.  The worker runs in a new session (start_new_session=True)
+        # with no connection to HA's process group.
+        env = os.environ.copy()
+        env["_FRIGATE_WORKER"] = "1"
+        subprocess.Popen(
+            [sys.executable] + sys.argv,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+        sys.exit(0)
+
+    # Worker process ─ single-instance guard then run
     if _lock_is_held():
         log.info("Digest already running — skipping trigger")
         sys.exit(0)
