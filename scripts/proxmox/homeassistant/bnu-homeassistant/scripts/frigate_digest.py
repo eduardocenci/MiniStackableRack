@@ -47,6 +47,7 @@ OPENAI_IN_PRICE  = 2.50 / 1_000_000    # USD per input token (gpt-4o)
 OPENAI_OUT_PRICE = 10.0 / 1_000_000    # USD per output token (gpt-4o)
 LOG_FILE         = "/config/frigate_digest.log"
 LOCK_FILE        = "/config/frigate_digest.lock"
+WATERMARK_FILE   = "/config/frigate_digest.watermark"  # max start_ts already sent — dedup guard
 PROPERTY_CTX     = "/config/frigate_property_context.txt"
 BASELINES_DIR    = "/config/frigate_baselines"
 CLIP_DIR         = "/config/www"
@@ -251,16 +252,31 @@ def load_property_context(path: str) -> tuple[str, dict[str, str]]:
     return context, camera_to_location
 
 
+def humanize_cam(cam: str, camera_to_location: dict[str, str]) -> str:
+    """Short, human location label for a camera. Uses an explicit `cam: label`
+    entry from the property file if present, else humanizes the technical name
+    (frente_principal → Frente Principal). Keeps camera tech names out of messages."""
+    label = camera_to_location.get(cam)
+    if label:
+        return label
+    return cam.replace("_", " ").strip().title()
+
+
 # ── Baseline images ───────────────────────────────────────────────────────────
 def load_baselines(cameras: list[str], baselines_dir: str, is_night: bool) -> dict[str, bytes]:
+    """Load one baseline per camera. Prefers the time-of-day variant
+    (<cam>_night.jpg / <cam>_day.jpg) and falls back to a generic <cam>.jpg, so a
+    single picture per camera is enough."""
     suffix = "_night.jpg" if is_night else "_day.jpg"
     result = {}
     for cam in cameras:
-        path = os.path.join(baselines_dir, f"{cam}{suffix}")
-        if os.path.exists(path):
-            with open(path, "rb") as f:
-                result[cam] = f.read()
-            log.info("Baseline loaded: %s", path)
+        for name in (f"{cam}{suffix}", f"{cam}.jpg"):
+            path = os.path.join(baselines_dir, name)
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    result[cam] = f.read()
+                log.info("Baseline loaded: %s", path)
+                break
     return result
 
 
@@ -391,14 +407,12 @@ class _OllamaTimeout(Exception):
     pass
 
 
-def call_ollama(events: list[dict], context: str, baselines: dict[str, bytes],
-                snapshots: dict[str, bytes | None], window_min: int) -> tuple[str | None, dict]:
-    """Returns (narrative_or_None, stats_dict).
+def call_ollama(prompt: str, images: list[bytes]) -> tuple[str | None, dict]:
+    """Run the consolidation prompt through Ollama. Returns (narrative_or_None, stats).
 
     stats keys: n_images, elapsed_s, timed_out, error,
                 prompt_tokens, output_tokens, response_chars, thinking_chars, done_reason.
     """
-    prompt, images = _build_prompt(events, context, baselines, snapshots, window_min)
     payload: dict = {
         "model":   OLLAMA_MODEL,
         "prompt":  prompt,
@@ -460,12 +474,8 @@ def call_ollama(events: list[dict], context: str, baselines: dict[str, bytes],
 
 
 # ── OpenAI ────────────────────────────────────────────────────────────────────
-def call_openai(events: list[dict], context: str, baselines: dict[str, bytes],
-                snapshots: dict[str, bytes | None], window_min: int,
-                api_key: str) -> tuple[str | None, int, int]:
+def call_openai(prompt: str, images: list[bytes], api_key: str) -> tuple[str | None, int, int]:
     """Returns (narrative, input_tokens, output_tokens)."""
-    prompt, images = _build_prompt(events, context, baselines, snapshots, window_min)
-
     content: list[dict] = [{"type": "text", "text": prompt}]
     for img_bytes in images:
         b64 = base64.b64encode(img_bytes).decode()
@@ -518,34 +528,39 @@ def send_whatsapp_digest(events: list[dict], narrative: str,
 
     client = WahaClient(secrets, attempts=SEND_ATTEMPTS)
 
-    locations = list(dict.fromkeys(e["location"] for e in events))
-    ts_start = events[0]["time"] if events else ""
-    ts_end   = events[-1]["time"] if events else ""
-    ts_range = f"{ts_start}–{ts_end}" if ts_start != ts_end else ts_start
-    text = (
-        f"*📹 Resumo — {ts_range}*\n\n"
-        f"{narrative}\n\n"
-        f"_{len(events)} evento(s) · {', '.join(locations)}_"
-    )
+    # Caption = the whole notification, sent as ONE message (video+caption) so the user
+    # gets a single alert per burst, not a text then a separate video (#3, #8).
+    caption = _digest_caption(events, narrative)
 
-    ok, detail = client.send_text(jid, text, timeout=30)
-    if not ok:
-        log.error("WhatsApp sendText failed after %d attempts: %s", SEND_ATTEMPTS, detail)
-        return False, detail
-    log.info("WhatsApp text sent")
+    filename = os.path.basename(video_path) if (video_path and os.path.exists(video_path)) else None
+    if filename:
+        # Serve via HA local web server so WAHA fetches it directly (avoids a large base64 payload)
+        video_url = f"http://10.1.1.124:8123/local/{filename}"
+        ok, detail = client.send_video_url(jid, video_url, filename, caption=caption, timeout=120)
+        if ok:
+            log.info("WhatsApp digest sent (video + caption)")
+            return True, detail
+        log.warning("Video+caption send failed (%s) — falling back to text-only", detail)
 
-    if not video_path or not os.path.exists(video_path):
+    ok, detail = client.send_text(jid, caption, timeout=30)
+    if ok:
+        log.info("WhatsApp digest sent (text only)")
         return True, detail
+    log.error("WhatsApp digest send failed after %d attempts: %s", SEND_ATTEMPTS, detail)
+    return False, detail
 
-    filename = os.path.basename(video_path)
-    # Serve via HA local web server so WAHA fetches it directly (avoids a large base64 payload)
-    video_url = f"http://10.1.1.124:8123/local/{filename}"
-    vok, vdetail = client.send_video_url(jid, video_url, filename, timeout=120)
-    if vok:
-        log.info("WhatsApp video sent via URL")
-    else:
-        log.warning("WhatsApp video send failed (non-fatal): %s", vdetail)
-    return True, detail
+
+def _digest_caption(events: list[dict], narrative: str) -> str:
+    """Single rich caption: title, start–end range (always both), narrative, footer."""
+    locations = list(dict.fromkeys(e["location"] for e in events))
+    start = datetime.datetime.fromtimestamp(min(e["start_ts"] for e in events)).strftime("%H:%M:%S")
+    end   = datetime.datetime.fromtimestamp(max(e["end_ts"] for e in events)).strftime("%H:%M:%S")
+    return (
+        f"📹 *Resumo de Atividade*\n"
+        f"🕐 {start} – {end}\n\n"
+        f"{narrative}\n\n"
+        f"📍 {', '.join(locations)}   ·   🎬 {len(events)} evento(s)"
+    )
 
 
 # ── Debug channel (SmokeTests group, email fallback) ─────────────────────────
@@ -602,6 +617,40 @@ def send_debug_whatsapp(text: str, secrets: dict) -> bool:
         reason = "smoketest_jid missing/invalid"
 
     return _send_debug_email(text, secrets, reason)
+
+
+def send_debug_images(images: list[bytes], secrets: dict, caption_prefix: str = "LLM input") -> None:
+    """Best-effort: send the exact images handed to the LLM to the SmokeTests group,
+    so the debug channel shows what the model actually saw. No email fallback."""
+    jid = secrets.get("whatsapp_smoketest_jid", "")
+    if not (jid and "@g.us" in jid) or not images:
+        return
+    client = WahaClient(secrets, attempts=2)
+    n = len(images)
+    for i, img in enumerate(images, 1):
+        try:
+            b64 = base64.b64encode(img).decode()
+            client.send_image_b64(jid, b64, f"debug_{i}.jpg", caption=f"{caption_prefix} {i}/{n}")
+        except Exception as exc:  # noqa: BLE001 — debug must never break the digest
+            log.warning("[DEBUG] image %d/%d send failed: %s", i, n, exc)
+
+
+# ── Watermark (single-send guard) ─────────────────────────────────────────────
+def _read_watermark() -> float:
+    """Latest event start_ts already delivered; 0.0 if none/unreadable."""
+    try:
+        with open(WATERMARK_FILE) as f:
+            return float(f.read().strip())
+    except (OSError, ValueError):
+        return 0.0
+
+
+def _write_watermark(ts: float) -> None:
+    try:
+        with open(WATERMARK_FILE, "w") as f:
+            f.write(repr(ts))
+    except OSError as exc:
+        log.warning("Cannot write watermark (%s)", exc)
 
 
 # ── Email sender ──────────────────────────────────────────────────────────────
@@ -875,7 +924,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         start_ts = r.get("start_time") or 0
         events.append({
             "camera":       cam,
-            "location":     camera_to_location.get(cam, cam),
+            "location":     humanize_cam(cam, camera_to_location),
             "time":         datetime.datetime.fromtimestamp(start_ts).strftime("%H:%M"),
             "start_ts":     start_ts,
             "end_ts":       r.get("end_time") or start_ts,
@@ -886,6 +935,12 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
 
     span_start = datetime.datetime.fromtimestamp(events[0]["start_ts"]).strftime("%H:%M:%S")
     span_end   = datetime.datetime.fromtimestamp(events[-1]["end_ts"]).strftime("%H:%M:%S")
+
+    # Single-send guard (#8): skip if this burst's newest event was already delivered.
+    # Without this, every cooldown-finish re-sends the same "latest burst". Auto only.
+    latest_ts = max(e["start_ts"] for e in events)
+    if mode == "auto" and latest_ts <= _read_watermark():
+        raise _DigestSkip(f"burst already delivered (latest start_ts={latest_ts:.0f} ≤ watermark)")
 
     # Download clips (actual recordings) and snapshots (keyframes for LLM)
     clips: dict[str, str | None]     = {}
@@ -903,21 +958,27 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     all_cams = list(dict.fromkeys(e["camera"] for e in events))
     baselines = load_baselines(all_cams, BASELINES_DIR, is_night)
 
+    # Build the consolidation prompt once — reused for Ollama/OpenAI and the debug dump.
+    prompt, images = _build_prompt(events, context, baselines, snapshots, window_min)
+
     # LLM inference
     llm_mode = get_ha_state("input_select.frigate_digest_llm", ha_token) or "Ollama (local)"
     log.info("LLM mode: %s", llm_mode)
 
-    # Debug D1: "triggered" — as soon as a burst is in hand, before inference.
+    # Debug D1: triggered summary + the EXACT prompt and images handed to the LLM (#4).
     if debug_mode:
         n_snaps = sum(1 for s in snapshots.values() if s)
         send_debug_whatsapp(
             f"🔍 *Frigate Digest* · {mode}\n"
             f"⏱ burst {span_start} → {span_end}\n"
             f"📸 {len(events)} event(s) · {', '.join(cameras_seen)}\n"
-            f"🖼 {n_snaps} snapshot(s) · 🎞 {'ok' if video_path else 'none'} → {llm_mode}\n"
+            f"🖼 {len(images)} LLM image(s) — {n_snaps} snapshot(s) + {len(baselines)} baseline(s) · "
+            f"🎞 {'ok' if video_path else 'none'} → {llm_mode}\n"
             f"⏳ Inference starting…",
             secrets,
         )
+        send_debug_whatsapp(f"🧾 *Prompt enviado ao LLM:*\n\n{prompt}", secrets)
+        send_debug_images(images, secrets, caption_prefix="LLM input")
 
     narrative_ollama: str | None = None
     narrative_openai: str | None = None
@@ -925,7 +986,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     ollama_stats: dict            = {}
 
     if llm_mode in ("Ollama (local)", "Both"):
-        narrative_ollama, ollama_stats = call_ollama(events, context, baselines, snapshots, window_min)
+        narrative_ollama, ollama_stats = call_ollama(prompt, images)
 
         # Debug D2: post-inference stats / failure detail.
         if debug_mode:
@@ -950,8 +1011,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         if not api_key:
             log.error("openai_api_key not in secrets.yaml — skipping OpenAI")
         else:
-            narrative_openai, tok_in, tok_out = call_openai(
-                events, context, baselines, snapshots, window_min, api_key)
+            narrative_openai, tok_in, tok_out = call_openai(prompt, images, api_key)
             if tok_in or tok_out:
                 openai_cost = tok_in * OPENAI_IN_PRICE + tok_out * OPENAI_OUT_PRICE
                 log.info("OpenAI cost this call: $%.4f (%d in / %d out tokens)",
@@ -980,6 +1040,8 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
 
     if notify_whatsapp == "on":
         wa_ok, wa_detail = send_whatsapp_digest(events, narrative, video_path, secrets)
+        if wa_ok and mode == "auto":
+            _write_watermark(latest_ts)   # mark this burst delivered → never re-send it
         if debug_mode:
             # Debug D3: did the real notification actually go out?
             send_debug_whatsapp(

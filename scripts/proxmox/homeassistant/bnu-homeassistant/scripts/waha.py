@@ -81,6 +81,16 @@ class WahaClient:
             timeout, "WAHA sendVideo(b64)",
         )
 
+    def send_image_b64(self, chat_id: str, data_b64: str, filename: str,
+                       caption: str = "", timeout: int = 60) -> tuple[bool, str]:
+        """Send an image from inline base64 data (used for debug snapshots)."""
+        return self._post(
+            "/api/sendImage",
+            {"session": self.session, "chatId": chat_id, "caption": caption,
+             "file": {"mimetype": "image/jpeg", "filename": filename, "data": data_b64}},
+            timeout, "WAHA sendImage(b64)",
+        )
+
     def session_status(self, timeout: int = 10) -> str:
         """Session status: WORKING / SCAN_QR_CODE / STARTING / STOPPED / FAILED, '' on error."""
         try:
