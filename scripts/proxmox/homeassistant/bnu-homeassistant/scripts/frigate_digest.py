@@ -52,6 +52,8 @@ PROPERTY_CTX     = "/config/frigate_property_context.txt"
 BASELINES_DIR    = "/config/frigate_baselines"
 CLIP_DIR         = "/config/www"
 FFMPEG           = "/usr/bin/ffmpeg"
+FFPROBE          = "/usr/bin/ffprobe"
+PROMPT_FILE      = "/config/frigate_digest_prompt.txt"  # user-editable LLM prompt template
 RELEVANT_OBJECTS = {"person", "car", "dog", "cat", "animal", "bicycle", "motorcycle"}
 LLM_TIMEOUT      = 600   # seconds — generation can be slow on first call
 DAY_START        = 6     # 06:00
@@ -344,7 +346,74 @@ def _ffmpeg_err(exc: Exception) -> str:
     return str(exc)
 
 
+def _probe_duration(path: str) -> float:
+    """Clip duration in seconds via ffprobe, 0.0 on failure."""
+    try:
+        out = subprocess.run(
+            [FFPROBE, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", path],
+            capture_output=True, timeout=20,
+        )
+        return float(out.stdout.decode().strip())
+    except (subprocess.SubprocessError, ValueError):
+        return 0.0
+
+
 # ── LLM prompt builder ────────────────────────────────────────────────────────
+# Editable template. Tokens __CONTEXT__, __IMAGE_NOTE__, __WINDOW_MIN__, __EVENTS__ are
+# substituted at runtime; everything else (role, INSTRUÇÕES, the RELEVANTE gate) is yours
+# to edit at PROMPT_FILE (/config/frigate_digest_prompt.txt). Falls back to this default.
+_DEFAULT_PROMPT_TEMPLATE = """\
+Você é um assistente de segurança residencial. Analise os dados e imagens abaixo.
+__CONTEXT____IMAGE_NOTE__
+[EVENTOS DETECTADOS — últimos __WINDOW_MIN__ min]
+__EVENTS__
+
+INSTRUÇÕES:
+- Comece SEMPRE com uma linha de relevância, exatamente "RELEVANTE: SIM" ou "RELEVANTE: NAO".
+  Use NAO quando NÃO há pessoas E há apenas veículo(s) parado(s)/estático(s) (que não chegam
+  nem saem), ou quando o disparo foi causado por vegetação, galhos, sombras, variação de luz,
+  chuva ou animais pequenos (ex.: pássaros). Use SIM quando há uma pessoa, um veículo ou pessoa
+  chegando/saindo/se movendo, ou qualquer situação relevante de segurança.
+- Use SOMENTE as referências de localização fornecidas (frente, fundos, portão, etc.).
+- NUNCA mencione nomes técnicos de câmeras.
+- Se imagens baseline forem fornecidas, compare com as atuais e descreva o que mudou.
+- Conecte eventos entre locais quando fizer sentido (ex.: mesma pessoa em locais diferentes).
+- Após a linha RELEVANTE, escreva o resumo em 2–5 frases em português. Mencione preocupações
+  de segurança se houver. Responda apenas com a linha RELEVANTE e o resumo, sem título."""
+
+
+def _load_prompt_template() -> str:
+    """User's prompt template from PROMPT_FILE, else the built-in default."""
+    try:
+        with open(PROMPT_FILE, encoding="utf-8") as f:
+            text = f.read().strip()
+        if text:
+            return text
+    except OSError:
+        pass
+    return _DEFAULT_PROMPT_TEMPLATE
+
+
+def _parse_relevance(text: str) -> tuple[bool, str]:
+    """Split the LLM output into (is_relevant, narrative). The model emits a leading
+    'RELEVANTE: SIM|NAO' line (see prompt). Fail-safe: relevant unless an explicit NAO."""
+    if not text:
+        return True, text
+    relevant, out = True, []
+    seen = False
+    for line in text.splitlines():
+        norm = line.strip().upper().replace("Ã", "A").replace("Á", "A")
+        if not seen and norm.startswith("RELEVANTE"):
+            seen = True
+            verdict = norm.split(":", 1)[1] if ":" in norm else norm
+            if "NAO" in verdict or verdict.strip() in ("N", "NO", "FALSE"):
+                relevant = False
+            continue  # drop the gate line from the narrative
+        out.append(line)
+    return relevant, "\n".join(out).strip()
+
+
 def _build_prompt(events: list[dict], context: str, baselines: dict[str, bytes],
                   snapshots: dict[str, bytes | None],
                   window_min: int) -> tuple[str, list[bytes]]:
@@ -387,17 +456,11 @@ def _build_prompt(events: list[dict], context: str, baselines: dict[str, bytes],
     )
 
     prompt = (
-        "Você é um assistente de segurança residencial. Analise os dados e imagens abaixo.\n"
-        f"{context_block}{image_note}\n"
-        f"[EVENTOS DETECTADOS — últimos {window_min} min]\n"
-        f"{event_lines}\n\n"
-        "INSTRUÇÕES:\n"
-        "- Use SOMENTE as referências de localização fornecidas (frente, fundos, portão, etc.).\n"
-        "- NUNCA mencione nomes técnicos de câmeras.\n"
-        "- Se imagens baseline forem fornecidas, compare com as atuais e descreva diferenças.\n"
-        "- Conecte eventos entre locais quando fizer sentido (ex: mesma pessoa em locais diferentes).\n"
-        "- Escreva 2–5 frases em português. Mencione preocupações de segurança se houver.\n"
-        "- Responda APENAS com o resumo narrativo, sem introdução, título ou conclusão."
+        _load_prompt_template()
+        .replace("__CONTEXT__", context_block)
+        .replace("__IMAGE_NOTE__", image_note)
+        .replace("__WINDOW_MIN__", str(window_min))
+        .replace("__EVENTS__", event_lines)
     )
     return prompt, image_bytes
 
@@ -933,9 +996,6 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
             "detection_id": det_id,
         })
 
-    span_start = datetime.datetime.fromtimestamp(events[0]["start_ts"]).strftime("%H:%M:%S")
-    span_end   = datetime.datetime.fromtimestamp(events[-1]["end_ts"]).strftime("%H:%M:%S")
-
     # Single-send guard (#8): skip if this burst's newest event was already delivered.
     # Without this, every cooldown-finish re-sends the same "latest burst". Auto only.
     latest_ts = max(e["start_ts"] for e in events)
@@ -950,6 +1010,19 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         if det_id:
             clips[det_id]     = download_clip(base, det_id, CLIP_DIR)
             snapshots[det_id] = fetch_snapshot(base, det_id)
+
+    # Real end time: Frigate's review end_time is often unset/equal at digest time, which
+    # collapsed the header to "HH:MM:SS – HH:MM:SS". Use the recorded clip duration so the
+    # displayed span reflects the actual activity length.
+    for event in events:
+        cp = clips.get(event["detection_id"] or "")
+        if cp:
+            dur = _probe_duration(cp)
+            if dur > 0:
+                event["end_ts"] = max(event["end_ts"], event["start_ts"] + dur)
+
+    span_start = datetime.datetime.fromtimestamp(min(e["start_ts"] for e in events)).strftime("%H:%M:%S")
+    span_end   = datetime.datetime.fromtimestamp(max(e["end_ts"] for e in events)).strftime("%H:%M:%S")
 
     # Compile video (single-pass CFR, chronological)
     video_path = compile_digest_video(events, clips)
@@ -1027,6 +1100,24 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     narrative = narrative_ollama or narrative_openai
     if not narrative:
         raise RuntimeError("no LLM narrative produced (inference failed/timed out)")
+
+    # Relevance gate (#3): the LLM starts its answer with "RELEVANTE: SIM/NAO". If it judges
+    # the scene not noteworthy (no person; only static/parked vehicles; vegetation, branches,
+    # shadows, light, birds), suppress the notification. Advance the watermark so the same
+    # burst isn't re-evaluated on the next cooldown.
+    relevant, narrative = _parse_relevance(narrative)
+    if not relevant:
+        log.info("LLM relevance gate → NAO; suppressing digest for this burst")
+        if mode == "auto":
+            _write_watermark(latest_ts)
+        if debug_mode:
+            send_debug_whatsapp(
+                "🟢 *Digest suprimido* — cena não relevante "
+                "(sem pessoas; veículo estático / vegetação)\n"
+                f"{span_start}–{span_end} · {', '.join(cameras_seen)}",
+                secrets,
+            )
+        raise _DigestSkip("not noteworthy per LLM relevance gate")
 
     llm_label = (
         "Ollama" if (narrative_ollama and not narrative_openai) else
