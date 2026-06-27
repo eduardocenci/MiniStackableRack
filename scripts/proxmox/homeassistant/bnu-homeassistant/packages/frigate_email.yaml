@@ -58,7 +58,8 @@ automation:
     condition:
       - condition: template
         value_template: >
-          {{ trigger.payload_json.after.end_time is not none
+          {{ states('input_select.frigate_alert_mode') != 'Digest only'
+             and trigger.payload_json.after.end_time is not none
              and (
                trigger.payload_json.after.data.description | default('') | length > 0
                or trigger.payload_json.after.data.metadata.title | default('') | length > 0
