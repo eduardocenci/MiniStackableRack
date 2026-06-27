@@ -10,7 +10,7 @@ auth:
 ui:
   timezone: America/Sao_Paulo
 
-go2rtc:
+go2rtc: # 
   streams:
     frente_principal:
       - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/801
@@ -27,11 +27,9 @@ go2rtc:
     fundos_overview:
       - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/101
     frente_campainha:
-      # HikVision doorbell — not a continuous camera; pauses RTSP stream when idle.
-      # Raw rtsp:// source causes RTP seq gaps (lost PPS) when the doorbell reconnects,
-      # crashing Frigate's ffmpeg decoder. The ffmpeg: source type handles reconnects
-      # internally and outputs a clean stream without sequence gaps.
-      - "ffmpeg:rtsp://admin:<BNU_CAMERA_PASSWORD>@10.1.1.65:554/Streaming/Channels/101#video=copy#audio=copy"
+      - ffmpeg:rtsp://admin:<BNU_CAMERA_PASSWORD>@10.1.1.65:554/Streaming/Channels/101#video=copy#audio=copy   # Before: rtsp://admin:<BNU_CAMERA_PASSWORD>@10.1.1.65:554/Streaming/Channels/101
+  # http://10.1.1.160:1984/stream.html?src=frente_campainha&src=frente_garagem&src=frente_overview&src=frente_pedestres&src=frente_principal&src=fundos_overview&src=lateral_direita&src=lateral_esquerda&mode=webrtc,mse,hls,mjpeg
+
 ffmpeg:
   hwaccel_args: auto
   input_args: preset-rtsp-restream
@@ -40,6 +38,10 @@ detectors:
   detector01:
     type: cpu
 
+# NOTE: the OpenVINO CPU plugin fails to load in this LXC
+# ("Failed to create plugin libopenvino_intel_cpu_plugin.so for device CPU" / stoi),
+# so we stay on the bundled CPU tflite detector. False positives are addressed via the
+# object score filters under `objects:` below instead of by a model swap.
 model:
   path: /models/cpu_model.tflite
 
@@ -70,15 +72,14 @@ cameras:
     review:
       genai:
         enabled: true
-        activity_context_prompt: Analyze the these images from the {camera}
-          security camera from my home. At the left side of the image is the
+        activity_context_prompt: Analyze the these images from the {camera} 
+          security camera from my home. At the left side of the image is the 
           house. Left side center portion there is a garage gate from the house,
-          at the left top side a pedestrian entrance through a gate and at the
-          bottom a pedestrian entrance through a door. At the right of the image
-          is the main street. At the center of the image a pathway for both
-          vehicles and pedestrians. Describe what vehicles, pedestrians or
-          animals are doing. These are the customary vehicles at this house, a
-          GWM Ora, a Jeep Cherokee, a Mercedes EQE and a Ford Fusion.
+          at the left top side a pedestrian entrance to the back of the house 
+          through a gate. At the bottom left a pedestrian entrance through the 
+          main front doors of the home. At the right of the image is the main 
+          street. At the center of the image a pathway for both vehicles and 
+          pedestrians. Describe what vehicles, pedestrians or animals are doing.
 
     motion:
       threshold: 29
@@ -90,7 +91,7 @@ cameras:
         - 0.085,0.754,0.226,0.525,0.168,0.199,0,0.317,0.001,0.423
     zones:
       estacionamento_portao:
-        coordinates:
+        coordinates: 
           0.2,0.307,0.357,0.186,0.647,0.136,0.688,0.339,0.483,0.462,0.235,0.516
         loitering_time: 0
         objects: car
@@ -100,6 +101,15 @@ cameras:
       enabled: false
     enabled: true
     friendly_name: Frente Pedestres
+    review:
+      genai:
+        enabled: true
+        activity_context_prompt: Analyze the these images from the {camera} 
+          security camera from my home. Camera is mounted in the top of the 
+          front of the house, towards the street and the left side of the house.
+          There is a pedestrian pathway that leads to the main front door 
+          entrances at the bottom right of the image. The top portion of the 
+          image is the street, less priority.
     ffmpeg:
       inputs:
         - path: rtsp://127.0.0.1:8554/frente_pedestres
@@ -122,6 +132,17 @@ cameras:
     lpr:
       enabled: false
     enabled: true
+    review:
+      genai:
+        enabled: true
+        activity_context_prompt: Analyze the these images from the {camera} 
+          security camera from my home. Camera is mounted in the top of the 
+          front of the house, towards the street and the right side of the 
+          house. On the right side of the image there is a pedestrian pathway 
+          from the street to the main front door entrances at the bottom right 
+          of the image. At the left side of the image we have the vehicle 
+          pathway from the street to the garage. The top portion of the image is
+          the street, less priority of analysis.
     friendly_name: Frente Overview
     ffmpeg:
       inputs:
@@ -157,20 +178,60 @@ cameras:
     live:
       streams:
         Stream 1: frente_garagem
+    # objects:
+    #   genai:
+    #     enabled: true
+    #     use_snapshot: true
+    #     prompt: Analyze these images from the {camera} security camera at the garage entrance. At the top of the image is the street. At the center of the image is the driveway.
+    #       At the bottom left of the image is a pedestrian pathway through a gate on the right side of the house. At the bottom center/right of the image is the garage entrance door.
+    #     object_prompts:
+    #       car: Try to read the license plate of the car. Say car predominant color. Try
+    #         to infer if vehicle is an SUV, sedan, coupe, hatchback.
+    #       person: Examine the person in these images. What are they doing, and 
+    #         how might their actions suggest their purpose (e.g., delivering 
+    #         something, approaching, leaving)? If they are carrying or 
+    #         interacting with a package, include details about its source or 
+    #         destination.
+    #       cat: Observe the cat in these images. Focus on its movement and intent
+    #         (e.g., wandering, hunting, interacting with objects). If the cat is 
+    #         near the flower pots or engaging in any specific actions, mention 
+    #         it.
+    #       dog: Observe the dog in these images. Focus on its movement and intent
+    #         (e.g., wandering, hunting, interacting with objects). If the cat is 
+    #         near the flower pots or engaging in any specific actions, mention 
+    #         it.
+    #     objects:
+    #       - person
+    #       - cat
+    #       - dog
+    #       - car
+    #       - capybara
     review:
       genai:
         enabled: true
         activity_context_prompt: Analyze these images from the {camera} security
-          camera at the garage entrance. At the top of the image is the street.
-          At the center of the image is the driveway. At the bottom left of the
-          image is a pedestrian pathway through a gate on the right side of the
-          house. At the bottom center/right of the image is the garage entrance
-          door.
+          camera at the garage entrance. At the top of the image is the street. 
+          At the center of the image is the driveway. At the bottom left of the 
+          image is a pedestrian pathway through a gate on the right side of the 
+          house. At the bottom center/right of the image is the garage entrance 
+          door. If a car drives towards the camera and disappears it is driving 
+          inside the garage. If a car drives away from the camera it is driving 
+          to the street.
     motion:
       mask: 0.532,0,0.995,0.002,0.999,0.289
+      threshold: 21
+      contour_area: 5
+      improve_contrast: true
   lateral_direita:
     lpr:
       enabled: false
+    review:
+      genai:
+        enabled: true
+        activity_context_prompt: This camera mounted in the roof of the house at
+          it's right side, pointed towards the back of the house. Anyone walking
+          away from the camera is going towards the back of the house. Anyone 
+          walking towards the camera is walking to the front of the house.
     enabled: true
     friendly_name: Lateral Direita
     ffmpeg:
@@ -189,6 +250,15 @@ cameras:
   lateral_esquerda:
     enabled: true
     friendly_name: Lateral Esquerda
+    review:
+      genai:
+        enabled: true
+        activity_context_prompt: This camera is mounted at the back of the 
+          property, left corner, facing the back of the house. At the right of 
+          the image you can see the hallway along the left side of the house. At
+          the left side of the image you see the kitchen window and beneath it 
+          the bottled gas cylinders. At the bottom of the frame of the image 
+          there is a garden.
     ffmpeg:
       inputs:
         - path: rtsp://127.0.0.1:8554/lateral_esquerda
@@ -222,6 +292,9 @@ cameras:
         Stream 1: fundos_overview
     motion:
       mask: 0.003,0.672,0,0.363,0.095,0.3,0.087,0.449
+      threshold: 30
+      contour_area: 5
+      improve_contrast: true
     zones:
       clothes_hanger:
         coordinates: 0,0.611,0.408,0.515,0.678,0.991,0.004,0.996
@@ -232,19 +305,25 @@ cameras:
       genai:
         enabled: true
         activity_context_prompt: Analyze the these images from a security camera
-          from my home located at it's back. At the right side of the image
-          there is a pathway to the left side of the house. At the Bottom right
-          side of the image is a small garden. At the bottom left side of the
+          from my home located at it's back. At the right side of the image 
+          there is a pathway to the left side of the house. At the Bottom right 
+          side of the image is a small garden. At the bottom left side of the 
           image is a clothes hanger. At the top left side is a table obscured by
-          the tree, and to the left of it a cooking area and some trash cans.
-          There are two entrance doors to the house on the right side of the
-          image, one more in the center of the image, another higher in the
-          image. Describe what a person or animal is doing in the images.
+          the tree, and to the left of it a cooking area and some trash cans. 
+          There are two entrance doors to the back of the house on the right 
+          side of the image, one more in the center of the image (door to 
+          laundry), another higher in the image (door to garage). Describe what 
+          a person or animal is doing in the images.
   frente_campainha:
     lpr:
       enabled: false
     enabled: true
     friendly_name: Frente Campainha
+    review:
+      genai:
+        enabled: true
+        activity_context_prompt: This is the doorbell camera from the house, at 
+          the main entrance of the home in it's front.
     ffmpeg:
       inputs:
         - path: rtsp://127.0.0.1:8554/frente_campainha
@@ -252,12 +331,14 @@ cameras:
           roles:
             - detect
             - record
+            # - audio
     detect:
       width: 1280
       height: 720
     live:
       streams:
         Stream 1: frente_campainha
+
     motion:
       mask:
         - 0.822,0.66,0.821,0.371,0.001,0.397,0,0.624
@@ -268,10 +349,30 @@ cameras:
 objects:
   track:
     - person
+    # - face
     - car
     - bus
     - bicycle
     - motorcycle
+  # Raised confidence floors to cut false positives (default min_score 0.5 / threshold 0.7).
+  # min_score = minimum score to consider a detection; threshold = average score to
+  # accept it as a real object. Tighten further per-camera if a view still over-triggers.
+  filters:
+    person:
+      min_score: 0.6
+      threshold: 0.75
+    car:
+      min_score: 0.6
+      threshold: 0.75
+    bus:
+      min_score: 0.6
+      threshold: 0.78
+    bicycle:
+      min_score: 0.6
+      threshold: 0.78
+    motorcycle:
+      min_score: 0.6
+      threshold: 0.78
 version: 0.17-0
 semantic_search:
   enabled: false
@@ -280,7 +381,7 @@ face_recognition:
   enabled: true
   model_size: small
 lpr:
-  enabled: true
+  enabled: false
 classification:
   bird:
     enabled: false
@@ -315,3 +416,4 @@ logger:
   default: warning
   logs:
     frigate.genai: debug
+
