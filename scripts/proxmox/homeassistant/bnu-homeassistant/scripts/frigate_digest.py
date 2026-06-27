@@ -52,7 +52,6 @@ PROPERTY_CTX     = "/config/frigate_property_context.txt"
 BASELINES_DIR    = "/config/frigate_baselines"
 CLIP_DIR         = "/config/www"
 FFMPEG           = "/usr/bin/ffmpeg"
-FFPROBE          = "/usr/bin/ffprobe"
 PROMPT_FILE      = "/config/frigate_digest_prompt.txt"  # user-editable LLM prompt template
 RELEVANT_OBJECTS = {"person", "car", "dog", "cat", "animal", "bicycle", "motorcycle"}
 LLM_TIMEOUT      = 600   # seconds — generation can be slow on first call
@@ -167,6 +166,20 @@ def fetch_snapshot(base: str, event_id: str) -> bytes | None:
     except requests.RequestException as exc:
         log.warning("Failed to fetch snapshot for %s: %s", event_id, exc)
         return None
+
+
+def fetch_event_times(base: str, event_id: str) -> tuple[float | None, float | None]:
+    """Real object-track (start_time, end_time) from Frigate — the actual time the
+    activity started/stopped. The review window can be far shorter than the event, and
+    the video length reflects the montage, so neither is a good source for the time range."""
+    try:
+        r = requests.get(f"{base}/api/events/{event_id}", timeout=15)
+        if r.ok:
+            e = r.json()
+            return e.get("start_time"), e.get("end_time")
+    except requests.RequestException as exc:
+        log.warning("fetch_event_times(%s) failed: %s", event_id, exc)
+    return None, None
 
 
 # ── Encoding / GenAI helpers ──────────────────────────────────────────────────
@@ -344,19 +357,6 @@ def _ffmpeg_err(exc: Exception) -> str:
         tail = stderr.decode("utf-8", "replace").strip().splitlines()[-3:]
         return " | ".join(tail) if tail else str(exc)
     return str(exc)
-
-
-def _probe_duration(path: str) -> float:
-    """Clip duration in seconds via ffprobe, 0.0 on failure."""
-    try:
-        out = subprocess.run(
-            [FFPROBE, "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=nw=1:nk=1", path],
-            capture_output=True, timeout=20,
-        )
-        return float(out.stdout.decode().strip())
-    except (subprocess.SubprocessError, ValueError):
-        return 0.0
 
 
 # ── LLM prompt builder ────────────────────────────────────────────────────────
@@ -1011,15 +1011,21 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
             clips[det_id]     = download_clip(base, det_id, CLIP_DIR)
             snapshots[det_id] = fetch_snapshot(base, det_id)
 
-    # Real end time: Frigate's review end_time is often unset/equal at digest time, which
-    # collapsed the header to "HH:MM:SS – HH:MM:SS". Use the recorded clip duration so the
-    # displayed span reflects the actual activity length.
+    # Real activity times come from the EVENT (tracked object) — not the review window
+    # (often ~0–1 s) nor the video (a multi-camera montage). Use Frigate's event
+    # start_time/end_time so the header shows when the action actually started and stopped.
     for event in events:
-        cp = clips.get(event["detection_id"] or "")
-        if cp:
-            dur = _probe_duration(cp)
-            if dur > 0:
-                event["end_ts"] = max(event["end_ts"], event["start_ts"] + dur)
+        did = event["detection_id"]
+        if not did:
+            continue
+        est, een = fetch_event_times(base, did)
+        if est:
+            event["start_ts"] = est
+            event["time"]     = datetime.datetime.fromtimestamp(est).strftime("%H:%M")
+        if een:
+            event["end_ts"] = een
+        elif est:
+            event["end_ts"] = max(event.get("end_ts") or 0, est)
 
     span_start = datetime.datetime.fromtimestamp(min(e["start_ts"] for e in events)).strftime("%H:%M:%S")
     span_end   = datetime.datetime.fromtimestamp(max(e["end_ts"] for e in events)).strftime("%H:%M:%S")
