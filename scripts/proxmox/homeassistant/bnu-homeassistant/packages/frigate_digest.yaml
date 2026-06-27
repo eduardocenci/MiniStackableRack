@@ -7,7 +7,7 @@ input_boolean:
   frigate_debug:
     name: "Frigate Debug"
     icon: mdi:bug
-    initial: off
+    # No `initial:` — HA restores the last value after a restart (an `initial:` would force it back).
 
 input_select:
   frigate_alert_mode:
@@ -17,7 +17,7 @@ input_select:
       - "Individual only"       # current behaviour — no digest
       - "Individual + Digest"   # individual alerts + cooldown digest
       - "Digest only"           # suppress individual alerts; digest only
-    initial: "Individual only"
+    # No `initial:` — restores the last selected mode across restarts.
 
   frigate_digest_llm:
     name: "Digest LLM"
@@ -26,7 +26,7 @@ input_select:
       - "Ollama (local)"        # ply-desktop qwen3-vl:8b — free
       - "OpenAI (cloud)"        # gpt-4o — billed
       - "Both"                  # run both; log comparison; send Ollama narrative
-    initial: "Ollama (local)"
+    # No `initial:` — restores the last selected LLM across restarts.
 
 input_datetime:
   frigate_digest_last_run:
