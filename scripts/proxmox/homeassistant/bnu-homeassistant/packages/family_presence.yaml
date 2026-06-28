@@ -1,0 +1,66 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Family Presence — bnu-homeassistant
+# Deploy to: /config/packages/family_presence.yaml
+#
+# Mirrors the bg-homeassistant approach (a group of the family device_trackers, present
+# if ANY member is home) but as a single binary_sensor with a 10-minute off-delay so a
+# brief Wi-Fi drop does not flip the house to "empty".
+# ──────────────────────────────────────────────────────────────────────────────
+
+template:
+  - binary_sensor:
+      - name: "Family Present"
+        unique_id: bnu_family_present
+        device_class: presence
+        # ON the instant any member's device is home; the delay_off below keeps it ON
+        # for 10 min after the last one leaves (tolerates brief disconnects).
+        state: >
+          {{ is_state('device_tracker.jorge', 'home')
+             or is_state('device_tracker.duda', 'home')
+             or is_state('device_tracker.silvana', 'home')
+             or is_state('device_tracker.cencis_iphone_15_pro', 'home')
+             or is_state('device_tracker.iphone_de_jorge', 'home') }}
+        delay_off: "00:10:00"
+
+input_boolean:
+  # When ON, Frigate digests are muted while the family is home — and an in-flight
+  # digest is cancelled the moment presence is detected (e.g. family arriving).
+  frigate_digest_mute_when_home:
+    name: "Mute Frigate digest when family home"
+    icon: mdi:home-account
+
+rest_command:
+  # Generic WhatsApp sender for bnu via the local WAHA (LXC 101 @ 10.1.1.126:3000).
+  send_whatsapp_bnu:
+    url: "http://10.1.1.126:3000/api/sendText"
+    method: POST
+    headers:
+      X-Api-Key: !secret waha_api_key
+      content_type: application/json
+    payload: '{"session": "default", "chatId": "{{ jid }}", "text": {{ message | to_json }}}'
+
+automation:
+  - alias: "Family presence: notify WhatsApp on change"
+    id: family_presence_notify
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.family_present
+        to: "on"
+        id: arrived
+      - platform: state
+        entity_id: binary_sensor.family_present
+        to: "off"
+        id: left
+    condition:
+      # Ignore startup transitions out of unknown/unavailable (avoids spurious alerts
+      # after an HA restart).
+      - condition: template
+        value_template: "{{ trigger.from_state.state in ['on', 'off'] }}"
+    action:
+      - action: rest_command.send_whatsapp_bnu
+        data:
+          jid: !secret whatsapp_group_jid
+          message: >
+            {{ '🏠 Casa Blumenau — a família chegou em casa.'
+               if trigger.id == 'arrived'
+               else '🚪 Casa Blumenau — casa vazia (a família saiu).' }}
