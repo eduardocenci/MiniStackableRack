@@ -21,6 +21,7 @@ import glob as glob_module
 import json
 import logging
 import os
+import re
 import signal
 import smtplib
 import subprocess
@@ -55,6 +56,22 @@ FFMPEG           = "/usr/bin/ffmpeg"
 PROMPT_FILE      = "/config/frigate_digest_prompt.txt"  # user-editable LLM prompt template
 RELEVANT_OBJECTS = {"person", "car", "dog", "cat", "animal", "bicycle", "motorcycle"}
 LLM_TIMEOUT      = 600   # seconds — generation can be slow on first call
+# qwen3-vl:8b is a thinking model and Ollama 0.17.7 ignores `think: false`. Thinking tokens
+# count against num_predict, so an unlucky long thinking phase can consume the whole budget
+# and leave done_reason="length" with an EMPTY response (observed: 24977 thinking chars at
+# num_predict=6144 → 0 response). Give generous headroom and retry once with more on an empty
+# length-cut result (thinking length is stochastic, so a retry usually finishes).
+OLLAMA_NUM_PREDICT = 8192
+OLLAMA_MAX_ATTEMPTS = 2
+# Digest clips are built from the camera's retained recording segments, not the tracked-object
+# window — Frigate often stops tracking an object while activity (and recording) continues, and
+# the per-event/review export truncates across recording holes. We fetch segments around the
+# burst's detections, group contiguous ones into runs (one continuous activity stretch each),
+# and export every run so nothing is cut short.
+RECORDING_PAD_S  = 2     # small pad on each run's bounds (segment bounds already align to activity)
+REC_LOOKBACK_S   = 20    # fetch recording segments this far before the first detection…
+REC_LOOKAHEAD_S  = 120   # …and after the last, to catch activity Frigate stopped tracking early
+REC_GAP_TOL_S    = 5     # gap between segments above which a new run begins (a recording hole)
 DAY_START        = 6     # 06:00
 DAY_END          = 20    # 20:00
 # Burst grouping: events whose gap (prev end_time → next start_time) exceeds this
@@ -140,22 +157,67 @@ def fetch_reviews(base: str, since: datetime.datetime) -> list[dict]:
     return r.json() or []
 
 
-def download_clip(base: str, event_id: str, dest_dir: str) -> str | None:
-    path = os.path.join(dest_dir, f"frigate_clip_{event_id}.mp4")
+def download_recording(base: str, camera: str, start: float, end: float,
+                       dest_dir: str) -> str | None:
+    """Export the recording between two epoch timestamps for `camera`.
+
+    Uses Frigate's recording-export endpoint (/api/<camera>/start/<s>/end/<e>/clip.mp4),
+    NOT /api/events/<id>/clip.mp4 (which covers only one tracked object's lifetime and is
+    often far shorter than the real activity). Callers pass a contiguous recording run so the
+    export does not truncate across a recording hole."""
+    path = os.path.join(dest_dir, f"frigate_rec_{camera}_{int(start)}_{int(end)}.mp4")
     if os.path.exists(path):
         return path
-    url = f"{base}/api/events/{event_id}/clip.mp4"
+    url = f"{base}/api/{camera}/start/{start:.3f}/end/{end:.3f}/clip.mp4"
     try:
         r = requests.get(url, timeout=120, stream=True)
         r.raise_for_status()
         with open(path, "wb") as f:
             for chunk in r.iter_content(chunk_size=65536):
                 f.write(chunk)
-        log.info("Clip saved: %s (%d bytes)", path, os.path.getsize(path))
+        log.info("Recording saved: %s (%d bytes, %.1fs window)",
+                 path, os.path.getsize(path), end - start)
         return path
     except requests.RequestException as exc:
-        log.warning("Failed to download clip for %s: %s", event_id, exc)
+        log.warning("Failed to download recording for %s [%.0f-%.0f]: %s",
+                    camera, start, end, exc)
         return None
+
+
+def fetch_recording_segments(base: str, camera: str,
+                             after: float, before: float) -> list[dict]:
+    """Frigate's retained recording segments (~10 s each) for a camera in a time range.
+
+    These cameras retain recordings only while there is activity, so the *presence* of a
+    contiguous chain of segments marks the real activity span — independent of whether
+    Frigate kept tracking an object. Returns segments sorted by start_time."""
+    try:
+        r = requests.get(f"{base}/api/{camera}/recordings",
+                         params={"after": after, "before": before}, timeout=30)
+        if r.ok:
+            return sorted(r.json() or [], key=lambda s: s.get("start_time") or 0)
+    except requests.RequestException as exc:
+        log.warning("fetch_recording_segments(%s) failed: %s", camera, exc)
+    return []
+
+
+def build_recording_runs(segments: list[dict], gap_tol: float) -> list[tuple[float, float]]:
+    """Collapse contiguous recording segments into (start, end) runs.
+
+    A new run starts when the gap between one segment's end and the next segment's start
+    exceeds gap_tol — i.e. a hole in the retained recording, which means activity paused.
+    Each run is therefore one continuous stretch of real activity that exports cleanly
+    (the export endpoint truncates across holes, so we must export per-run)."""
+    runs: list[tuple[float, float]] = []
+    for s in segments:
+        st, en = s.get("start_time"), s.get("end_time")
+        if st is None or en is None:
+            continue
+        if runs and st - runs[-1][1] <= gap_tol:
+            runs[-1] = (runs[-1][0], en)
+        else:
+            runs.append((st, en))
+    return runs
 
 
 def fetch_snapshot(base: str, event_id: str) -> bytes | None:
@@ -296,19 +358,18 @@ def load_baselines(cameras: list[str], baselines_dir: str, is_night: bool) -> di
 
 
 # ── Video compilation ─────────────────────────────────────────────────────────
-def compile_digest_video(events: list[dict], clips: dict[str, str | None]) -> str | None:
-    """Stitch event clips into one MP4, chronological (oldest→newest).
+def compile_digest_video(segments: list[dict]) -> str | None:
+    """Stitch recording-run clips into one MP4, chronological (oldest→newest).
 
-    Single ffmpeg pass with a concat filter: each input is normalised to a constant
-    frame rate (VIDEO_FPS), padded to VIDEO_W×VIDEO_H with square pixels, then
-    concatenated. A single CFR re-encode eliminates the frame jumps that occur when
-    variable-frame-rate Frigate clips are stream-copied together.
+    `segments` is a list of {"start_ts": float, "path": str}. Single ffmpeg pass with a
+    concat filter: each input is normalised to a constant frame rate (VIDEO_FPS), padded to
+    VIDEO_W×VIDEO_H with square pixels, then concatenated. A single CFR re-encode eliminates
+    the frame jumps that occur when variable-frame-rate Frigate clips are stream-copied.
     """
-    # Order strictly by event start timestamp so the montage is chronological.
+    # Order strictly by run start timestamp so the montage is chronological.
     valid = [
-        (e, clips[e["detection_id"]])
-        for e in sorted(events, key=lambda e: e.get("start_ts") or 0)
-        if e.get("detection_id") and clips.get(e["detection_id"])
+        s for s in sorted(segments, key=lambda s: s.get("start_ts") or 0)
+        if s.get("path")
     ]
     if not valid:
         log.info("No valid clips available — skipping video compilation")
@@ -316,8 +377,8 @@ def compile_digest_video(events: list[dict], clips: dict[str, str | None]) -> st
 
     inputs: list[str]  = []
     filters: list[str] = []
-    for i, (_event, clip_path) in enumerate(valid):
-        inputs += ["-i", clip_path]
+    for i, seg in enumerate(valid):
+        inputs += ["-i", seg["path"]]
         filters.append(
             f"[{i}:v]fps={VIDEO_FPS},"
             f"scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=decrease,"
@@ -395,21 +456,38 @@ def _load_prompt_template() -> str:
     return _DEFAULT_PROMPT_TEMPLATE
 
 
+# Matches the leading gate token "RELEVANTE: SIM/NAO" (with optional accents/punctuation)
+# and consumes any trailing separators, so whatever narrative the model put AFTER the verdict
+# on the SAME line is preserved (e.g. "RELEVANTE: SIM. Uma pessoa entrou..."). Stripping the
+# whole line — the old behaviour — silently dropped inline summaries → an empty caption.
+_REL_GATE_RE = re.compile(
+    r'^\s*RELEVANTE\s*[:\-–—]?\s*(SIM|N[ÃA]O|N|NO|FALSE|YES|S)\b[\.\:\-–—,]*\s*',
+    re.IGNORECASE,
+)
+
+
 def _parse_relevance(text: str) -> tuple[bool, str]:
     """Split the LLM output into (is_relevant, narrative). The model emits a leading
-    'RELEVANTE: SIM|NAO' line (see prompt). Fail-safe: relevant unless an explicit NAO."""
+    'RELEVANTE: SIM|NAO' gate (see prompt). The verdict may be on its own line OR be followed
+    by the narrative on the same line — only the verdict token is stripped, the rest is kept.
+    Fail-safe: relevant unless an explicit NAO."""
     if not text:
         return True, text
-    relevant, out = True, []
-    seen = False
+    relevant = True
+    out: list[str] = []
+    matched = False
     for line in text.splitlines():
-        norm = line.strip().upper().replace("Ã", "A").replace("Á", "A")
-        if not seen and norm.startswith("RELEVANTE"):
-            seen = True
-            verdict = norm.split(":", 1)[1] if ":" in norm else norm
-            if "NAO" in verdict or verdict.strip() in ("N", "NO", "FALSE"):
-                relevant = False
-            continue  # drop the gate line from the narrative
+        if not matched:
+            m = _REL_GATE_RE.match(line)
+            if m:
+                matched = True
+                verdict = m.group(1).upper().replace("Ã", "A").replace("Á", "A")
+                if verdict.startswith("NAO") or verdict in ("N", "NO", "FALSE"):
+                    relevant = False
+                tail = line[m.end():]            # narrative after the verdict on this line
+                if tail.strip():
+                    out.append(tail)
+                continue
         out.append(line)
     return relevant, "\n".join(out).strip()
 
@@ -473,24 +551,17 @@ class _OllamaTimeout(Exception):
 def call_ollama(prompt: str, images: list[bytes]) -> tuple[str | None, dict]:
     """Run the consolidation prompt through Ollama. Returns (narrative_or_None, stats).
 
-    stats keys: n_images, elapsed_s, timed_out, error,
+    stats keys: n_images, elapsed_s, timed_out, error, attempts, num_predict,
                 prompt_tokens, output_tokens, response_chars, thinking_chars, done_reason.
+
+    Retries once with a larger num_predict when the model returns an EMPTY response cut
+    off by length (done_reason="length") — i.e. the thinking phase ate the whole budget.
     """
-    payload: dict = {
-        "model":   OLLAMA_MODEL,
-        "prompt":  prompt,
-        "stream":  False,
-        # qwen3-vl:8b is a thinking model — thinking tokens count against num_predict.
-        # With 13 images the thinking phase can consume ~3000+ tokens; set high enough
-        # that the model finishes thinking and still has room for the actual response.
-        "options": {"temperature": 0.3, "num_predict": 6144},
-    }
-    if images:
-        payload["images"] = [base64.b64encode(img).decode() for img in images]
+    img_payload = [base64.b64encode(img).decode() for img in images] if images else None
 
     stats: dict = {
         "n_images": len(images), "elapsed_s": 0.0,
-        "timed_out": False, "error": None,
+        "timed_out": False, "error": None, "attempts": 0, "num_predict": OLLAMA_NUM_PREDICT,
         "prompt_tokens": 0, "output_tokens": 0,
         "response_chars": 0, "thinking_chars": 0, "done_reason": None,
     }
@@ -498,42 +569,68 @@ def call_ollama(prompt: str, images: list[bytes]) -> tuple[str | None, dict]:
     def _alarm_handler(signum, frame):
         raise _OllamaTimeout()
 
-    old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
-    signal.alarm(LLM_TIMEOUT)  # hard wall-clock deadline; won't be reset by trickling tokens
-    t0 = time.monotonic()
-    try:
-        log.info("Calling Ollama (%d images)...", len(images))
-        r = requests.post(
-            f"http://{OLLAMA_HOST}:{OLLAMA_PORT}/api/generate",
-            json=payload,
-            # No requests timeout — SIGALRM is the authoritative deadline
-        )
-        r.raise_for_status()
-        data     = r.json()
-        response = data.get("response", "").strip()
-        thinking = data.get("thinking", "")
-        stats.update({
-            "elapsed_s":      time.monotonic() - t0,
-            "response_chars": len(response),
-            "thinking_chars": len(thinking),
-            "done_reason":    data.get("done_reason"),
-            "prompt_tokens":  data.get("prompt_eval_count", 0),
-            "output_tokens":  data.get("eval_count", 0),
-        })
-        log.info("Ollama response (%d chars, thinking=%d chars, done=%s): %s...",
-                 len(response), len(thinking), data.get("done_reason"), response[:120])
-        return response or None, stats
-    except _OllamaTimeout:
-        stats.update({"elapsed_s": time.monotonic() - t0, "timed_out": True})
-        log.error("Ollama call timed out after %ds", LLM_TIMEOUT)
-        return None, stats
-    except requests.RequestException as exc:
-        stats.update({"elapsed_s": time.monotonic() - t0, "error": str(exc)})
-        log.error("Ollama call failed: %s", exc)
-        return None, stats
-    finally:
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_handler)
+    num_predict = OLLAMA_NUM_PREDICT
+    for attempt in range(1, OLLAMA_MAX_ATTEMPTS + 1):
+        stats["attempts"] = attempt
+        stats["num_predict"] = num_predict
+        payload: dict = {
+            "model":   OLLAMA_MODEL,
+            "prompt":  prompt,
+            "stream":  False,
+            "options": {"temperature": 0.3, "num_predict": num_predict},
+        }
+        if img_payload:
+            payload["images"] = img_payload
+
+        old_handler = signal.signal(signal.SIGALRM, _alarm_handler)
+        signal.alarm(LLM_TIMEOUT)  # hard per-attempt wall-clock deadline (not reset by trickling tokens)
+        t0 = time.monotonic()
+        try:
+            log.info("Calling Ollama (%d images, attempt %d/%d, num_predict=%d)...",
+                     len(images), attempt, OLLAMA_MAX_ATTEMPTS, num_predict)
+            r = requests.post(
+                f"http://{OLLAMA_HOST}:{OLLAMA_PORT}/api/generate",
+                json=payload,
+                # No requests timeout — SIGALRM is the authoritative deadline
+            )
+            r.raise_for_status()
+            data       = r.json()
+            response   = data.get("response", "").strip()
+            thinking   = data.get("thinking", "")
+            done_reason = data.get("done_reason")
+            stats.update({
+                "elapsed_s":      time.monotonic() - t0,
+                "response_chars": len(response),
+                "thinking_chars": len(thinking),
+                "done_reason":    done_reason,
+                "prompt_tokens":  data.get("prompt_eval_count", 0),
+                "output_tokens":  data.get("eval_count", 0),
+            })
+            log.info("Ollama response (%d chars, thinking=%d chars, done=%s): %s...",
+                     len(response), len(thinking), done_reason, response[:120])
+            if response:
+                return response, stats
+            # Empty response: if it was cut off by length (thinking ate the budget) and we
+            # have an attempt left, retry with more headroom — thinking length is stochastic.
+            if done_reason == "length" and attempt < OLLAMA_MAX_ATTEMPTS:
+                num_predict = int(num_predict * 1.5)
+                log.warning("Ollama empty (done=length, thinking=%d chars) — retrying with num_predict=%d",
+                            len(thinking), num_predict)
+                continue
+            return None, stats
+        except _OllamaTimeout:
+            stats.update({"elapsed_s": time.monotonic() - t0, "timed_out": True})
+            log.error("Ollama call timed out after %ds", LLM_TIMEOUT)
+            return None, stats
+        except requests.RequestException as exc:
+            stats.update({"elapsed_s": time.monotonic() - t0, "error": str(exc)})
+            log.error("Ollama call failed: %s", exc)
+            return None, stats
+        finally:
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+
+    return None, stats
 
 
 # ── OpenAI ────────────────────────────────────────────────────────────────────
@@ -1001,6 +1098,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
             "text":         extract_genai_text(r),
             "objects":      (r.get("data") or {}).get("objects") or [],
             "detection_id": det_id,
+            "detections":   det_list,   # all tracked objects in this review (for the real time span)
         })
 
     # Single-send guard (#8): skip if this burst's newest event was already delivered.
@@ -1015,36 +1113,69 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         _write_watermark(latest_ts)
         raise _DigestSkip("muted — family home")
 
-    # Download clips (actual recordings) and snapshots (keyframes for LLM)
-    clips: dict[str, str | None]     = {}
+    # Snapshots (keyframes for the LLM) — one per event's first detection.
     snapshots: dict[str, bytes | None] = {}
     for event in events:
         det_id = event["detection_id"]
         if det_id:
-            clips[det_id]     = download_clip(base, det_id, CLIP_DIR)
             snapshots[det_id] = fetch_snapshot(base, det_id)
 
-    # Real activity times come from the EVENT (tracked object) — not the review window
-    # (often ~0–1 s) nor the video (a multi-camera montage). Use Frigate's event
-    # start_time/end_time so the header shows when the action actually started and stopped.
+    # Real activity times come from the EVENTS (tracked objects) — not the review window
+    # (often ~0–1 s) nor the video (a multi-camera montage). A review can hold several
+    # detections (e.g. two people one after another), so span ALL of them: earliest object
+    # start → latest object end. Using only the first detection cut the end short whenever a
+    # later object was still active. The review window is the fallback if no event times load.
     for event in events:
-        did = event["detection_id"]
-        if not did:
-            continue
-        est, een = fetch_event_times(base, did)
-        if est:
-            event["start_ts"] = est
-            event["time"]     = datetime.datetime.fromtimestamp(est).strftime("%H:%M")
-        if een:
-            event["end_ts"] = een
-        elif est:
-            event["end_ts"] = max(event.get("end_ts") or 0, est)
+        starts: list[float] = []
+        ends: list[float]   = []
+        for did in event["detections"]:
+            est, een = fetch_event_times(base, did)
+            if est:
+                starts.append(est)
+            if een:
+                ends.append(een)
+        if starts:
+            event["start_ts"] = min(starts)
+            event["time"]     = datetime.datetime.fromtimestamp(min(starts)).strftime("%H:%M")
+        if ends:
+            event["end_ts"] = max(ends)
+        elif starts:
+            event["end_ts"] = max(event.get("end_ts") or 0, max(starts))
+
+    # Build the digest video from contiguous RECORDING runs per camera — not the tracked-object
+    # window. Frigate frequently stops tracking an object while activity (and recording) keeps
+    # going (e.g. a person who lingers), and the export endpoint truncates across recording holes,
+    # so a single review-window export drops footage. Per camera: fetch the retained segments
+    # around the burst's detections, collapse contiguous ones into runs (each = one real activity
+    # stretch), keep the runs that overlap a detection, and export each run on its own.
+    video_segments: list[dict] = []
+    for cam in list(dict.fromkeys(e["camera"] for e in events)):
+        cam_events = [e for e in events if e["camera"] == cam]
+        det_start  = min(e["start_ts"] for e in cam_events)
+        det_end    = max(e["end_ts"]   for e in cam_events)
+        segs = fetch_recording_segments(base, cam,
+                                        det_start - REC_LOOKBACK_S, det_end + REC_LOOKAHEAD_S)
+        runs = build_recording_runs(segs, REC_GAP_TOL_S)
+        # Keep runs that overlap an actual detection (ignore unrelated activity that merely falls
+        # inside the lookahead). Fall back to the detection span if recordings can't be read.
+        kept = [(rs, re_) for (rs, re_) in runs
+                if any(e["start_ts"] <= re_ and e["end_ts"] >= rs for e in cam_events)]
+        if not kept:
+            kept = [(det_start, det_end)]
+        log.info("Camera %s: %d recording run(s) over %s–%s",
+                 cam, len(kept),
+                 datetime.datetime.fromtimestamp(kept[0][0]).strftime("%H:%M:%S"),
+                 datetime.datetime.fromtimestamp(kept[-1][1]).strftime("%H:%M:%S"))
+        for rs, re_ in kept:
+            path = download_recording(base, cam, rs - RECORDING_PAD_S, re_ + RECORDING_PAD_S, CLIP_DIR)
+            if path:
+                video_segments.append({"start_ts": rs, "path": path})
 
     span_start = datetime.datetime.fromtimestamp(min(e["start_ts"] for e in events)).strftime("%H:%M:%S")
     span_end   = datetime.datetime.fromtimestamp(max(e["end_ts"] for e in events)).strftime("%H:%M:%S")
 
     # Compile video (single-pass CFR, chronological)
-    video_path = compile_digest_video(events, clips)
+    video_path = compile_digest_video(video_segments)
 
     # Load baseline images
     all_cams = list(dict.fromkeys(e["camera"] for e in events))
@@ -1094,7 +1225,8 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
                 + (f" · prompt={ollama_stats['prompt_tokens']} tok" if ollama_stats.get("prompt_tokens") else "")
                 + f"\n📤 {ollama_stats.get('response_chars', 0)} chars · {ollama_stats.get('output_tokens', 0)} tok out"
                 + f"\n💭 thinking={ollama_stats.get('thinking_chars', 0)} chars"
-                + (f" · done={ollama_stats['done_reason']}" if ollama_stats.get("done_reason") else ""),
+                + (f" · done={ollama_stats['done_reason']}" if ollama_stats.get("done_reason") else "")
+                + f"\n🔁 attempt {ollama_stats.get('attempts', 1)}/{OLLAMA_MAX_ATTEMPTS} · num_predict={ollama_stats.get('num_predict', OLLAMA_NUM_PREDICT)}",
                 secrets,
             )
 
@@ -1125,6 +1257,11 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     # shadows, light, birds), suppress the notification. Advance the watermark so the same
     # burst isn't re-evaluated on the next cooldown.
     relevant, narrative = _parse_relevance(narrative)
+    # Never ship a digest whose body is empty: if the model produced only the RELEVANTE gate
+    # and no summary, treat it as a failed inference (surfaced to debug) rather than sending a
+    # caption with no text — that is the "digest sent without any summary" symptom.
+    if relevant and not narrative.strip():
+        raise RuntimeError("LLM returned a relevance verdict but no summary text")
     if not relevant:
         log.info("LLM relevance gate → NAO; suppressing digest for this burst")
         if mode == "auto":
@@ -1189,6 +1326,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
 
     # Cleanup files older than 2 hours
     cleanup_old_files(os.path.join(CLIP_DIR, "frigate_clip_*.mp4"),    max_age_hours=2)
+    cleanup_old_files(os.path.join(CLIP_DIR, "frigate_rec_*.mp4"),     max_age_hours=2)
     cleanup_old_files(os.path.join(CLIP_DIR, "frigate_digest_*.mp4"),  max_age_hours=2)
 
     log.info("=== Digest complete: %d events, video=%s, LLM=%s ===",
