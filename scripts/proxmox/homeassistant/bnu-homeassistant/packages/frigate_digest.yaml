@@ -103,6 +103,14 @@ automation:
         event_type: timer.finished
         event_data:
           entity_id: timer.frigate_digest_cooldown
+    condition:
+      # Don't even start a digest when the family is home and muting is enabled.
+      # (The script re-checks right before sending, so an in-flight digest is also
+      # cancelled if the family arrives mid-run.)
+      - condition: template
+        value_template: >
+          {{ not (is_state('input_boolean.frigate_digest_mute_when_home', 'on')
+                  and is_state('binary_sensor.family_present', 'on')) }}
     action:
       - action: script.frigate_trigger_digest
 

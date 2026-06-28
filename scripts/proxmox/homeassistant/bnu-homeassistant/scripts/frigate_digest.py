@@ -716,6 +716,13 @@ def _write_watermark(ts: float) -> None:
         log.warning("Cannot write watermark (%s)", exc)
 
 
+def _muted_by_presence(ha_token: str) -> bool:
+    """True when digest muting is enabled AND the family is home. Used to suppress digests
+    and to cancel an in-flight one (e.g. the family arriving home triggers their own motion)."""
+    return (get_ha_state("input_boolean.frigate_digest_mute_when_home", ha_token) == "on"
+            and get_ha_state("binary_sensor.family_present", ha_token) == "on")
+
+
 # ── Email sender ──────────────────────────────────────────────────────────────
 _DIGEST_HTML = """\
 <!DOCTYPE html>
@@ -1002,6 +1009,12 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     if mode == "auto" and latest_ts <= _read_watermark():
         raise _DigestSkip(f"burst already delivered (latest start_ts={latest_ts:.0f} ≤ watermark)")
 
+    # Mute when the family is home (auto only). Advance the watermark so this burst —
+    # likely caused by the family — isn't reconsidered on the next cooldown.
+    if mode == "auto" and _muted_by_presence(ha_token):
+        _write_watermark(latest_ts)
+        raise _DigestSkip("muted — family home")
+
     # Download clips (actual recordings) and snapshots (keyframes for LLM)
     clips: dict[str, str | None]     = {}
     snapshots: dict[str, bytes | None] = {}
@@ -1130,6 +1143,20 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         "OpenAI" if (narrative_openai and not narrative_ollama) else
         "Ollama + OpenAI"
     )
+
+    # Cancel in-flight: if the family arrived (presence detected) while this digest was
+    # being built, drop it before sending — the burst was almost certainly the family
+    # itself arriving home. Auto only.
+    if mode == "auto" and _muted_by_presence(ha_token):
+        log.info("Family present + mute → cancelling in-flight digest before send")
+        _write_watermark(latest_ts)
+        if debug_mode:
+            send_debug_whatsapp(
+                "🟢 *Digest cancelado* — presença da família detectada (provável chegada)\n"
+                f"{span_start}–{span_end} · {', '.join(cameras_seen)}",
+                secrets,
+            )
+        raise _DigestSkip("cancelled — family arrived mid-run")
 
     # Send to channels gated by existing toggles
     notify_whatsapp = get_ha_state("input_boolean.frigate_notify_whatsapp", ha_token)
