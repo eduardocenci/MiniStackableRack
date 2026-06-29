@@ -1,0 +1,195 @@
+# AlertaBlu (Defesa Civil de Blumenau) -> BNU WhatsApp group
+#
+# Polls the AlertaBlu public JSON feeds and forwards storm/weather warnings to
+# the BNU WhatsApp group via WAHA. Toggle the whole thing on/off with
+# input_boolean.alertablu_alerts_enabled.
+#
+# Region: Vorstadt belongs to AlertaBlu's "Central" region (NOT "Leste").
+# Change BAIRRO below if you ever want a different neighbourhood.
+#
+# AlertaBlu's SSL chain doesn't validate -> verify_ssl: false is required.
+#
+# secrets.yaml needs (waha_* + whatsapp_group_jid already exist for Frigate):
+#   waha_send_text_url: "http://10.1.1.126:3000/api/sendText"
+#   waha_api_key:       <existing WAHA key>
+#   waha_session:       "default"
+#   whatsapp_group_jid: <existing BNU group @g.us JID>
+
+#############################################
+# On/off switch
+#############################################
+input_boolean:
+  alertablu_alerts_enabled:
+    name: AlertaBlu alerts -> BNU WhatsApp
+    icon: mdi:weather-lightning-rainy
+    # NOTE: no `initial:` on purpose -> HA RestoreEntity keeps the last on/off
+    # state across restarts (same lesson as the Frigate helpers).
+
+#############################################
+# REST sensors (one fetch each, shared by their child sensors)
+#############################################
+rest:
+  # --- current situation per region (storm conditions + landslide risk) ---
+  - resource: "https://defesacivil.blumenau.sc.gov.br/static/data/situacao_atual.json"
+    scan_interval: 300
+    verify_ssl: false
+    timeout: 30
+    sensor:
+      - name: "AlertaBlu Vorstadt Nivel"
+        unique_id: alertablu_vorstadt_nivel
+        # numeric level of the meteorological condition (cch) for Vorstadt's region
+        value_template: >-
+          {% set ns = namespace(v='unknown') %}
+          {% for blk in value_json.dados if 'Meteorol' in blk.tipoNome %}
+            {% for r in blk.sitregioes if 'Vorstadt' in r.regiao.bairros %}
+              {% set ns.v = r.condicao.nivel %}
+            {% endfor %}
+          {% endfor %}
+          {{ ns.v }}
+
+      - name: "AlertaBlu Vorstadt Condicao"
+        unique_id: alertablu_vorstadt_condicao
+        # human-readable label: Normalidade / Observacao / Atencao / Alerta / Alerta Maximo
+        value_template: >-
+          {% set ns = namespace(v='unknown') %}
+          {% for blk in value_json.dados if 'Meteorol' in blk.tipoNome %}
+            {% for r in blk.sitregioes if 'Vorstadt' in r.regiao.bairros %}
+              {% set ns.v = r.condicao.condicao %}
+            {% endfor %}
+          {% endfor %}
+          {{ ns.v }}
+
+      - name: "AlertaBlu Vorstadt Deslizamento"
+        unique_id: alertablu_vorstadt_deslizamento
+        # landslide risk level for the same region (bonus; not used by the automation)
+        value_template: >-
+          {% set ns = namespace(v='unknown') %}
+          {% for blk in value_json.dados if 'Desliz' in blk.tipoNome %}
+            {% for r in blk.sitregioes if 'Vorstadt' in r.regiao.bairros %}
+              {% set ns.v = r.condicao.condicao %}
+            {% endfor %}
+          {% endfor %}
+          {{ ns.v }}
+
+  # --- latest meteorologist bulletin (the "aviso") ---
+  - resource: "https://defesacivil.blumenau.sc.gov.br/static/data/aviso.json"
+    scan_interval: 300
+    verify_ssl: false
+    timeout: 30
+    sensor:
+      - name: "AlertaBlu Aviso"
+        unique_id: alertablu_aviso
+        # state = bulletin title (short, changes with each new bulletin -> good trigger)
+        value_template: "{{ value_json.titulo }}"
+        json_attributes:
+          - autor
+          - data_criacao
+          - conteudo
+          - id
+          - popup
+
+#############################################
+# WAHA sender (reuses the bnu WhatsApp session)
+#############################################
+rest_command:
+  alertablu_send_whatsapp:
+    url: !secret waha_send_text_url
+    method: POST
+    headers:
+      X-Api-Key: !secret waha_api_key
+      Content-Type: application/json
+    content_type: "application/json"
+    # message | to_json safely escapes newlines/quotes/accents into valid JSON
+    payload: >-
+      {"session": "{{ session }}", "chatId": "{{ chat_id }}", "text": {{ message | to_json }}}
+
+#############################################
+# Automations
+#############################################
+automation:
+  # ---- send an alert when Central(Vorstadt) is at Atencao or worse ----
+  - id: alertablu_bnu_whatsapp_alert
+    alias: "AlertaBlu -> BNU WhatsApp (alerta)"
+    mode: single
+    trigger:
+      # a new meteorologist bulletin was published
+      - platform: state
+        entity_id: sensor.alertablu_aviso
+        id: bulletin
+      # the region escalated INTO Atencao+ (rising edge; level 3 = Atencao)
+      - platform: numeric_state
+        entity_id: sensor.alertablu_vorstadt_nivel
+        above: 2
+        id: escalation
+    condition:
+      - condition: state
+        entity_id: input_boolean.alertablu_alerts_enabled
+        state: "on"
+      # only send while the situation is actually Atencao or worse
+      - condition: numeric_state
+        entity_id: sensor.alertablu_vorstadt_nivel
+        above: 2
+      # ignore startup / unknown bulletin states
+      - condition: template
+        value_template: >-
+          {{ states('sensor.alertablu_aviso') not in
+             ['unknown', 'unavailable', 'none', ''] }}
+    action:
+      - service: rest_command.alertablu_send_whatsapp
+        data:
+          session: !secret waha_session
+          chat_id: !secret whatsapp_group_jid
+          message: >-
+            {# drop the trailing centre-aligned signature paragraph, then strip tags #}
+            {%- set raw = state_attr('sensor.alertablu_aviso', 'conteudo') | default('', true)
+                  | regex_replace('(?is)<p[^>]*text-align:\s*center[^>]*>.*?</p>', '')
+                  | striptags -%}
+            {%- set body = raw
+                | replace('&nbsp;', ' ') | replace('&amp;', '&')
+                | replace('&quot;', '"') | replace('&#39;', "'")
+                | replace('&ndash;', '–') | replace('&mdash;', '—')
+                | replace('&Aacute;', 'Á') | replace('&aacute;', 'á')
+                | replace('&Eacute;', 'É') | replace('&eacute;', 'é')
+                | replace('&Iacute;', 'Í') | replace('&iacute;', 'í')
+                | replace('&Oacute;', 'Ó') | replace('&oacute;', 'ó')
+                | replace('&Uacute;', 'Ú') | replace('&uacute;', 'ú')
+                | replace('&Acirc;', 'Â')  | replace('&acirc;', 'â')
+                | replace('&Ecirc;', 'Ê')  | replace('&ecirc;', 'ê')
+                | replace('&Ocirc;', 'Ô')  | replace('&ocirc;', 'ô')
+                | replace('&Atilde;', 'Ã') | replace('&atilde;', 'ã')
+                | replace('&Otilde;', 'Õ') | replace('&otilde;', 'õ')
+                | replace('&Ccedil;', 'Ç') | replace('&ccedil;', 'ç')
+                | replace('&Agrave;', 'À') | replace('&agrave;', 'à')
+                | replace('\r\n', '\n') | trim -%}
+            {{
+              '⚠️ *Defesa Civil Blumenau — AlertaBlu*\n'
+              ~ '*Vorstadt (Central): ' ~ states('sensor.alertablu_vorstadt_condicao') ~ '*\n\n'
+              ~ '📋 *' ~ states('sensor.alertablu_aviso') ~ '*\n'
+              ~ body
+            }}
+
+  # ---- optional "all clear" when the region drops back below Atencao ----
+  - id: alertablu_bnu_whatsapp_allclear
+    alias: "AlertaBlu -> BNU WhatsApp (normalizou)"
+    mode: single
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.alertablu_vorstadt_nivel
+        below: 3
+    condition:
+      - condition: state
+        entity_id: input_boolean.alertablu_alerts_enabled
+        state: "on"
+      - condition: template
+        value_template: >-
+          {{ states('sensor.alertablu_vorstadt_condicao') not in
+             ['unknown', 'unavailable', 'none', ''] }}
+    action:
+      - service: rest_command.alertablu_send_whatsapp
+        data:
+          session: !secret waha_session
+          chat_id: !secret whatsapp_group_jid
+          message: >-
+            {{ '✅ *AlertaBlu — Vorstadt (Central)*\n'
+               ~ 'Condições voltaram a *'
+               ~ states('sensor.alertablu_vorstadt_condicao') ~ '*.' }}
