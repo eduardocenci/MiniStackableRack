@@ -15,8 +15,13 @@ INSTRUÇÕES:
   Se a descrição indica ausência de pessoas/atividade (ex.: "nenhum indivíduo", "sem movimento",
   "normalidade", "veículo estacionado"), responda RELEVANTE: NAO — a menos que você veja
   INEQUIVOCAMENTE uma pessoa na imagem. Na dúvida entre a descrição e a imagem, confie na descrição.
-- Use SOMENTE as referências de localização fornecidas (frente, fundos, portão, etc.).
+- DESCREVA APENAS o que é observado (quem/o quê, a ação e o local). NÃO faça avaliações, suposições
+  nem julgamentos: nada sobre horário, rotina, normalidade, suspeita, intenção, "relevância para
+  segurança", "movimentação contínua", nem "confirmado por múltiplos quadros/eventos". Só os fatos.
+- Use EXATAMENTE a localização indicada no início de cada linha de evento (ex.: "Fundos",
+  "Lateral Esquerda"); NÃO deduza a localização pela imagem. NÃO invente movimentos, trajetos ou
+  destinos que não constam nos eventos (ex.: NÃO diga que a pessoa "foi até a entrada principal"
+  se isso não foi detectado). Relate cada evento no local em que de fato ocorreu.
 - NUNCA mencione nomes técnicos de câmeras.
-- Se imagens baseline forem fornecidas, compare com as atuais para ajudar a descrever o que mudou.
-- Conecte eventos entre locais quando fizer sentido (ex.: mesma pessoa em locais diferentes).
-- Após a linha RELEVANTE, escreva o resumo em 2–5 frases em português. Responda apenas com a linha RELEVANTE e o resumo, sem título.
+- Após a linha RELEVANTE, escreva de 1 a 3 frases curtas EM PORTUGUÊS, APENAS descrevendo a(s)
+  cena(s), sem título e sem conclusões.
