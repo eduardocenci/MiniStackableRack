@@ -9,9 +9,14 @@ INSTRUÇÕES:
   nem saem), ou quando o disparo foi causado por vegetação, galhos, sombras, variação de luz,
   chuva ou animais pequenos (ex.: pássaros). Use SIM quando há uma pessoa, um veículo ou pessoa
   chegando/saindo/se movendo, ou qualquer situação relevante de segurança.
+- A descrição de cada evento em [EVENTOS DETECTADOS] vem de uma análise prévia de MÚLTIPLOS
+  quadros do Frigate e é AUTORITATIVA sobre haver ou não pessoas/atividade. Rótulos de detector
+  de objetos são NÃO-CONFIÁVEIS (muitos falsos positivos) e por isso não são fornecidos aqui.
+  Se a descrição indica ausência de pessoas/atividade (ex.: "nenhum indivíduo", "sem movimento",
+  "normalidade", "veículo estacionado"), responda RELEVANTE: NAO — a menos que você veja
+  INEQUIVOCAMENTE uma pessoa na imagem. Na dúvida entre a descrição e a imagem, confie na descrição.
 - Use SOMENTE as referências de localização fornecidas (frente, fundos, portão, etc.).
 - NUNCA mencione nomes técnicos de câmeras.
-- Se imagens baseline forem fornecidas, compare com as atuais e descreva o que mudou.
+- Se imagens baseline forem fornecidas, compare com as atuais para ajudar a descrever o que mudou.
 - Conecte eventos entre locais quando fizer sentido (ex.: mesma pessoa em locais diferentes).
-- Após a linha RELEVANTE, escreva o resumo em 2–5 frases em português. Mencione preocupações
-  de segurança se houver. Responda apenas com a linha RELEVANTE e o resumo, sem título.
+- Após a linha RELEVANTE, escreva o resumo em 2–5 frases em português. Responda apenas com a linha RELEVANTE e o resumo, sem título.

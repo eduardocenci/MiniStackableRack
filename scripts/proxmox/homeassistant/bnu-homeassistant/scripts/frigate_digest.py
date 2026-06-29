@@ -556,9 +556,13 @@ def _build_prompt(events: list[dict], context: str, baselines: dict[str, bytes],
     else:
         image_note = ""
 
+    # NOTE: we deliberately do NOT include the detector's object labels here. They are the
+    # source of the false positives (e.g. "person" on a parked car) and, presented as fact,
+    # bias the vision LLM into confirming a person that isn't there. The per-event
+    # description below comes from Frigate's prior multi-frame analysis and is the
+    # authoritative signal (see the INSTRUÇÕES/RELEVANTE rule in the prompt template).
     event_lines = "\n".join(
-        f"- [{e['time']}] {e['location']}: {e['text'] or '(sem descrição)'} "
-        f"(objetos: {', '.join(e['objects']) or 'desconhecido'})"
+        f"- [{e['time']}] {e['location']}: {e['text'] or '(sem descrição)'}"
         for e in events
     )
 
