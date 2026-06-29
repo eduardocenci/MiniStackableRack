@@ -262,6 +262,35 @@ def extract_genai_text(review: dict) -> str:
     return title or summary or ""
 
 
+def _await_review_genai(base: str, events: list[dict], since: datetime.datetime,
+                        max_wait: float = 60.0, interval: float = 10.0) -> None:
+    """Frigate's review GenAI is asynchronous: `data.metadata` (title/scene/shortSummary)
+    is often not attached yet when the digest first fetches the review, which surfaced as
+    "(sem descrição)" in the prompt. Re-fetch the reviews until every event has a
+    description (or the timeout elapses) so the per-event GenAI text reaches the
+    consolidation LLM — letting the relevance gate act on Frigate's own finding."""
+    if all(e.get("text") for e in events):
+        return
+    log.info("Waiting for Frigate review GenAI (%d/%d events without description)...",
+             sum(1 for e in events if not e.get("text")), len(events))
+    deadline = time.monotonic() + max_wait
+    while True:
+        try:
+            fresh = {r.get("id"): r for r in fetch_reviews(base, since)}
+            for e in events:
+                if not e.get("text"):
+                    r = fresh.get(e.get("review_id"))
+                    if r:
+                        e["text"] = extract_genai_text(r) or e["text"]
+        except requests.RequestException as exc:
+            log.warning("GenAI re-fetch failed: %s", exc)
+        n_missing = sum(1 for e in events if not e.get("text"))
+        if n_missing == 0 or time.monotonic() >= deadline:
+            log.info("GenAI wait done: %d/%d events still without description", n_missing, len(events))
+            return
+        time.sleep(interval)
+
+
 def is_relevant(review: dict) -> bool:
     objects = set((review.get("data") or {}).get("objects") or [])
     return bool(objects & RELEVANT_OBJECTS)
@@ -1099,6 +1128,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
             "objects":      (r.get("data") or {}).get("objects") or [],
             "detection_id": det_id,
             "detections":   det_list,   # all tracked objects in this review (for the real time span)
+            "review_id":    r.get("id"),
         })
 
     # Single-send guard (#8): skip if this burst's newest event was already delivered.
@@ -1180,6 +1210,11 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     # Load baseline images
     all_cams = list(dict.fromkeys(e["camera"] for e in events))
     baselines = load_baselines(all_cams, BASELINES_DIR, is_night)
+
+    # Wait for Frigate's async review GenAI so the per-event description is piped into the
+    # prompt (fixes "(sem descrição)"). The clip/video/baseline steps above already gave it
+    # time, so this usually returns on the first re-fetch.
+    _await_review_genai(base, events, since)
 
     # Build the consolidation prompt once — reused for Ollama/OpenAI and the debug dump.
     prompt, images = _build_prompt(events, context, baselines, snapshots, window_min)
