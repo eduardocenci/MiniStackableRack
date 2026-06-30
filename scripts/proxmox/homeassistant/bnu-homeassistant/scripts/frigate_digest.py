@@ -285,8 +285,12 @@ def _await_review_genai(base: str, events: list[dict], since: datetime.datetime,
         except requests.RequestException as exc:
             log.warning("GenAI re-fetch failed: %s", exc)
         n_missing = sum(1 for e in events if not e.get("text"))
-        if n_missing == 0 or time.monotonic() >= deadline:
-            log.info("GenAI wait done: %d/%d events still without description", n_missing, len(events))
+        if n_missing == 0:
+            log.info("GenAI wait done: all %d event(s) have descriptions", len(events))
+            return
+        if time.monotonic() >= deadline:
+            log.warning("GenAI wait TIMED OUT after %.0fs: %d/%d event(s) still without description",
+                        max_wait, n_missing, len(events))
             return
         time.sleep(interval)
 
@@ -1217,8 +1221,9 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
 
     # Wait for Frigate's async review GenAI so the per-event description is piped into the
     # prompt (fixes "(sem descrição)"). The clip/video/baseline steps above already gave it
-    # time, so this usually returns on the first re-fetch.
-    _await_review_genai(base, events, since)
+    # time, so this usually returns on the first re-fetch. max_wait=300 covers the worst
+    # case where recordings are unavailable (fast path) and qwen3-vl needs a cold start.
+    _await_review_genai(base, events, since, max_wait=300.0, interval=15.0)
 
     # Build the consolidation prompt once — reused for Ollama/OpenAI and the debug dump.
     prompt, images = _build_prompt(events, context, baselines, snapshots, window_min)
