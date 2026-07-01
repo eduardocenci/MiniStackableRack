@@ -107,7 +107,10 @@ rest_command:
 # Automations
 #############################################
 automation:
-  # ---- send an alert when Central(Vorstadt) is at Atencao or worse ----
+  # ---- send an alert ONLY at "Alerta" / "Alerta Maximo" (NOT the lower "Atencao") ----
+  # Levels (situacao_atual meteo scale): Normalidade < Observacao < Atencao < Alerta < Alerta Maximo.
+  # "Atencao" is a watch, not an alert -> it must NOT notify. We gate on the condition LABEL
+  # starting with "alerta", which matches only "Alerta" and "Alerta Maximo".
   - id: alertablu_bnu_whatsapp_alert
     alias: "AlertaBlu -> BNU WhatsApp (alerta)"
     mode: single
@@ -116,19 +119,18 @@ automation:
       - platform: state
         entity_id: sensor.alertablu_aviso
         id: bulletin
-      # the region escalated INTO Atencao+ (rising edge; level 3 = Atencao)
-      - platform: numeric_state
-        entity_id: sensor.alertablu_vorstadt_nivel
-        above: 2
+      # the region condition changed (catches escalation into Alerta)
+      - platform: state
+        entity_id: sensor.alertablu_vorstadt_condicao
         id: escalation
     condition:
       - condition: state
         entity_id: input_boolean.alertablu_alerts_enabled
         state: "on"
-      # only send while the situation is actually Atencao or worse
-      - condition: numeric_state
-        entity_id: sensor.alertablu_vorstadt_nivel
-        above: 2
+      # only send at Alerta / Alerta Maximo, never at Atencao or below
+      - condition: template
+        value_template: >-
+          {{ (states('sensor.alertablu_vorstadt_condicao') | lower).startswith('alerta') }}
       # ignore startup / unknown bulletin states
       - condition: template
         value_template: >-
@@ -168,22 +170,23 @@ automation:
               ~ body
             }}
 
-  # ---- optional "all clear" when the region drops back below Atencao ----
+  # ---- optional "all clear" only when the region LEAVES Alerta ----
   - id: alertablu_bnu_whatsapp_allclear
     alias: "AlertaBlu -> BNU WhatsApp (normalizou)"
     mode: single
     trigger:
-      - platform: numeric_state
-        entity_id: sensor.alertablu_vorstadt_nivel
-        below: 3
+      - platform: state
+        entity_id: sensor.alertablu_vorstadt_condicao
     condition:
       - condition: state
         entity_id: input_boolean.alertablu_alerts_enabled
         state: "on"
+      # fire only on the transition OUT of Alerta/Alerta Maximo into a lower level
       - condition: template
         value_template: >-
-          {{ states('sensor.alertablu_vorstadt_condicao') not in
-             ['unknown', 'unavailable', 'none', ''] }}
+          {{ (trigger.from_state.state | lower).startswith('alerta')
+             and not (trigger.to_state.state | lower).startswith('alerta')
+             and trigger.to_state.state not in ['unknown', 'unavailable', 'none', ''] }}
     action:
       - service: rest_command.alertablu_send_whatsapp
         data:
