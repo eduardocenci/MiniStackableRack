@@ -75,8 +75,10 @@ REC_GAP_TOL_S    = 5     # gap between segments above which a new run begins (a 
 DAY_START        = 6     # 06:00
 DAY_END          = 20    # 20:00
 # Burst grouping: events whose gap (prev end_time → next start_time) exceeds this
-# are treated as separate bursts. Matches the 60 s cooldown timer in the HA package.
-COOLDOWN_GAP_S   = 60
+# are treated as separate bursts. Must stay in sync with input_number.frigate_digest_window_min
+# (default 5 min). A value slightly larger than the timer window is fine — events won't
+# naturally arrive with a gap bigger than the quiet window that just elapsed.
+COOLDOWN_GAP_S   = 300  # 5 min — matches the default 5-min quiet window in the HA package
 # Video output — single-pass CFR re-encode eliminates frame jumps from VFR source clips.
 VIDEO_FPS        = 15
 VIDEO_W          = 854
@@ -711,7 +713,8 @@ def call_openai(prompt: str, images: list[bytes], api_key: str) -> tuple[str | N
 
 # ── WhatsApp sender (WAHA) ────────────────────────────────────────────────────
 def send_whatsapp_digest(events: list[dict], narrative: str,
-                         video_path: str | None, secrets: dict) -> tuple[bool, str]:
+                         video_path: str | None, secrets: dict,
+                         continuing: bool = False) -> tuple[bool, str]:
     """Send the digest text (+video) to the Casa Blumenau group via WAHA.
 
     Returns (text_ok, detail) — detail describes the failure when text_ok is False.
@@ -727,7 +730,7 @@ def send_whatsapp_digest(events: list[dict], narrative: str,
 
     # Caption = the whole notification, sent as ONE message (video+caption) so the user
     # gets a single alert per burst, not a text then a separate video (#3, #8).
-    caption = _digest_caption(events, narrative)
+    caption = _digest_caption(events, narrative, continuing=continuing)
 
     filename = os.path.basename(video_path) if (video_path and os.path.exists(video_path)) else None
     if filename:
@@ -747,14 +750,19 @@ def send_whatsapp_digest(events: list[dict], narrative: str,
     return False, detail
 
 
-def _digest_caption(events: list[dict], narrative: str) -> str:
-    """Single rich caption: title, start–end range (always both), narrative, footer."""
+def _digest_caption(events: list[dict], narrative: str, continuing: bool = False) -> str:
+    """Single rich caption: title, start–end range (always both), narrative, footer.
+
+    `continuing=True` means the digest was forced by the max-cap (activity ongoing) —
+    appends "(continua...)" to the time line so the user knows more may follow.
+    """
     locations = list(dict.fromkeys(e["location"] for e in events))
     start = datetime.datetime.fromtimestamp(min(e["start_ts"] for e in events)).strftime("%H:%M:%S")
     end   = datetime.datetime.fromtimestamp(max(e["end_ts"] for e in events)).strftime("%H:%M:%S")
+    time_line = f"🕐 {start} – {end}" + (" *(continua...)*" if continuing else "")
     return (
         f"📹 *Resumo de Atividade*\n"
-        f"🕐 {start} – {end}\n\n"
+        f"{time_line}\n\n"
         f"{narrative}\n\n"
         f"📍 {', '.join(locations)}   ·   🎬 {len(events)} evento(s)"
     )
@@ -1013,6 +1021,8 @@ def _lock_is_held() -> bool:
 
 def main() -> None:
     mode = (sys.argv[1].strip() if len(sys.argv) > 1 else "auto").lower()
+    if mode not in ("auto", "auto_cap", "manual"):
+        mode = "auto"
 
     if not os.environ.get("_FRIGATE_WORKER"):
         # Launcher: spawn an independent worker and exit immediately.
@@ -1107,7 +1117,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     # Group into bursts; an auto digest sends ONLY the most recent burst so events
     # separated by more than the cooldown are never lumped together.
     clusters = cluster_by_gap(reviews, COOLDOWN_GAP_S)
-    if mode == "auto" and len(clusters) > 1:
+    if mode in ("auto", "auto_cap") and len(clusters) > 1:
         dropped = sum(len(c) for c in clusters[:-1])
         log.info("Auto: %d bursts in window; sending latest (%d events), dropping %d older",
                  len(clusters), len(clusters[-1]), dropped)
@@ -1139,15 +1149,25 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
             "review_id":    r.get("id"),
         })
 
-    # Single-send guard (#8): skip if this burst's newest event was already delivered.
+    # Single-send guard: skip if this burst's newest event was already delivered.
     # Without this, every cooldown-finish re-sends the same "latest burst". Auto only.
+    # Also strip any events already covered by the watermark so no event is sent twice:
+    # if activity continues beyond the first digest, the next digest gets only new events.
     latest_ts = max(e["start_ts"] for e in events)
-    if mode == "auto" and latest_ts <= _read_watermark():
-        raise _DigestSkip(f"burst already delivered (latest start_ts={latest_ts:.0f} ≤ watermark)")
+    if mode in ("auto", "auto_cap"):
+        wm = _read_watermark()
+        if latest_ts <= wm:
+            raise _DigestSkip(f"burst already delivered (latest start_ts={latest_ts:.0f} ≤ watermark)")
+        if wm > 0:
+            events = [e for e in events if e["start_ts"] > wm]
+            if not events:
+                raise _DigestSkip("all events in burst already delivered after watermark filter")
+            log.info("Watermark filter: %d event(s) kept (start_ts > %.0f)", len(events), wm)
+            latest_ts = max(e["start_ts"] for e in events)
 
     # Mute when the family is home (auto only). Advance the watermark so this burst —
     # likely caused by the family — isn't reconsidered on the next cooldown.
-    if mode == "auto" and _muted_by_presence(ha_token):
+    if mode in ("auto", "auto_cap") and _muted_by_presence(ha_token):
         _write_watermark(latest_ts)
         raise _DigestSkip("muted — family home")
 
@@ -1308,7 +1328,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         raise RuntimeError("LLM returned a relevance verdict but no summary text")
     if not relevant:
         log.info("LLM relevance gate → NAO; suppressing digest for this burst")
-        if mode == "auto":
+        if mode in ("auto", "auto_cap"):
             _write_watermark(latest_ts)
         if debug_mode:
             send_debug_whatsapp(
@@ -1328,7 +1348,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     # Cancel in-flight: if the family arrived (presence detected) while this digest was
     # being built, drop it before sending — the burst was almost certainly the family
     # itself arriving home. Auto only.
-    if mode == "auto" and _muted_by_presence(ha_token):
+    if mode in ("auto", "auto_cap") and _muted_by_presence(ha_token):
         log.info("Family present + mute → cancelling in-flight digest before send")
         _write_watermark(latest_ts)
         if debug_mode:
@@ -1344,8 +1364,9 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     notify_email    = get_ha_state("input_boolean.frigate_notify_email",    ha_token)
 
     if notify_whatsapp == "on":
-        wa_ok, wa_detail = send_whatsapp_digest(events, narrative, video_path, secrets)
-        if wa_ok and mode == "auto":
+        wa_ok, wa_detail = send_whatsapp_digest(events, narrative, video_path, secrets,
+                                                continuing=(mode == "auto_cap"))
+        if wa_ok and mode in ("auto", "auto_cap"):
             _write_watermark(latest_ts)   # mark this burst delivered → never re-send it
         if debug_mode:
             # Debug D3: did the real notification actually go out?
@@ -1364,7 +1385,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         log.info("Email disabled (frigate_notify_email=off) — skipping")
 
     # Update last_run only for auto mode
-    if mode == "auto":
+    if mode in ("auto", "auto_cap"):
         update_ha_datetime("input_datetime.frigate_digest_last_run", now, ha_token)
         log.info("Updated frigate_digest_last_run to %s", now)
 
