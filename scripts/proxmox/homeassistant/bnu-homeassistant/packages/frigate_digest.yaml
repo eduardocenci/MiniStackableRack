@@ -34,6 +34,11 @@ input_datetime:
     has_date: true
     has_time: true
 
+  frigate_burst_start:
+    name: "Frigate Burst Start"
+    has_date: true
+    has_time: true
+
 input_number:
   frigate_digest_openai_cost_total:
     name: "OpenAI Digest Cost (USD)"
@@ -44,10 +49,30 @@ input_number:
     mode: box
     icon: mdi:currency-usd
 
+  frigate_digest_window_min:
+    name: "Frigate Digest Window (min)"
+    min: 1
+    max: 30
+    step: 1
+    mode: box
+    unit_of_measurement: "min"
+    icon: mdi:timer-outline
+    # No `initial:` — persists across restarts. Set to 5 on first deploy via UI.
+
+  frigate_digest_max_cap_min:
+    name: "Frigate Burst Max Cap (min)"
+    min: 2
+    max: 60
+    step: 1
+    mode: box
+    unit_of_measurement: "min"
+    icon: mdi:timer-stop-outline
+    # No `initial:` — persists across restarts. Set to 10 on first deploy via UI.
+
 timer:
   frigate_digest_cooldown:
     name: "Frigate Digest Cooldown"
-    duration: "00:01:00"
+    duration: "00:05:00"   # default; overridden at runtime by input_number.frigate_digest_window_min
 
 button:
   frigate_digest_now:
@@ -69,6 +94,14 @@ script:
         data:
           mode: "auto"
 
+  frigate_trigger_digest_cap:
+    alias: "Frigate — Send Digest (burst cap hit)"
+    mode: single
+    sequence:
+      - action: shell_command.frigate_send_digest
+        data:
+          mode: "auto_cap"
+
   frigate_trigger_digest_manual:
     alias: "Frigate — Digest Now (30 min)"
     mode: single
@@ -89,15 +122,53 @@ automation:
              states('input_select.frigate_alert_mode') in
                ['Individual + Digest', 'Digest only'] }}
     action:
-      - action: timer.start
-        target:
-          entity_id: timer.frigate_digest_cooldown
+      # Record the start of a new burst when the timer is currently idle (not running).
+      # Subsequent reviews within the same burst leave burst_start unchanged.
+      - if:
+          - condition: template
+            value_template: "{{ not is_state('timer.frigate_digest_cooldown', 'active') }}"
+        then:
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: input_datetime.frigate_burst_start
+            data:
+              datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+      # If the burst has been running longer than the max cap, fire the digest now
+      # (the continuous activity won't settle naturally) and reset the burst clock.
+      # The script appends "(continua...)" to the caption in this case.
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: >
+                  {{ as_timestamp(now()) - as_timestamp(states('input_datetime.frigate_burst_start'))
+                     > states('input_number.frigate_digest_max_cap_min') | float * 60 }}
+            sequence:
+              - action: timer.cancel
+                target:
+                  entity_id: timer.frigate_digest_cooldown
+              - action: script.frigate_trigger_digest_cap
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.frigate_burst_start
+                data:
+                  datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+        default:
+          # Restart the quiet-window timer. Duration is driven by the UI helper so the
+          # user can tune it without a redeploy. Format: HH:MM:SS from minutes.
+          - action: timer.start
+            target:
+              entity_id: timer.frigate_digest_cooldown
+            data:
+              duration: >
+                {{ '%02d:%02d:00' | format(
+                   states('input_number.frigate_digest_window_min') | int // 60,
+                   states('input_number.frigate_digest_window_min') | int % 60) }}
 
   - alias: "Frigate: Send digest after quiet window"
     # Fires once per burst: the cooldown timer is restarted on every review and only
-    # finishes after 1 min of quiet. No minimum-gap throttle here — the script groups
-    # events by the cooldown gap and sends just the latest burst, and its lock file
-    # dedupes overlapping runs. This keeps distant bursts in separate digests.
+    # finishes after `frigate_digest_window_min` minutes of quiet. The script groups
+    # events by the same gap and sends just the latest burst; its lock file dedupes
+    # overlapping runs. This keeps distant bursts in separate digests.
     trigger:
       - platform: event
         event_type: timer.finished
