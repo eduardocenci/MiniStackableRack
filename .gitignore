@@ -1,3 +1,6 @@
 # Credentials
 .env
 gitignore/
+
+# Python
+__pycache__/

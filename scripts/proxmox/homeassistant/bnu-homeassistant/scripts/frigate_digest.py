@@ -43,12 +43,16 @@ HA_URL           = "http://localhost:8123"
 OLLAMA_HOST      = "10.1.1.50"  # bnu-proxmox LAN IP — socat proxy forwards to ply-desktop:11434
 OLLAMA_PORT      = 11434
 OLLAMA_MODEL     = "qwen3-vl:8b"
-OPENAI_MODEL     = "gpt-4o"
-OPENAI_IN_PRICE  = 2.50 / 1_000_000    # USD per input token (gpt-4o)
-OPENAI_OUT_PRICE = 10.0 / 1_000_000    # USD per output token (gpt-4o)
+# gpt-4.1-mini: vision-capable, NON-reasoning (immune to the thinking-runaway failure mode
+# we fall back from), ~6x cheaper than gpt-4o. A digest (2-5 low-detail images + ~2k prompt
+# tokens + ~300 out) costs well under half a cent.
+OPENAI_MODEL     = "gpt-4.1-mini"
+OPENAI_IN_PRICE  = 0.40 / 1_000_000    # USD per input token (gpt-4.1-mini)
+OPENAI_OUT_PRICE = 1.60 / 1_000_000    # USD per output token (gpt-4.1-mini)
 LOG_FILE         = "/config/frigate_digest.log"
 LOCK_FILE        = "/config/frigate_digest.lock"
 WATERMARK_FILE   = "/config/frigate_digest.watermark"  # max start_ts already sent — dedup guard
+LLM_STATS_FILE   = "/config/frigate_llm_stats.json"    # per-backend KPIs (read by HA command_line sensors)
 PROPERTY_CTX     = "/config/frigate_property_context.txt"
 BASELINES_DIR    = "/config/frigate_baselines"
 CLIP_DIR         = "/config/www"
@@ -62,8 +66,8 @@ LLM_TIMEOUT      = 600   # seconds — generation can be slow on first call
 # num_predict=6144 → 0 response; 51036 chars ≈ 14k tokens blew even the 12288 retry on
 # 2026-07-02 14:51). Give generous headroom and retry with ×1.5 more on each empty
 # length-cut result (thinking length is stochastic): 8192 → 12288 → 18432 covers the
-# worst runaway seen so far. If ALL attempts fail, _run_inner falls back to Frigate's
-# per-event descriptions so the digest is still delivered.
+# worst runaway seen so far. If ALL attempts fail, _run_inner falls back to OpenAI
+# (gpt-4.1-mini), then to Frigate's per-event descriptions — a digest is always delivered.
 OLLAMA_NUM_PREDICT = 8192
 OLLAMA_MAX_ATTEMPTS = 3
 # Digest clips are built from the camera's retained recording segments, not the tracked-object
@@ -585,6 +589,48 @@ def _build_prompt(events: list[dict], context: str, baselines: dict[str, bytes],
     return prompt, image_bytes
 
 
+# ── LLM KPI stats ─────────────────────────────────────────────────────────────
+def _record_llm_stats(backend: str, success: bool, prompt_tokens: int, output_tokens: int,
+                      attempts: int = 1, elapsed_s: float = 0.0,
+                      cost_usd: float | None = None, error: str | None = None) -> None:
+    """Accumulate per-backend inference KPIs in LLM_STATS_FILE (atomic rewrite).
+
+    backend: "ollama" | "openai". HA command_line sensors read this file to expose
+    calls / failures / attempts / tokens / cost as dashboard entities. Never raises —
+    stats must not be able to break a digest.
+    """
+    try:
+        stats: dict = {}
+        if os.path.exists(LLM_STATS_FILE):
+            try:
+                with open(LLM_STATS_FILE) as f:
+                    stats = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                stats = {}  # corrupt/unreadable — start fresh rather than fail
+        s = stats.setdefault(backend, {})
+        s["calls"]         = s.get("calls", 0) + 1
+        s["failures"]      = s.get("failures", 0) + (0 if success else 1)
+        s["attempts"]      = s.get("attempts", 0) + attempts
+        s["prompt_tokens"] = s.get("prompt_tokens", 0) + prompt_tokens
+        s["output_tokens"] = s.get("output_tokens", 0) + output_tokens
+        s["elapsed_s"]     = round(s.get("elapsed_s", 0.0) + elapsed_s, 1)
+        if cost_usd:
+            s["cost_usd"] = round(s.get("cost_usd", 0.0) + cost_usd, 6)
+        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if success:
+            s["last_success"] = ts
+        else:
+            s["last_failure"] = ts
+            if error:
+                s["last_error"] = error[:200]
+        tmp = LLM_STATS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(stats, f, indent=2)
+        os.replace(tmp, LLM_STATS_FILE)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Failed to record LLM stats (%s): %s", backend, exc)
+
+
 # ── Ollama ─────────────────────────────────────────────────────────────────────
 class _OllamaTimeout(Exception):
     pass
@@ -641,13 +687,15 @@ def call_ollama(prompt: str, images: list[bytes]) -> tuple[str | None, dict]:
             thinking   = data.get("thinking", "")
             done_reason = data.get("done_reason")
             stats.update({
-                "elapsed_s":      time.monotonic() - t0,
                 "response_chars": len(response),
                 "thinking_chars": len(thinking),
                 "done_reason":    done_reason,
-                "prompt_tokens":  data.get("prompt_eval_count", 0),
-                "output_tokens":  data.get("eval_count", 0),
             })
+            # Time and token counters ACCUMULATE across attempts — a failed attempt still
+            # burned real GPU time and tokens, and the KPIs should reflect actual consumption.
+            stats["elapsed_s"]     += time.monotonic() - t0
+            stats["prompt_tokens"] += data.get("prompt_eval_count", 0)
+            stats["output_tokens"] += data.get("eval_count", 0)
             log.info("Ollama response (%d chars, thinking=%d chars, done=%s): %s...",
                      len(response), len(thinking), done_reason, response[:120])
             if response:
@@ -661,11 +709,13 @@ def call_ollama(prompt: str, images: list[bytes]) -> tuple[str | None, dict]:
                 continue
             return None, stats
         except _OllamaTimeout:
-            stats.update({"elapsed_s": time.monotonic() - t0, "timed_out": True})
+            stats["elapsed_s"] += time.monotonic() - t0
+            stats["timed_out"] = True
             log.error("Ollama call timed out after %ds", LLM_TIMEOUT)
             return None, stats
         except requests.RequestException as exc:
-            stats.update({"elapsed_s": time.monotonic() - t0, "error": str(exc)})
+            stats["elapsed_s"] += time.monotonic() - t0
+            stats["error"] = str(exc)
             log.error("Ollama call failed: %s", exc)
             return None, stats
         finally:
@@ -1275,8 +1325,45 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     openai_cost: float | None    = None
     ollama_stats: dict            = {}
 
+    def _openai_tracked() -> str | None:
+        """OpenAI call with cost accounting + KPI recording. Returns narrative or None."""
+        nonlocal openai_cost
+        api_key = secrets.get("openai_api_key", "")
+        if not api_key:
+            log.error("openai_api_key not in secrets.yaml — skipping OpenAI")
+            return None
+        t0 = time.monotonic()
+        result, tok_in, tok_out = call_openai(prompt, images, api_key)
+        cost = None
+        if tok_in or tok_out:
+            cost = tok_in * OPENAI_IN_PRICE + tok_out * OPENAI_OUT_PRICE
+            log.info("OpenAI cost this call: $%.4f (%d in / %d out tokens)",
+                     cost, tok_in, tok_out)
+            prev_cost = get_ha_number("input_number.frigate_digest_openai_cost_total", ha_token)
+            update_ha_number("input_number.frigate_digest_openai_cost_total",
+                             prev_cost + cost, ha_token)
+            openai_cost = (openai_cost or 0.0) + cost
+        _record_llm_stats("openai", success=bool(result),
+                          prompt_tokens=tok_in, output_tokens=tok_out,
+                          elapsed_s=time.monotonic() - t0, cost_usd=cost,
+                          error=None if result else "no narrative returned")
+        return result
+
     if llm_mode in ("Ollama (local)", "Both"):
         narrative_ollama, ollama_stats = call_ollama(prompt, images)
+        _record_llm_stats(
+            "ollama", success=bool(narrative_ollama),
+            prompt_tokens=ollama_stats.get("prompt_tokens", 0),
+            output_tokens=ollama_stats.get("output_tokens", 0),
+            attempts=ollama_stats.get("attempts", 1),
+            elapsed_s=ollama_stats.get("elapsed_s", 0.0),
+            error=None if narrative_ollama else (
+                f"timeout after {LLM_TIMEOUT}s" if ollama_stats.get("timed_out")
+                else ollama_stats.get("error")
+                or f"empty response (done={ollama_stats.get('done_reason')}, "
+                   f"thinking={ollama_stats.get('thinking_chars', 0)} chars)"
+            ),
+        )
 
         # Debug D2: post-inference stats / failure detail.
         if debug_mode:
@@ -1298,30 +1385,35 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
             )
 
     if llm_mode in ("OpenAI (cloud)", "Both"):
-        api_key = secrets.get("openai_api_key", "")
-        if not api_key:
-            log.error("openai_api_key not in secrets.yaml — skipping OpenAI")
-        else:
-            narrative_openai, tok_in, tok_out = call_openai(prompt, images, api_key)
-            if tok_in or tok_out:
-                openai_cost = tok_in * OPENAI_IN_PRICE + tok_out * OPENAI_OUT_PRICE
-                log.info("OpenAI cost this call: $%.4f (%d in / %d out tokens)",
-                         openai_cost, tok_in, tok_out)
-                prev_cost = get_ha_number("input_number.frigate_digest_openai_cost_total", ha_token)
-                update_ha_number("input_number.frigate_digest_openai_cost_total",
-                                 prev_cost + openai_cost, ha_token)
+        narrative_openai = _openai_tracked()
 
     if llm_mode == "Both" and narrative_ollama and narrative_openai:
         log.info("=== OLLAMA NARRATIVE ===\n%s", narrative_ollama)
         log.info("=== OPENAI NARRATIVE ===\n%s", narrative_openai)
 
     narrative = narrative_ollama or narrative_openai
+    used_openai_fallback = False
+    if not narrative and llm_mode == "Ollama (local)":
+        # Fallback tier 1: Ollama exhausted every attempt (thinking runaway / timeout /
+        # unreachable) → try the cloud model once. gpt-4.1-mini is non-reasoning, so it
+        # cannot fail the same way. Same prompt → the RELEVANTE gate still applies.
+        log.warning("Ollama failed all attempts — falling back to OpenAI (%s)", OPENAI_MODEL)
+        if debug_mode:
+            send_debug_whatsapp(
+                f"⚠️ *Fallback* — Ollama falhou em todas as tentativas; "
+                f"tentando OpenAI ({OPENAI_MODEL})…",
+                secrets,
+            )
+        narrative_openai = _openai_tracked()
+        narrative = narrative_openai
+        used_openai_fallback = narrative is not None
+
     used_fallback = False
     if not narrative:
-        # Last resort: every consolidation attempt failed (e.g. qwen3-vl thinking runaway
-        # exhausting num_predict on all retries — seen 2026-07-02 14:51). Frigate already
-        # produced a per-event GenAI description for each review (_await_review_genai
-        # guaranteed it above), so deliver those verbatim instead of dropping the alert.
+        # Fallback tier 2 (last resort): the cloud fallback also failed or has no API key.
+        # Frigate already produced a per-event GenAI description for each review
+        # (_await_review_genai guaranteed it above), so deliver those verbatim instead
+        # of dropping the alert.
         # No relevance gate on this path — the events passed the object filter, and a rare
         # extra notification beats silently missing a person on camera.
         lines = [f"{e['location']}: {e['text']}" for e in events if e.get("text")]
@@ -1363,6 +1455,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
 
     llm_label = (
         "Frigate (fallback)" if used_fallback else
+        "OpenAI (fallback)" if used_openai_fallback else
         "Ollama" if (narrative_ollama and not narrative_openai) else
         "OpenAI" if (narrative_openai and not narrative_ollama) else
         "Ollama + OpenAI"
