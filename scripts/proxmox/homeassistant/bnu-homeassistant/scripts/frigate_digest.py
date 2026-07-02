@@ -59,10 +59,13 @@ LLM_TIMEOUT      = 600   # seconds — generation can be slow on first call
 # qwen3-vl:8b is a thinking model and Ollama 0.17.7 ignores `think: false`. Thinking tokens
 # count against num_predict, so an unlucky long thinking phase can consume the whole budget
 # and leave done_reason="length" with an EMPTY response (observed: 24977 thinking chars at
-# num_predict=6144 → 0 response). Give generous headroom and retry once with more on an empty
-# length-cut result (thinking length is stochastic, so a retry usually finishes).
+# num_predict=6144 → 0 response; 51036 chars ≈ 14k tokens blew even the 12288 retry on
+# 2026-07-02 14:51). Give generous headroom and retry with ×1.5 more on each empty
+# length-cut result (thinking length is stochastic): 8192 → 12288 → 18432 covers the
+# worst runaway seen so far. If ALL attempts fail, _run_inner falls back to Frigate's
+# per-event descriptions so the digest is still delivered.
 OLLAMA_NUM_PREDICT = 8192
-OLLAMA_MAX_ATTEMPTS = 2
+OLLAMA_MAX_ATTEMPTS = 3
 # Digest clips are built from the camera's retained recording segments, not the tracked-object
 # window — Frigate often stops tracking an object while activity (and recording) continues, and
 # the per-event/review export truncates across recording holes. We fetch segments around the
@@ -593,8 +596,8 @@ def call_ollama(prompt: str, images: list[bytes]) -> tuple[str | None, dict]:
     stats keys: n_images, elapsed_s, timed_out, error, attempts, num_predict,
                 prompt_tokens, output_tokens, response_chars, thinking_chars, done_reason.
 
-    Retries once with a larger num_predict when the model returns an EMPTY response cut
-    off by length (done_reason="length") — i.e. the thinking phase ate the whole budget.
+    Retries with a ×1.5 larger num_predict each time the model returns an EMPTY response
+    cut off by length (done_reason="length") — i.e. the thinking phase ate the whole budget.
     """
     img_payload = [base64.b64encode(img).decode() for img in images] if images else None
 
@@ -1313,8 +1316,27 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         log.info("=== OPENAI NARRATIVE ===\n%s", narrative_openai)
 
     narrative = narrative_ollama or narrative_openai
+    used_fallback = False
     if not narrative:
-        raise RuntimeError("no LLM narrative produced (inference failed/timed out)")
+        # Last resort: every consolidation attempt failed (e.g. qwen3-vl thinking runaway
+        # exhausting num_predict on all retries — seen 2026-07-02 14:51). Frigate already
+        # produced a per-event GenAI description for each review (_await_review_genai
+        # guaranteed it above), so deliver those verbatim instead of dropping the alert.
+        # No relevance gate on this path — the events passed the object filter, and a rare
+        # extra notification beats silently missing a person on camera.
+        lines = [f"{e['location']}: {e['text']}" for e in events if e.get("text")]
+        if not lines:
+            raise RuntimeError("no LLM narrative produced (inference failed/timed out)")
+        narrative = "\n".join(lines)
+        used_fallback = True
+        log.warning("Consolidation LLM failed on all attempts — falling back to Frigate "
+                    "per-event descriptions (%d line(s))", len(lines))
+        if debug_mode:
+            send_debug_whatsapp(
+                "⚠️ *Fallback* — consolidação LLM falhou em todas as tentativas; "
+                "enviando descrições do Frigate por evento",
+                secrets,
+            )
 
     # Relevance gate (#3): the LLM starts its answer with "RELEVANTE: SIM/NAO". If it judges
     # the scene not noteworthy (no person; only static/parked vehicles; vegetation, branches,
@@ -1340,6 +1362,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         raise _DigestSkip("not noteworthy per LLM relevance gate")
 
     llm_label = (
+        "Frigate (fallback)" if used_fallback else
         "Ollama" if (narrative_ollama and not narrative_openai) else
         "OpenAI" if (narrative_openai and not narrative_ollama) else
         "Ollama + OpenAI"
