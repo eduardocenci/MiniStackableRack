@@ -51,6 +51,36 @@ Same pattern: create `docs/runbooks/<topic>.md`, add it to the toctree in
 at it. Write for future-you at 2 a.m.: what it is, where config lives, what
 to check when it breaks.
 
+## Ingesting documentation (manuals, photos, stickers)
+
+For raw material you don't want to file by hand — device manuals, photos,
+photos of stickers with serials/credentials — use the **`ingest-docs`** skill
+(`globalnet/.claude/skills/ingest-docs/SKILL.md`). It OCRs photos, files the
+originals, updates the right device page, and opens a **digest pull request**
+you review and merge. Two ways to feed it, use either:
+
+1. **Drop in a Claude chat** (on demand): in the Claude desktop app on the
+   globalnet repo, attach the photos/PDFs and say what they are
+   ("this is the FLN router sticker, has the admin password"). It processes
+   immediately and opens the PR.
+2. **Drop in the Drive inbox** (hands-off): put files in the Google Drive
+   folder **`MiniStackableRack Inbox`** with a short `.txt` note per batch
+   saying which device/region. A daily scheduled task sweeps it and opens the
+   PR. (Runs while the Claude app is open, or on next launch if a run was
+   missed.)
+
+**Sensitivity — two tiers, automatic:**
+
+- Manuals and harmless photos → `docs/_static/…` (browsable at `/docs`).
+- Credential/serial **stickers** → `globalnet/vault/<region>/<device>/` —
+  git-tracked in the private repo but **excluded from the Docker image**
+  (the image on DockerHub is public; the Dockerfile only copies
+  `app.py`, `static/`, `devices.json`, `architecture.yaml`). Credential
+  *values* are additionally extracted to `.env`; the docs page references the
+  `.env` key, never the value.
+
+Nothing is filed until you merge the digest PR, so you always get a review.
+
 ## Rules of thumb
 
 - `architecture.yaml` is the **single source of truth** for devices — hardware
@@ -59,3 +89,5 @@ to check when it breaks.
 - `make check` gates everything: broken doc slugs, malformed yaml, and Sphinx
   warnings (`-W`) all fail CI.
 - No secrets in docs — credential *names* (`.env` keys) are fine, values never.
+- Credential stickers live in `globalnet/vault/`, never in `docs/` or
+  `static/` (those ship in the public image).
