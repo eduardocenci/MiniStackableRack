@@ -3,5 +3,12 @@ services:
     container_name: globalnet
     image: cenci/globalnet:latest
     restart: unless-stopped
+    # PVE_* credentials for /api/node-stats (Proxmox load bars) — see
+    # globalnet/docs/runbooks/monitoring.md. File lives beside this compose
+    # file on the Pi (~/globalnet/.env), never committed. Optional so the
+    # cron's `compose up` keeps working until the file is dropped there.
+    env_file:
+      - path: .env
+        required: false
     ports:
       - "5001:5050"
