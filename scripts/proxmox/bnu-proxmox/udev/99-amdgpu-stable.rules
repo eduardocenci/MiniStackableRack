@@ -1,0 +1,1 @@
+SUBSYSTEM=="drm", KERNEL=="card*", ENV{ID_PATH}=="pci-0000:04:00.0", SYMLINK+="dri/amdgpu_card"
