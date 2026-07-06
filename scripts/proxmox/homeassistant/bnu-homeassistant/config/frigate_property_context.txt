@@ -25,6 +25,14 @@ Lado direito: (preencher — ex: garagem, corredor lateral)
 #
 # Preencha abaixo com as câmeras reais do sistema:
 
+[Zonas]
+# Mapeie nomes técnicos de zonas do Frigate para termos locais (aparecem nas linhas de
+# evento como "(zona: ...)" e ajudam o LLM a localizar a ação com precisão).
+# Formato: nome_tecnico_da_zona: termo local
+# Exemplo:
+# clothes_hanger: varal
+# driveway: entrada de carros
+
 [Referências]
 # Defina termos locais usados na propriedade para que o LLM fale a mesma linguagem.
 # Exemplo:

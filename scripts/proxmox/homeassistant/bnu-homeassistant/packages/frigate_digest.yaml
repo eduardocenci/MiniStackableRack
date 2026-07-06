@@ -9,6 +9,27 @@ input_boolean:
     icon: mdi:bug
     # No `initial:` — HA restores the last value after a restart (an `initial:` would force it back).
 
+  frigate_digest_use_names:
+    name: "Frigate Digest — Usar nomes reconhecidos"
+    icon: mdi:account-check
+    # ON: eventos com reconhecimento facial usam o nome ("Silvana estende roupas...").
+    # No `initial:` — script defaults to ON when the entity is missing/unset.
+
+  frigate_digest_soften_known:
+    name: "Frigate Digest — Suavizar rotina de conhecidos"
+    icon: mdi:home-heart
+    # ON: burst composto SÓ por pessoas reconhecidas (todas as detecções são 'person'
+    # com nome) vira um digest curto "Rotina da Família" em vez do resumo completo.
+    # No `initial:` — script defaults to ON when the entity is missing/unset.
+
+  frigate_digest_threat_alerts:
+    name: "Frigate Digest — Alertas de ameaça (IA)"
+    icon: mdi:shield-alert
+    # OFF (padrão): o nível de ameaça avaliado pela IA do Frigate é IGNORADO.
+    # ON: eventos com potential_threat_level ≥ 1 são marcados no prompt, nunca são
+    # suprimidos pelo gate de relevância e escalam o cabeçalho (⚠️/🔴).
+    # No `initial:` — script defaults to OFF unless explicitly ON.
+
 input_select:
   frigate_alert_mode:
     name: "Frigate Alert Mode"
