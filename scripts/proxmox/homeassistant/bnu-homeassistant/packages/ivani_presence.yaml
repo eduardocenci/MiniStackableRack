@@ -1,0 +1,58 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Ivani Presence — bnu-homeassistant
+# Deploy to: /config/packages/ivani_presence.yaml
+#
+# Ivani is a family employee. Sends a WhatsApp message to the Casa Blumenau group
+# when she arrives and when she leaves, gated by input_boolean.notify_ivani_presence.
+# Mirrors the family_presence.yaml pattern: a template binary_sensor over the router
+# device_tracker with a 10-minute off-delay, so a brief Wi-Fi drop does not produce
+# a false "saiu"/"chegou" pair. Reuses rest_command.send_whatsapp_bnu (defined in
+# family_presence.yaml — rest_commands are global).
+# ──────────────────────────────────────────────────────────────────────────────
+
+template:
+  - binary_sensor:
+      - name: "Ivani Present"
+        unique_id: bnu_ivani_present
+        device_class: presence
+        # ON the instant her phone joins the network; the delay_off keeps it ON for
+        # 10 min after it drops (tolerates brief disconnects). The "saiu" message
+        # therefore arrives ~10 min after the actual departure — by design.
+        state: "{{ is_state('device_tracker.ivani', 'home') }}"
+        delay_off: "00:10:00"
+
+input_boolean:
+  notify_ivani_presence:
+    name: "Notificar chegada/saída da Ivani"
+    icon: mdi:account-badge
+    # No `initial:` — HA restores the last value after a restart.
+
+automation:
+  - alias: "Ivani presence: notify WhatsApp on change"
+    id: ivani_presence_notify
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.ivani_present
+        to: "on"
+        id: arrived
+      - platform: state
+        entity_id: binary_sensor.ivani_present
+        to: "off"
+        id: left
+    condition:
+      # Feature toggle
+      - condition: state
+        entity_id: input_boolean.notify_ivani_presence
+        state: "on"
+      # Ignore startup transitions out of unknown/unavailable (avoids spurious
+      # alerts after an HA restart).
+      - condition: template
+        value_template: "{{ trigger.from_state.state in ['on', 'off'] }}"
+    action:
+      - action: rest_command.send_whatsapp_bnu
+        data:
+          jid: !secret whatsapp_group_jid
+          message: >
+            {{ '🔔 Casa Blumenau — Ivani chegou.'
+               if trigger.id == 'arrived'
+               else '🚪 Casa Blumenau — Ivani saiu.' }}
