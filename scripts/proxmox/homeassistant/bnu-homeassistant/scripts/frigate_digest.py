@@ -63,7 +63,7 @@ PROMPT_FILE      = "/config/frigate_digest_prompt.txt"  # user-editable LLM prom
 RELEVANT_OBJECTS = {"person", "person-verified", "car", "dog", "cat", "animal",
                     "bicycle", "motorcycle"}
 SCENE_MAX_CHARS  = 350   # cap for metadata.scene fallback text in event lines
-MAX_LLM_IMAGES   = 6     # image budget to the consolidation LLM (Frigate text is authoritative;
+MAX_LLM_IMAGES   = 12    # image budget to the consolidation LLM (Frigate text is authoritative;
                          # 20+ raw snapshots slow qwen3-vl and feed thinking runaways)
 LAST_DIGEST_FILE = "/config/frigate_digest.last.json"  # continuity memory (last sent digest)
 CONTINUITY_WINDOW_MIN = 60  # inject [JÁ NOTIFICADO] context if last digest is younger than this
