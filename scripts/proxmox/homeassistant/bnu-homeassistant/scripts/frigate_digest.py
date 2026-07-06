@@ -99,10 +99,13 @@ DAY_END          = 20    # 20:00
 # (default 5 min). A value slightly larger than the timer window is fine — events won't
 # naturally arrive with a gap bigger than the quiet window that just elapsed.
 COOLDOWN_GAP_S   = 300  # 5 min — matches the default 5-min quiet window in the HA package
-# Video output — single-pass CFR re-encode eliminates frame jumps from VFR source clips.
+# Video output — per-clip CFR re-encode, then concat-demuxer stream copy (see
+# compile_digest_video for why it must NOT be a single filter_complex pass).
 VIDEO_FPS        = 15
 VIDEO_W          = 854
 VIDEO_H          = 480
+NORMALIZE_TIMEOUT_S = 180   # per-clip re-encode budget (clips are ≤ ~2 min at 480p veryfast)
+CONCAT_TIMEOUT_S    = 120   # stream-copy join budget
 SEND_ATTEMPTS    = 3     # WhatsApp send retries (rides over transient gateway hiccups)
 
 _handler = logging.FileHandler(LOG_FILE)
@@ -467,10 +470,19 @@ def load_baselines(cameras: list[str], baselines_dir: str, is_night: bool) -> di
 def compile_digest_video(segments: list[dict]) -> str | None:
     """Stitch recording-run clips into one MP4, chronological (oldest→newest).
 
-    `segments` is a list of {"start_ts": float, "path": str}. Single ffmpeg pass with a
-    concat filter: each input is normalised to a constant frame rate (VIDEO_FPS), padded to
-    VIDEO_W×VIDEO_H with square pixels, then concatenated. A single CFR re-encode eliminates
-    the frame jumps that occur when variable-frame-rate Frigate clips are stream-copied.
+    `segments` is a list of {"start_ts": float, "path": str}. Two-stage build:
+    stage 1 re-encodes EACH clip in its own ffmpeg pass to identical parameters
+    (CFR VIDEO_FPS, VIDEO_W×VIDEO_H letterboxed, yuv420p, no audio); stage 2 joins
+    the normalised files with the concat DEMUXER using stream copy.
+
+    This must NOT be a single filter_complex pass (the old approach): Frigate
+    export clips can change stream parameters MID-CLIP (frente_principal flips
+    1280x720 → 1920x1080), which makes ffmpeg rebuild the whole filter graph;
+    the concat filter's timeline state resets and the encoder silently drops the
+    already-scheduled frames (~30 s lost on a 4-clip montage — always perceived
+    as "the last clip is cut short"). A per-clip pass survives the same
+    reconfiguration losslessly, and demuxer concat of identical streams is a
+    plain copy. Bonus: one bad clip is skipped instead of failing the montage.
     """
     # Order strictly by run start timestamp so the montage is chronological.
     valid = [
@@ -481,41 +493,59 @@ def compile_digest_video(segments: list[dict]) -> str | None:
         log.info("No valid clips available — skipping video compilation")
         return None
 
-    inputs: list[str]  = []
-    filters: list[str] = []
-    for i, seg in enumerate(valid):
-        inputs += ["-i", seg["path"]]
-        filters.append(
-            f"[{i}:v]fps={VIDEO_FPS},"
-            f"scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=decrease,"
-            f"pad={VIDEO_W}:{VIDEO_H}:(ow-iw)/2:(oh-ih)/2,"
-            f"setsar=1,format=yuv420p[v{i}]"
-        )
-    concat_in = "".join(f"[v{i}]" for i in range(len(valid)))
-    filter_complex = ";".join(filters) + f";{concat_in}concat=n={len(valid)}:v=1:a=0[out]"
-
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    output = os.path.join(CLIP_DIR, f"frigate_digest_{timestamp}.mp4")
+    output    = os.path.join(CLIP_DIR, f"frigate_digest_{timestamp}.mp4")
+    # frigate_clip_* prefix so the periodic cleanup also catches leftovers.
+    list_path = os.path.join(CLIP_DIR, f"frigate_clip_norm_{timestamp}.txt")
+    vf = (f"fps={VIDEO_FPS},"
+          f"scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=decrease,"
+          f"pad={VIDEO_W}:{VIDEO_H}:(ow-iw)/2:(oh-ih)/2,"
+          f"setsar=1,format=yuv420p")
 
-    # The per-input fps filter plus output -r both force constant frame rate, so the
-    # montage has one continuous, jump-free timeline regardless of source VFR clips.
-    cmd = [FFMPEG, "-y", *inputs,
-           "-filter_complex", filter_complex, "-map", "[out]",
-           "-r", str(VIDEO_FPS),
-           "-c:v", "libx264", "-crf", "28", "-preset", "veryfast",
-           "-pix_fmt", "yuv420p", "-movflags", "+faststart", output]
-    timeout = min(600, 60 + 25 * len(valid))
+    norm_paths: list[str] = []
     try:
-        subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)
-        log.info("Digest video compiled: %s (%d bytes, %d clips, CFR %dfps)",
-                 output, os.path.getsize(output), len(valid), VIDEO_FPS)
+        for i, seg in enumerate(valid):
+            norm = os.path.join(CLIP_DIR, f"frigate_clip_norm_{timestamp}_{i}.mp4")
+            cmd = [FFMPEG, "-y", "-i", seg["path"], "-vf", vf,
+                   "-r", str(VIDEO_FPS), "-an",
+                   "-c:v", "libx264", "-crf", "28", "-preset", "veryfast",
+                   "-pix_fmt", "yuv420p", norm]
+            try:
+                subprocess.run(cmd, check=True, capture_output=True,
+                               timeout=NORMALIZE_TIMEOUT_S)
+                norm_paths.append(norm)
+            except subprocess.CalledProcessError as exc:
+                log.warning("Clip normalise failed for %s — skipping it: %s",
+                            seg["path"], _ffmpeg_err(exc))
+            except subprocess.TimeoutExpired:
+                log.warning("Clip normalise timed out (%ds) for %s — skipping it",
+                            NORMALIZE_TIMEOUT_S, seg["path"])
+        if not norm_paths:
+            log.error("Video compile failed: no clip survived normalisation")
+            return None
+
+        with open(list_path, "w") as f:
+            for p in norm_paths:
+                f.write(f"file '{p}'\n")
+        cmd = [FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+               "-c", "copy", "-movflags", "+faststart", output]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=CONCAT_TIMEOUT_S)
+        except subprocess.CalledProcessError as exc:
+            log.error("Video concat failed: %s", _ffmpeg_err(exc))
+            return None
+        except subprocess.TimeoutExpired as exc:
+            log.error("Video concat timed out after %ds: %s", CONCAT_TIMEOUT_S, exc)
+            return None
+        log.info("Digest video compiled: %s (%d bytes, %d/%d clips, CFR %dfps)",
+                 output, os.path.getsize(output), len(norm_paths), len(valid), VIDEO_FPS)
         return output
-    except subprocess.CalledProcessError as exc:
-        log.error("Video compile failed: %s", _ffmpeg_err(exc))
-        return None
-    except subprocess.TimeoutExpired as exc:
-        log.error("Video compile timed out after %ds: %s", timeout, exc)
-        return None
+    finally:
+        for p in norm_paths + [list_path]:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
 
 
 def _ffmpeg_err(exc: Exception) -> str:

@@ -54,6 +54,22 @@ detect:
 
 record:
   enabled: true
+  # mode "all" (default: motion) keeps EVERY segment inside an alert/detection window —
+  # motion-gated retention was dropping the tail of events (person/car still tracked but
+  # motion below threshold), which cut the digest's last clip short. post_capture 10 adds
+  # margin past the review end so departures aren't clipped mid-action.
+  alerts:
+    pre_capture: 5
+    post_capture: 10
+    retain:
+      days: 10
+      mode: all
+  detections:
+    pre_capture: 5
+    post_capture: 10
+    retain:
+      days: 10
+      mode: all
 
 snapshots:
   enabled: true
