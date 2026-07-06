@@ -571,26 +571,33 @@ INSTRUÇÕES:
 - Comece SEMPRE com uma linha de relevância, exatamente "RELEVANTE: SIM" ou "RELEVANTE: NAO".
   Esta linha aparece UMA ÚNICA VEZ, no início da resposta — NUNCA a repita por evento ou por
   câmera; o veredito é um só, para o conjunto de todos os eventos.
-  Use NAO quando NÃO há pessoas E há apenas veículo(s) parado(s)/estático(s) (que não chegam
-  nem saem), ou quando o disparo foi causado por vegetação, galhos, sombras, variação de luz,
-  chuva ou animais pequenos (ex.: pássaros). Use SIM quando há uma pessoa, um veículo ou pessoa
-  chegando/saindo/se movendo, ou qualquer situação relevante de segurança. Se algum evento
-  estiver marcado com [AMEAÇA POTENCIAL], responda SIM.
+  Use NAO quando NÃO há pessoas E os veículos apenas permanecem parados/estáticos (nenhum
+  chega, sai ou manobra), ou quando o disparo foi causado por vegetação, galhos, sombras,
+  variação de luz, chuva ou animais pequenos (ex.: pássaros). Use SIM quando há uma pessoa,
+  ou quando um veículo chega, sai, entra ou sai da garagem, manobra ou se move — mesmo SEM
+  nenhuma pessoa visível (ex.: "um carro entra na garagem" é SIM). Frases como "não há
+  pessoas detectadas" NÃO tornam o conjunto irrelevante quando alguma descrição relata
+  movimento de veículo. Se algum evento estiver marcado com [AMEAÇA POTENCIAL], responda SIM.
 - A descrição de cada evento em [EVENTOS DETECTADOS] vem de uma análise prévia de MÚLTIPLOS
   quadros do Frigate e é AUTORITATIVA sobre haver ou não pessoas/atividade. Rótulos de detector
   de objetos são NÃO-CONFIÁVEIS (muitos falsos positivos) e por isso não são fornecidos aqui.
-  Se a descrição indica ausência de pessoas/atividade (ex.: "nenhum indivíduo", "sem movimento",
-  "normalidade", "veículo estacionado"), responda RELEVANTE: NAO — a menos que você veja
-  INEQUIVOCAMENTE uma pessoa na imagem. Na dúvida entre a descrição e a imagem, confie na descrição.
-- DIREÇÃO DO MOVIMENTO (chegando × saindo): as descrições vêm de câmeras ISOLADAS e NÃO são
-  confiáveis quanto à direção do deslocamento — frequentemente erram ou se contradizem (ex.: uma
-  diz "em direção à entrada" e outra "em direção à rua" para a MESMA pessoa). Só afirme que
-  alguém está chegando/entrando ou saindo/indo embora quando as evidências forem consistentes:
-  a ordem cronológica das aparições entre as câmeras (compare os SEGUNDOS dos colchetes) e os
-  trajetos do [CONTEXTO DA PROPRIEDADE] (sentido rua → portas da frente = CHEGANDO; portas da
-  frente → rua = SAINDO). Se as descrições divergirem entre si ou a sequência não for conclusiva,
-  descreva o movimento de forma NEUTRA (ex.: "uma pessoa passa pela área da frente da casa"),
-  sem afirmar chegada, saída, destino nem "em direção a".
+  Se a descrição indica ausência de pessoas E ausência de movimento de veículos (ex.: "nenhum
+  indivíduo", "sem movimento", "normalidade", "veículo permanece estacionado"), responda
+  RELEVANTE: NAO — a menos que você veja INEQUIVOCAMENTE uma pessoa na imagem. Na dúvida entre
+  a descrição e a imagem, confie na descrição.
+- DIREÇÃO DO MOVIMENTO (chegando × saindo): para o TRAJETO DE PESSOAS pela propriedade, as
+  descrições vêm de câmeras ISOLADAS e NÃO são confiáveis quanto à direção do deslocamento —
+  frequentemente erram ou se contradizem (ex.: uma diz "em direção à entrada" e outra "em
+  direção à rua" para a MESMA pessoa). Só afirme que uma pessoa está chegando/entrando ou
+  saindo/indo embora quando as evidências forem consistentes: a ordem cronológica das aparições
+  entre as câmeras (compare os SEGUNDOS dos colchetes) e os trajetos do [CONTEXTO DA
+  PROPRIEDADE] (sentido rua → portas da frente = CHEGANDO; portas da frente → rua = SAINDO).
+  Se as descrições divergirem entre si ou a sequência não for conclusiva, descreva o movimento
+  de forma NEUTRA (ex.: "uma pessoa passa pela área da frente da casa"), sem afirmar chegada,
+  saída, destino nem "em direção a". Esta cautela afeta apenas o TEXTO do resumo — NUNCA o
+  veredito RELEVANTE (movimento descrito conta como atividade mesmo com direção incerta).
+  Mudanças de estado explícitas relatadas pelo Frigate (ex.: "carro entra na garagem e a porta
+  fecha") são confiáveis: relate-as como estão.
 - HORÁRIOS: o intervalo entre colchetes no início de cada evento (ex.: [10:24:05–10:31:47]) é a fonte
   OFICIAL de horário. IGNORE horários citados dentro das descrições e carimbos de hora visíveis
   nas imagens — o relógio das câmeras pode estar errado. NUNCA mencione um horário que não seja
@@ -1836,6 +1843,22 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         relevant = True
         if not narrative.strip():   # gate-only reply: fall back to Frigate's own text
             narrative = "\n".join(f"{e['location']}: {e['text']}" for e in events if e.get("text"))
+    # A single NAO can be an unlucky sample on a borderline scene (2026-07-06 17:58:
+    # "carro entra na garagem" was suppressed, yet replaying the exact prompt+image gave
+    # SIM 8/8). Suppression is irreversible — the watermark advances and the burst is
+    # never reconsidered — so confirm it: re-ask the SAME backend once and suppress only
+    # when the second verdict is also NAO. Costs one extra call on suppression paths only.
+    if not relevant:
+        log.info("Relevance gate NAO — sampling a second verdict before suppressing")
+        second = _openai_tracked() if narrative_openai else _ollama_tracked()
+        rel2, narr2 = _parse_relevance(second) if second else (False, "")
+        if rel2 and narr2.strip():
+            log.warning("Second verdict is SIM — overriding the initial NAO (borderline scene)")
+            if debug_mode:
+                send_debug_whatsapp(
+                    "⚠️ Gate NAO revertido — segunda amostra respondeu SIM; enviando digest",
+                    secrets)
+            relevant, narrative = True, narr2
     # Never ship a digest whose body is empty: if the model produced only the RELEVANTE gate
     # and no summary, treat it as a failed inference (surfaced to debug) rather than sending a
     # caption with no text — that is the "digest sent without any summary" symptom.
