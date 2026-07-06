@@ -3,11 +3,11 @@
 # Deploy to: /config/packages/ivani_presence.yaml
 #
 # Ivani is a family employee. Sends a WhatsApp message to the Casa Blumenau group
-# when she arrives and when she leaves, gated by input_boolean.notify_ivani_presence.
-# Mirrors the family_presence.yaml pattern: a template binary_sensor over the router
-# device_tracker with a 10-minute off-delay, so a brief Wi-Fi drop does not produce
-# a false "saiu"/"chegou" pair. Reuses rest_command.send_whatsapp_bnu (defined in
-# family_presence.yaml — rest_commands are global).
+# when she arrives and when she leaves, gated by input_boolean.notify_ivani_presence
+# (master toggle) and optionally by input_boolean.notify_ivani_family_away_only
+# (in series: when ON, notify only while the family is NOT home).
+# Reuses rest_command.send_whatsapp_bnu (defined in family_presence.yaml —
+# rest_commands are global).
 # ──────────────────────────────────────────────────────────────────────────────
 
 template:
@@ -15,16 +15,23 @@ template:
       - name: "Ivani Present"
         unique_id: bnu_ivani_present
         device_class: presence
-        # ON the instant her phone joins the network; the delay_off keeps it ON for
-        # 10 min after it drops (tolerates brief disconnects). The "saiu" message
-        # therefore arrives ~10 min after the actual departure — by design.
+        # No delay_off here: the router device_tracker already debounces departures
+        # with its own consider_home delay (300 s), so an extra template delay would
+        # stack on top of it and push the "saiu" message ~15 min late.
         state: "{{ is_state('device_tracker.ivani', 'home') }}"
-        delay_off: "00:10:00"
 
 input_boolean:
   notify_ivani_presence:
     name: "Notificar chegada/saída da Ivani"
     icon: mdi:account-badge
+    # Master toggle. No `initial:` — HA restores the last value after a restart.
+
+  notify_ivani_family_away_only:
+    name: "Notificar Ivani só com família fora"
+    icon: mdi:home-export-outline
+    # In series with the master toggle: when ON, arrival/departure messages are
+    # sent only while binary_sensor.family_present is OFF (nobody of the family
+    # home). When OFF, messages are sent regardless of family presence.
     # No `initial:` — HA restores the last value after a restart.
 
 automation:
@@ -40,10 +47,15 @@ automation:
         to: "off"
         id: left
     condition:
-      # Feature toggle
+      # Master feature toggle
       - condition: state
         entity_id: input_boolean.notify_ivani_presence
         state: "on"
+      # Series toggle: when ON, only notify while the family is away.
+      - condition: template
+        value_template: >
+          {{ is_state('input_boolean.notify_ivani_family_away_only', 'off')
+             or is_state('binary_sensor.family_present', 'off') }}
       # Ignore startup transitions out of unknown/unavailable (avoids spurious
       # alerts after an HA restart).
       - condition: template
