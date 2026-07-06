@@ -552,7 +552,16 @@ INSTRUÇÕES:
   Se a descrição indica ausência de pessoas/atividade (ex.: "nenhum indivíduo", "sem movimento",
   "normalidade", "veículo estacionado"), responda RELEVANTE: NAO — a menos que você veja
   INEQUIVOCAMENTE uma pessoa na imagem. Na dúvida entre a descrição e a imagem, confie na descrição.
-- HORÁRIOS: o intervalo entre colchetes no início de cada evento (ex.: [10:24–10:31]) é a fonte
+- DIREÇÃO DO MOVIMENTO (chegando × saindo): as descrições vêm de câmeras ISOLADAS e NÃO são
+  confiáveis quanto à direção do deslocamento — frequentemente erram ou se contradizem (ex.: uma
+  diz "em direção à entrada" e outra "em direção à rua" para a MESMA pessoa). Só afirme que
+  alguém está chegando/entrando ou saindo/indo embora quando as evidências forem consistentes:
+  a ordem cronológica das aparições entre as câmeras (compare os SEGUNDOS dos colchetes) e os
+  trajetos do [CONTEXTO DA PROPRIEDADE] (sentido rua → portas da frente = CHEGANDO; portas da
+  frente → rua = SAINDO). Se as descrições divergirem entre si ou a sequência não for conclusiva,
+  descreva o movimento de forma NEUTRA (ex.: "uma pessoa passa pela área da frente da casa"),
+  sem afirmar chegada, saída, destino nem "em direção a".
+- HORÁRIOS: o intervalo entre colchetes no início de cada evento (ex.: [10:24:05–10:31:47]) é a fonte
   OFICIAL de horário. IGNORE horários citados dentro das descrições e carimbos de hora visíveis
   nas imagens — o relógio das câmeras pode estar errado. NUNCA mencione um horário que não seja
   o dos colchetes.
@@ -1481,8 +1490,10 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         events.append({
             "camera":       cam,
             "location":     humanize_cam(cam, camera_to_location),
-            "time":         datetime.datetime.fromtimestamp(start_ts).strftime("%H:%M"),
-            "time_end":     datetime.datetime.fromtimestamp(end_ts).strftime("%H:%M"),
+            # Seconds matter: the consolidation LLM infers direction of travel (arriving vs
+            # leaving) from the cross-camera chronology — minute-rounded times hid it.
+            "time":         datetime.datetime.fromtimestamp(start_ts).strftime("%H:%M:%S"),
+            "time_end":     datetime.datetime.fromtimestamp(end_ts).strftime("%H:%M:%S"),
             "start_ts":     start_ts,
             "end_ts":       end_ts,
             "text":         genai["text"],
@@ -1552,12 +1563,12 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         event["labels"] = labels
         if starts:
             event["start_ts"] = min(starts)
-            event["time"]     = datetime.datetime.fromtimestamp(min(starts)).strftime("%H:%M")
+            event["time"]     = datetime.datetime.fromtimestamp(min(starts)).strftime("%H:%M:%S")
         if ends:
             event["end_ts"] = max(ends)
         elif starts:
             event["end_ts"] = max(event.get("end_ts") or 0, max(starts))
-        event["time_end"] = datetime.datetime.fromtimestamp(event["end_ts"]).strftime("%H:%M")
+        event["time_end"] = datetime.datetime.fromtimestamp(event["end_ts"]).strftime("%H:%M:%S")
 
     # Build the digest video from contiguous RECORDING runs per camera — not the tracked-object
     # window. Frigate frequently stops tracking an object while activity (and recording) keeps
