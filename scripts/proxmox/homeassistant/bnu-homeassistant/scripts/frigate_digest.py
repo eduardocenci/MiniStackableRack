@@ -58,8 +58,21 @@ BASELINES_DIR    = "/config/frigate_baselines"
 CLIP_DIR         = "/config/www"
 FFMPEG           = "/usr/bin/ffmpeg"
 PROMPT_FILE      = "/config/frigate_digest_prompt.txt"  # user-editable LLM prompt template
-RELEVANT_OBJECTS = {"person", "car", "dog", "cat", "animal", "bicycle", "motorcycle"}
+# "person-verified" is Frigate 0.17's face-recognition variant — a review whose objects list
+# carries only the verified form must not be dropped by the relevance filter.
+RELEVANT_OBJECTS = {"person", "person-verified", "car", "dog", "cat", "animal",
+                    "bicycle", "motorcycle"}
+SCENE_MAX_CHARS  = 350   # cap for metadata.scene fallback text in event lines
+MAX_LLM_IMAGES   = 6     # image budget to the consolidation LLM (Frigate text is authoritative;
+                         # 20+ raw snapshots slow qwen3-vl and feed thinking runaways)
+LAST_DIGEST_FILE = "/config/frigate_digest.last.json"  # continuity memory (last sent digest)
+CONTINUITY_WINDOW_MIN = 60  # inject [JÁ NOTIFICADO] context if last digest is younger than this
 LLM_TIMEOUT      = 600   # seconds — generation can be slow on first call
+# Ollama defaults num_ctx to 4096, which would silently truncate the richer prompt (worst case
+# ~24 events × 350 chars + context/continuity ≈ 4-5k tokens + vision tokens). Raised so the
+# prompt AND the thinking budget fit; scales with the num_predict retry ladder. Costs KV-cache
+# VRAM on ply-desktop — D2 debug stats report prompt_tokens for monitoring.
+OLLAMA_NUM_CTX   = 16384
 # qwen3-vl:8b is a thinking model and Ollama 0.17.7 ignores `think: false`. Thinking tokens
 # count against num_predict, so an unlucky long thinking phase can consume the whole budget
 # and leave done_reason="length" with an EMPTY response (observed: 24977 thinking chars at
@@ -239,18 +252,26 @@ def fetch_snapshot(base: str, event_id: str) -> bytes | None:
         return None
 
 
-def fetch_event_times(base: str, event_id: str) -> tuple[float | None, float | None]:
-    """Real object-track (start_time, end_time) from Frigate — the actual time the
-    activity started/stopped. The review window can be far shorter than the event, and
-    the video length reflects the montage, so neither is a good source for the time range."""
+def fetch_event_meta(base: str, event_id: str) -> dict:
+    """Object-track metadata from /api/events/<id>: the real (start_time, end_time) —
+    the review window can be far shorter than the event, and the video length reflects
+    the montage, so neither is a good source for the time range — plus the recognized
+    person `sub_label` (face recognition, e.g. "Silvana") and the detector `label`
+    ("person"/"car"...) used by the known-person soften policy. Returns {} on failure."""
     try:
         r = requests.get(f"{base}/api/events/{event_id}", timeout=15)
         if r.ok:
             e = r.json()
-            return e.get("start_time"), e.get("end_time")
+            sl = e.get("sub_label")
+            if isinstance(sl, (list, tuple)):   # some payloads: [name, score]
+                sl = sl[0] if sl else None
+            if isinstance(sl, str):
+                sl = _fix_encoding(sl.strip()) or None
+            return {"start_time": e.get("start_time"), "end_time": e.get("end_time"),
+                    "sub_label": sl, "label": e.get("label")}
     except requests.RequestException as exc:
-        log.warning("fetch_event_times(%s) failed: %s", event_id, exc)
-    return None, None
+        log.warning("fetch_event_meta(%s) failed: %s", event_id, exc)
+    return {}
 
 
 # ── Encoding / GenAI helpers ──────────────────────────────────────────────────
@@ -261,14 +282,38 @@ def _fix_encoding(text: str) -> str:
         return text
 
 
-def extract_genai_text(review: dict) -> str:
+def _cap_text(text: str, limit: int) -> str:
+    """Truncate at a word boundary with an ellipsis when over limit."""
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0].rstrip(",.;:") + "…"
+
+
+def extract_genai_fields(review: dict) -> dict:
+    """Frigate GenAI fields for one review, encoding-repaired.
+
+    Returns {"text": str, "threat": int, "concerns": str | None}.
+
+    Text preference: data.description (Frigate ≤0.16) → metadata.shortSummary →
+    metadata.scene (capped at SCENE_MAX_CHARS) → metadata.title. On 0.17
+    data.description is absent, so shortSummary/scene carry the real multi-frame
+    narrative that title-only extraction was dropping — the main reason digests
+    used to be vague. threat/concerns are parsed here but only USED when
+    input_boolean.frigate_digest_threat_alerts is on."""
     data = review.get("data") or {}
     if data.get("description"):
-        return _fix_encoding(data["description"])
-    meta = data.get("metadata") or {}
-    title   = _fix_encoding(meta.get("title") or "")
-    summary = _fix_encoding(meta.get("shortSummary") or "")
-    return title or summary or ""
+        return {"text": _fix_encoding(data["description"]), "threat": 0, "concerns": None}
+    meta     = data.get("metadata") or {}
+    summary  = _fix_encoding(meta.get("shortSummary") or "")
+    scene    = _fix_encoding(meta.get("scene") or "")
+    title    = _fix_encoding(meta.get("title") or "")
+    text     = summary or (_cap_text(scene, SCENE_MAX_CHARS) if scene else "") or title
+    concerns = _fix_encoding(meta.get("other_concerns") or "") or None
+    try:
+        threat = int(meta.get("potential_threat_level") or 0)
+    except (TypeError, ValueError):
+        threat = 0
+    return {"text": text, "threat": threat, "concerns": concerns}
 
 
 def _await_review_genai(base: str, events: list[dict], since: datetime.datetime,
@@ -290,7 +335,13 @@ def _await_review_genai(base: str, events: list[dict], since: datetime.datetime,
                 if not e.get("text"):
                     r = fresh.get(e.get("review_id"))
                     if r:
-                        e["text"] = extract_genai_text(r) or e["text"]
+                        # metadata (text + threat + concerns) attaches as one object —
+                        # refresh all of it, not just the text.
+                        f = extract_genai_fields(r)
+                        if f["text"]:
+                            e["text"]     = f["text"]
+                            e["threat"]   = f["threat"]
+                            e["concerns"] = f["concerns"]
         except requests.RequestException as exc:
             log.warning("GenAI re-fetch failed: %s", exc)
         n_missing = sum(1 for e in events if not e.get("text"))
@@ -332,43 +383,50 @@ def cluster_by_gap(reviews: list[dict], max_gap_s: float) -> list[list[dict]]:
 
 
 # ── Property context ──────────────────────────────────────────────────────────
-def load_property_context(path: str) -> tuple[str, dict[str, str]]:
-    """Returns (raw_text, camera_to_location_dict).
+def load_property_context(path: str) -> tuple[str, dict[str, str], dict[str, str]]:
+    """Returns (raw_text, camera_to_location, zone_to_label).
 
-    The [Câmeras] section is parsed for camera-name→location mappings.
-    Lines starting with # are comments. Everything else becomes context for the LLM.
+    The [Câmeras] section maps camera names → locations; the [Zonas] section maps
+    Frigate zone names → local terms (e.g. clothes_hanger: varal). Lines starting
+    with # are comments. Everything else (including the mapping lines, which double
+    as a glossary) becomes context for the LLM.
     """
     camera_to_location: dict[str, str] = {}
+    zone_to_label: dict[str, str] = {}
     if not os.path.exists(path):
         log.info("Property context file not found: %s — LLM will use camera names", path)
-        return "", camera_to_location
+        return "", camera_to_location, zone_to_label
 
     with open(path, encoding="utf-8") as f:
         raw = f.read()
 
-    in_cameras = False
+    section = ""
     for line in raw.splitlines():
         stripped = line.strip()
         if stripped.startswith("#"):
             continue
         low = stripped.lower()
-        if low.startswith("[câmera") or low.startswith("[camera"):
-            in_cameras = True
-            continue
         if stripped.startswith("[") and stripped.endswith("]"):
-            in_cameras = False
+            if low.startswith("[câmera") or low.startswith("[camera"):
+                section = "cameras"
+            elif low.startswith("[zona") or low.startswith("[zone"):
+                section = "zones"
+            else:
+                section = ""
             continue
-        if in_cameras and ":" in stripped:
-            cam, _, loc = stripped.partition(":")
-            cam = cam.strip()
-            loc = loc.strip()
-            if cam and loc:
-                camera_to_location[cam] = loc
+        if section and ":" in stripped:
+            key, _, val = stripped.partition(":")
+            key, val = key.strip(), val.strip()
+            if key and val:
+                if section == "cameras":
+                    camera_to_location[key] = val
+                else:
+                    zone_to_label[key] = val
 
     # Strip comment lines for the LLM context
     clean_lines = [l for l in raw.splitlines() if not l.strip().startswith("#")]
     context = "\n".join(clean_lines).strip()
-    return context, camera_to_location
+    return context, camera_to_location, zone_to_label
 
 
 def humanize_cam(cam: str, camera_to_location: dict[str, str]) -> str:
@@ -379,6 +437,12 @@ def humanize_cam(cam: str, camera_to_location: dict[str, str]) -> str:
     if label:
         return label
     return cam.replace("_", " ").strip().title()
+
+
+def humanize_zone(zone: str, zone_to_label: dict[str, str]) -> str:
+    """Local term for a Frigate zone name ([Zonas] mapping), else a readable fallback
+    (clothes_hanger → clothes hanger). Keeps technical zone names out of messages."""
+    return zone_to_label.get(zone) or zone.replace("_", " ").strip()
 
 
 # ── Baseline images ───────────────────────────────────────────────────────────
@@ -463,12 +527,13 @@ def _ffmpeg_err(exc: Exception) -> str:
 
 
 # ── LLM prompt builder ────────────────────────────────────────────────────────
-# Editable template. Tokens __CONTEXT__, __IMAGE_NOTE__, __WINDOW_MIN__, __EVENTS__ are
-# substituted at runtime; everything else (role, INSTRUÇÕES, the RELEVANTE gate) is yours
-# to edit at PROMPT_FILE (/config/frigate_digest_prompt.txt). Falls back to this default.
+# Editable template. Tokens __CONTEXT__, __PREVIOUS__, __IMAGE_NOTE__, __WINDOW_MIN__,
+# __EVENTS__ and __ROTINA__ are substituted at runtime; everything else (role, INSTRUÇÕES,
+# the RELEVANTE gate) is yours to edit at PROMPT_FILE (/config/frigate_digest_prompt.txt).
+# Falls back to this default — keep the file and this string IDENTICAL when changing either.
 _DEFAULT_PROMPT_TEMPLATE = """\
 Você é um assistente de segurança residencial. Analise os dados e imagens abaixo.
-__CONTEXT____IMAGE_NOTE__
+__CONTEXT____PREVIOUS____IMAGE_NOTE__
 [EVENTOS DETECTADOS — últimos __WINDOW_MIN__ min]
 __EVENTS__
 
@@ -479,13 +544,46 @@ INSTRUÇÕES:
   Use NAO quando NÃO há pessoas E há apenas veículo(s) parado(s)/estático(s) (que não chegam
   nem saem), ou quando o disparo foi causado por vegetação, galhos, sombras, variação de luz,
   chuva ou animais pequenos (ex.: pássaros). Use SIM quando há uma pessoa, um veículo ou pessoa
-  chegando/saindo/se movendo, ou qualquer situação relevante de segurança.
-- Use SOMENTE as referências de localização fornecidas (frente, fundos, portão, etc.).
+  chegando/saindo/se movendo, ou qualquer situação relevante de segurança. Se algum evento
+  estiver marcado com [AMEAÇA POTENCIAL], responda SIM.
+- A descrição de cada evento em [EVENTOS DETECTADOS] vem de uma análise prévia de MÚLTIPLOS
+  quadros do Frigate e é AUTORITATIVA sobre haver ou não pessoas/atividade. Rótulos de detector
+  de objetos são NÃO-CONFIÁVEIS (muitos falsos positivos) e por isso não são fornecidos aqui.
+  Se a descrição indica ausência de pessoas/atividade (ex.: "nenhum indivíduo", "sem movimento",
+  "normalidade", "veículo estacionado"), responda RELEVANTE: NAO — a menos que você veja
+  INEQUIVOCAMENTE uma pessoa na imagem. Na dúvida entre a descrição e a imagem, confie na descrição.
+- HORÁRIOS: o intervalo entre colchetes no início de cada evento (ex.: [10:24–10:31]) é a fonte
+  OFICIAL de horário. IGNORE horários citados dentro das descrições e carimbos de hora visíveis
+  nas imagens — o relógio das câmeras pode estar errado. NUNCA mencione um horário que não seja
+  o dos colchetes.
+- IDIOMA: responda SEMPRE em português do Brasil, mesmo que as descrições dos eventos estejam em
+  inglês ou misturem idiomas. Traduza o que for preciso; não copie frases em inglês.
+- PESSOAS RECONHECIDAS: quando a linha do evento trouxer "(pessoa reconhecida: <nome>)", o
+  reconhecimento facial confirmou essa pessoa — use o nome ao descrevê-la (ex.: "Silvana estende
+  roupas no varal"). NÃO invente nomes e NÃO identifique ninguém pela imagem: use apenas os
+  nomes fornecidos nas linhas de evento.
+- NARRATIVA ÚNICA: escreva UM relato único e cronológico cobrindo todos os eventos e locais —
+  NÃO descreva evento por evento nem repita a mesma ação (ex.: "uma pessoa caminha") várias
+  vezes. Agrupe eventos que claramente são a mesma atividade. A MESMA pessoa reconhecida (mesmo
+  nome) em locais diferentes pode ser conectada (ex.: "Silvana alterna entre o varal e o
+  quintal"), mas SOMENTE quando o nome consta nas linhas de evento; pessoas SEM nome em locais
+  diferentes NÃO devem ser tratadas como a mesma pessoa, e NÃO invente movimentos, trajetos ou
+  destinos que não constam nos eventos.
+- DESCREVA APENAS o que é observado (quem/o quê, a ação e o local). NÃO faça avaliações, suposições
+  nem julgamentos: nada sobre horário, rotina, normalidade, suspeita, intenção, "relevância para
+  segurança", "movimentação contínua", nem "confirmado por múltiplos quadros/eventos". Só os fatos.
+- Use EXATAMENTE a localização indicada no início de cada linha de evento (ex.: "Fundos",
+  "Lateral Esquerda"); NÃO deduza a localização pela imagem. Relate cada evento no local em que
+  de fato ocorreu.
 - NUNCA mencione nomes técnicos de câmeras.
-- Se imagens baseline forem fornecidas, compare com as atuais e descreva o que mudou.
-- Conecte eventos entre locais quando fizer sentido (ex.: mesma pessoa em locais diferentes).
-- Após a linha RELEVANTE, escreva o resumo em 2–5 frases em português. Mencione preocupações
-  de segurança se houver. Responda apenas com a linha RELEVANTE e o resumo, sem título."""
+- AMEAÇA: se algum evento estiver marcado com "[AMEAÇA POTENCIAL", comece o resumo por ele e
+  descreva-o com prioridade.
+- Se houver bloco [JÁ NOTIFICADO], os eventos listados agora são NOVOS: descreva apenas o que é
+  novo ou o que mudou em relação ao resumo anterior; se for a mesma atividade continuando,
+  comece o resumo com "Continuação:".
+__ROTINA__- Após a linha RELEVANTE, escreva de 1 a 5 frases curtas EM PORTUGUÊS (use mais frases somente
+  quando houver muitos eventos distintos), apenas descrevendo a(s) cena(s), sem título e sem
+  conclusões."""
 
 
 def _load_prompt_template() -> str:
@@ -536,12 +634,156 @@ def _parse_relevance(text: str) -> tuple[bool, str]:
     return relevant, "\n".join(out).strip()
 
 
+def _format_event_line(e: dict, use_names: bool = True, threat_on: bool = False) -> str:
+    """One prompt line per event: time span, location (+zones), Frigate narrative,
+    recognized names, and — only when the threat toggle is on — threat/concern markers.
+
+    NOTE: the detector's object labels are deliberately NOT included. They are the source
+    of false positives (e.g. "person" on a parked car) and, presented as fact, bias the
+    vision LLM into confirming a person that isn't there. The Frigate text is the
+    authoritative signal (see the INSTRUÇÕES/RELEVANTE rule in the prompt template).
+    """
+    start = e["time"]
+    end   = e.get("time_end") or start
+    span  = start if end == start else f"{start}–{end}"
+    loc   = e["location"]
+    if e.get("zones"):
+        loc += f" (zona: {', '.join(e['zones'])})"
+    parts: list[str] = []
+    if threat_on and (e.get("threat") or 0) >= 1:
+        parts.append(f"[AMEAÇA POTENCIAL nível {e['threat']}]")
+    parts.append(e.get("text") or "(sem descrição)")
+    if use_names and e.get("names"):
+        parts.append(f"(pessoa reconhecida: {', '.join(e['names'])})")
+    if threat_on and e.get("concerns"):
+        parts.append(f"(atenção: {e['concerns']})")
+    return f"- [{span}] {loc}: {' '.join(parts)}"
+
+
+def _select_snapshot_ids(events: list[dict], snapshots: dict[str, bytes | None],
+                         budget: int, threat_on: bool = False) -> set[str]:
+    """Pick at most `budget` event snapshots for the LLM. Priority:
+    1. every threat>=1 event, newest first (only when the threat toggle is on),
+    2. one snapshot per camera not yet represented (newest first),
+    3. fill remaining slots with the newest unselected events.
+    Frigate's per-event text covers ALL events and is authoritative; images are secondary
+    verification, so dropping snapshots from a large burst is safe (and keeps qwen3-vl
+    fast when it runs as the fallback backend)."""
+    avail  = [e for e in events if e.get("detection_id") and snapshots.get(e["detection_id"])]
+    newest = sorted(avail, key=lambda e: e["start_ts"], reverse=True)
+    chosen: list[dict] = []
+
+    def _take(e: dict) -> None:
+        if e not in chosen and len(chosen) < budget:
+            chosen.append(e)
+
+    if threat_on:
+        for e in newest:
+            if (e.get("threat") or 0) >= 1:
+                _take(e)
+    cams_done = {e["camera"] for e in chosen}
+    for e in newest:
+        if e["camera"] not in cams_done:
+            _take(e)
+            cams_done.add(e["camera"])
+    for e in newest:
+        _take(e)
+    return {e["detection_id"] for e in chosen}
+
+
+# ── Continuity memory ─────────────────────────────────────────────────────────
+def _read_last_digest() -> dict | None:
+    """Last sent digest if younger than CONTINUITY_WINDOW_MIN; else None. Never raises."""
+    try:
+        with open(LAST_DIGEST_FILE) as f:
+            d = json.load(f)
+        if time.time() - float(d.get("sent_ts") or 0) <= CONTINUITY_WINDOW_MIN * 60:
+            return d
+    except (OSError, ValueError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def _write_last_digest(events: list[dict], narrative: str, mode: str,
+                       names: list[str], threat: int, use_names: bool) -> None:
+    """Persist what was just sent so the NEXT digest can reference it ([JÁ NOTIFICADO]
+    block) instead of re-describing the same ongoing activity. Written for auto,
+    auto_cap AND manual (a manual digest the user just received is legitimately
+    "already notified" context). Atomic tmp+replace; never raises — continuity
+    memory must not be able to break a digest."""
+    try:
+        d = {
+            "version": 1,
+            "sent_ts": time.time(),
+            "sent_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "mode": mode,
+            "span": [
+                datetime.datetime.fromtimestamp(min(e["start_ts"] for e in events)).strftime("%H:%M"),
+                datetime.datetime.fromtimestamp(max(e["end_ts"] for e in events)).strftime("%H:%M"),
+            ],
+            "locations": list(dict.fromkeys(e["location"] for e in events)),
+            "names": names,
+            "threat": threat,
+            "narrative": narrative,
+            "event_lines": [_cap_text(_format_event_line(e, use_names), 160)
+                            for e in events[:10]],
+        }
+        tmp = LAST_DIGEST_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, LAST_DIGEST_FILE)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Failed to write continuity memory: %s", exc)
+
+
+def _previous_block(prev: dict) -> str:
+    """Render the [JÁ NOTIFICADO] prompt block from the continuity memory dict."""
+    try:
+        mins  = max(0, int((time.time() - float(prev.get("sent_ts") or 0)) / 60))
+        at    = (prev.get("sent_at") or "")[11:16] or "--:--"
+        lines = "\n".join(prev.get("event_lines", [])[:8])
+        return (
+            f"\n[JÁ NOTIFICADO — resumo anterior enviado às {at} (há {mins} min)]\n"
+            f"\"{prev.get('narrative', '')}\"\n"
+            + (f"Eventos já relatados:\n{lines}\n" if lines else "")
+            + "Os eventos em [EVENTOS DETECTADOS] são NOVOS, posteriores a esse resumo. "
+              "Descreva APENAS o que é novo ou o que mudou; NÃO repita o que já foi "
+              "notificado. Se for a mesma atividade continuando, comece o resumo com "
+              "\"Continuação:\".\n"
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+_ROTINA_BLOCK = (
+    "- ROTINA DOMÉSTICA: todos os eventos são de pessoas reconhecidas da família. Faça um\n"
+    "  resumo de UMA frase curta (ex.: \"Silvana trabalha no quintal e estende roupas no\n"
+    "  varal.\"), sem detalhar cada evento.\n"
+)
+
+
+def _burst_all_recognized(events: list[dict]) -> bool:
+    """True only when EVERY event has detections, every detection is a 'person', and
+    every event carries at least one face-recognized name. Any car/animal/unlabeled
+    detection or unnamed person disqualifies — conservative on purpose: the soften
+    policy must never dress up a stranger as family routine."""
+    if not events:
+        return False
+    for e in events:
+        if not e.get("labels") or any(l != "person" for l in e["labels"]) or not e.get("names"):
+            return False
+    return True
+
+
 def _build_prompt(events: list[dict], context: str, baselines: dict[str, bytes],
-                  snapshots: dict[str, bytes | None],
-                  window_min: int) -> tuple[str, list[bytes]]:
+                  snapshots: dict[str, bytes | None], window_min: int,
+                  prev: dict | None = None, use_names: bool = True,
+                  threat_on: bool = False, soften: bool = False) -> tuple[str, list[bytes]]:
     """Returns (text_prompt, ordered_list_of_image_bytes).
 
-    Image order: baselines first (one per camera, deduplicated), then snapshots in event order.
+    Image order: baselines first (one per camera, deduplicated), then the budget-selected
+    snapshots in event (chronological) order. `prev` is the continuity memory dict from
+    _read_last_digest(); `soften` adds the one-sentence ROTINA instruction.
     """
     image_bytes: list[bytes] = []
     seen_baseline_cams: set[str] = set()
@@ -552,42 +794,64 @@ def _build_prompt(events: list[dict], context: str, baselines: dict[str, bytes],
             image_bytes.append(baselines[cam])
             seen_baseline_cams.add(cam)
 
-    for event in events:
-        snap = snapshots.get(event.get("detection_id") or "")
-        if snap:
-            image_bytes.append(snap)
+    snap_budget = max(1, MAX_LLM_IMAGES - len(seen_baseline_cams))
+    selected    = _select_snapshot_ids(events, snapshots, snap_budget, threat_on)
+    n_avail     = sum(1 for e in events if snapshots.get(e.get("detection_id") or ""))
+    for event in events:                      # chronological order, matching event lines
+        det = event.get("detection_id") or ""
+        if det in selected and snapshots.get(det):
+            image_bytes.append(snapshots[det])
+    if n_avail > len(selected):
+        log.info("Image budget: sending %d of %d snapshot(s) (cap %d, %d baseline(s))",
+                 len(selected), n_avail, MAX_LLM_IMAGES, len(seen_baseline_cams))
 
     context_block = f"\n[CONTEXTO DA PROPRIEDADE]\n{context}\n" if context.strip() else ""
 
+    sample_note = (
+        f" As imagens são uma AMOSTRA ({len(selected)} de {n_avail} eventos); as descrições "
+        "em [EVENTOS DETECTADOS] cobrem TODOS os eventos e são a fonte principal — use as "
+        "imagens apenas como verificação secundária."
+        if n_avail > len(selected) else
+        " As descrições em [EVENTOS DETECTADOS] são a fonte principal; use as imagens como "
+        "verificação secundária."
+    )
     if seen_baseline_cams:
         n = len(seen_baseline_cams)
         image_note = (
             f"\n[IMAGENS] As primeiras {n} imagem(ns) são baselines (como a propriedade "
-            "aparece normalmente). As imagens seguintes são do evento atual. "
-            "Compare e descreva o que está diferente ou incomum.\n"
+            "aparece normalmente). As imagens seguintes são dos eventos atuais. "
+            "Compare e descreva o que está diferente ou incomum."
+            f"{sample_note}\n"
         )
     elif image_bytes:
-        image_note = "\n[IMAGENS] As imagens abaixo são capturas do evento atual.\n"
+        image_note = f"\n[IMAGENS] As imagens abaixo são capturas dos eventos atuais.{sample_note}\n"
     else:
         image_note = ""
 
-    # NOTE: we deliberately do NOT include the detector's object labels here. They are the
-    # source of the false positives (e.g. "person" on a parked car) and, presented as fact,
-    # bias the vision LLM into confirming a person that isn't there. The per-event
-    # description below comes from Frigate's prior multi-frame analysis and is the
-    # authoritative signal (see the INSTRUÇÕES/RELEVANTE rule in the prompt template).
-    event_lines = "\n".join(
-        f"- [{e['time']}] {e['location']}: {e['text'] or '(sem descrição)'}"
-        for e in events
-    )
+    event_lines = "\n".join(_format_event_line(e, use_names, threat_on) for e in events)
+
+    template   = _load_prompt_template()
+    prev_block = _previous_block(prev) if prev else ""
+    if "__PREVIOUS__" in template:
+        template = template.replace("__PREVIOUS__", prev_block)
+    else:
+        # Legacy user template without the token: ride on __CONTEXT__ so continuity
+        # still reaches the model.
+        context_block += prev_block
+    rotina_block = _ROTINA_BLOCK if soften else ""
+    has_rotina_token = "__ROTINA__" in template
+    if has_rotina_token:
+        template = template.replace("__ROTINA__", rotina_block)
 
     prompt = (
-        _load_prompt_template()
+        template
         .replace("__CONTEXT__", context_block)
         .replace("__IMAGE_NOTE__", image_note)
         .replace("__WINDOW_MIN__", str(window_min))
         .replace("__EVENTS__", event_lines)
     )
+    if rotina_block and not has_rotina_token:
+        prompt += "\n" + rotina_block        # legacy template: append at the end
     return prompt, image_bytes
 
 
@@ -667,7 +931,10 @@ def call_ollama(prompt: str, images: list[bytes]) -> tuple[str | None, dict]:
             "model":   OLLAMA_MODEL,
             "prompt":  prompt,
             "stream":  False,
-            "options": {"temperature": 0.3, "num_predict": num_predict},
+            # num_ctx must hold the (now richer) prompt AND the thinking budget — Ollama's
+            # 4096 default would silently truncate the prompt. Scales with the retry ladder.
+            "options": {"temperature": 0.3, "num_predict": num_predict,
+                        "num_ctx": max(OLLAMA_NUM_CTX, num_predict + 8192)},
         }
         if img_payload:
             payload["images"] = img_payload
@@ -769,7 +1036,8 @@ def call_openai(prompt: str, images: list[bytes], api_key: str) -> tuple[str | N
 # ── WhatsApp sender (WAHA) ────────────────────────────────────────────────────
 def send_whatsapp_digest(events: list[dict], narrative: str,
                          video_path: str | None, secrets: dict,
-                         continuing: bool = False) -> tuple[bool, str]:
+                         continuing: bool = False, names: list[str] | None = None,
+                         soften: bool = False, threat_level: int = 0) -> tuple[bool, str]:
     """Send the digest text (+video) to the Casa Blumenau group via WAHA.
 
     Returns (text_ok, detail) — detail describes the failure when text_ok is False.
@@ -785,7 +1053,8 @@ def send_whatsapp_digest(events: list[dict], narrative: str,
 
     # Caption = the whole notification, sent as ONE message (video+caption) so the user
     # gets a single alert per burst, not a text then a separate video (#3, #8).
-    caption = _digest_caption(events, narrative, continuing=continuing)
+    caption = _digest_caption(events, narrative, continuing=continuing,
+                              names=names, soften=soften, threat_level=threat_level)
 
     filename = os.path.basename(video_path) if (video_path and os.path.exists(video_path)) else None
     if filename:
@@ -805,21 +1074,35 @@ def send_whatsapp_digest(events: list[dict], narrative: str,
     return False, detail
 
 
-def _digest_caption(events: list[dict], narrative: str, continuing: bool = False) -> str:
+def _digest_caption(events: list[dict], narrative: str, continuing: bool = False,
+                    names: list[str] | None = None, soften: bool = False,
+                    threat_level: int = 0) -> str:
     """Single rich caption: title, start–end range (always both), narrative, footer.
 
     `continuing=True` means the digest was forced by the max-cap (activity ongoing) —
     appends "(continua...)" to the time line so the user knows more may follow.
+    `soften=True` (all events are recognized family) uses the low-key "Rotina" header.
+    `threat_level` (only >0 when the threat toggle is on) escalates the header.
     """
     locations = list(dict.fromkeys(e["location"] for e in events))
     start = datetime.datetime.fromtimestamp(min(e["start_ts"] for e in events)).strftime("%H:%M:%S")
     end   = datetime.datetime.fromtimestamp(max(e["end_ts"] for e in events)).strftime("%H:%M:%S")
     time_line = f"🕐 {start} – {end}" + (" *(continua...)*" if continuing else "")
+    header = (
+        "🔴 *ALERTA — Resumo de Atividade*" if threat_level >= 2 else
+        "⚠️ *Resumo de Atividade — atenção*" if threat_level == 1 else
+        "📹 *Rotina da Família*" if soften else
+        "📹 *Resumo de Atividade*"
+    )
+    footer = f"📍 {', '.join(locations)}"
+    if names:
+        footer += f"   ·   👤 {', '.join(names)}"
+    footer += f"   ·   🎬 {len(events)} evento(s)"
     return (
-        f"📹 *Resumo de Atividade*\n"
+        f"{header}\n"
         f"{time_line}\n\n"
         f"{narrative}\n\n"
-        f"📍 {', '.join(locations)}   ·   🎬 {len(events)} evento(s)"
+        f"{footer}"
     )
 
 
@@ -1184,21 +1467,31 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     log.info("%d relevant reviews across cameras: %s", len(reviews), cameras_seen)
 
     # Build event list with location labels (chronological by start_time)
-    context, camera_to_location = load_property_context(PROPERTY_CTX)
+    context, camera_to_location, zone_to_label = load_property_context(PROPERTY_CTX)
     events: list[dict] = []
     for r in sorted(reviews, key=lambda x: x.get("start_time") or 0):
-        det_list = (r.get("data") or {}).get("detections") or []
+        data     = r.get("data") or {}
+        det_list = data.get("detections") or []
         det_id   = det_list[0] if det_list else None
         cam      = r.get("camera", "unknown")
         start_ts = r.get("start_time") or 0
+        end_ts   = r.get("end_time") or start_ts
+        genai    = extract_genai_fields(r)
+        zones    = [humanize_zone(z, zone_to_label) for z in (data.get("zones") or [])]
         events.append({
             "camera":       cam,
             "location":     humanize_cam(cam, camera_to_location),
             "time":         datetime.datetime.fromtimestamp(start_ts).strftime("%H:%M"),
+            "time_end":     datetime.datetime.fromtimestamp(end_ts).strftime("%H:%M"),
             "start_ts":     start_ts,
-            "end_ts":       r.get("end_time") or start_ts,
-            "text":         extract_genai_text(r),
-            "objects":      (r.get("data") or {}).get("objects") or [],
+            "end_ts":       end_ts,
+            "text":         genai["text"],
+            "threat":       genai["threat"],    # only USED when the threat toggle is on
+            "concerns":     genai["concerns"],
+            "zones":        list(dict.fromkeys(zones)),
+            "names":        [],                 # recognized persons — filled by the meta loop
+            "labels":       [],                 # detector classes — for the soften policy
+            "objects":      data.get("objects") or [],
             "detection_id": det_id,
             "detections":   det_list,   # all tracked objects in this review (for the real time span)
             "review_id":    r.get("id"),
@@ -1238,15 +1531,25 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     # detections (e.g. two people one after another), so span ALL of them: earliest object
     # start → latest object end. Using only the first detection cut the end short whenever a
     # later object was still active. The review window is the fallback if no event times load.
+    # The same per-detection fetch also carries identity: sub_label = face-recognized name
+    # (e.g. "Silvana") and the detector label, feeding the names/soften features.
     for event in events:
         starts: list[float] = []
         ends: list[float]   = []
+        names: list[str]    = []
+        labels: list[str]   = []
         for did in event["detections"]:
-            est, een = fetch_event_times(base, did)
-            if est:
-                starts.append(est)
-            if een:
-                ends.append(een)
+            m = fetch_event_meta(base, did)
+            if m.get("start_time"):
+                starts.append(m["start_time"])
+            if m.get("end_time"):
+                ends.append(m["end_time"])
+            if m.get("label"):
+                labels.append(m["label"])
+            if m.get("sub_label"):
+                names.append(m["sub_label"])
+        event["names"]  = list(dict.fromkeys(names))
+        event["labels"] = labels
         if starts:
             event["start_ts"] = min(starts)
             event["time"]     = datetime.datetime.fromtimestamp(min(starts)).strftime("%H:%M")
@@ -1254,6 +1557,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
             event["end_ts"] = max(ends)
         elif starts:
             event["end_ts"] = max(event.get("end_ts") or 0, max(starts))
+        event["time_end"] = datetime.datetime.fromtimestamp(event["end_ts"]).strftime("%H:%M")
 
     # Build the digest video from contiguous RECORDING runs per camera — not the tracked-object
     # window. Frigate frequently stops tracking an object while activity (and recording) keeps
@@ -1300,8 +1604,30 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     # case where recordings are unavailable (fast path) and qwen3-vl needs a cold start.
     _await_review_genai(base, events, since, max_wait=300.0, interval=15.0)
 
+    # Policy toggles. Fail-safe defaults when an entity is missing/unavailable:
+    # names ON (any state but explicit "off"), soften ON likewise, threat OFF (only "on").
+    use_names = get_ha_state("input_boolean.frigate_digest_use_names",     ha_token) != "off"
+    soften_ok = get_ha_state("input_boolean.frigate_digest_soften_known",  ha_token) != "off"
+    threat_on = get_ha_state("input_boolean.frigate_digest_threat_alerts", ha_token) == "on"
+
+    # Burst-level derived facts (threat is final only after _await_review_genai above —
+    # Frigate attaches potential_threat_level together with the GenAI text).
+    burst_threat = max((e.get("threat") or 0) for e in events) if threat_on else 0
+    burst_names  = list(dict.fromkeys(n for e in events for n in e.get("names") or []))
+    soften       = soften_ok and burst_threat == 0 and _burst_all_recognized(events)
+    if soften:
+        log.info("Soften: all events are recognized persons (%s) → Rotina digest",
+                 ", ".join(burst_names))
+
+    # Continuity: reference what was already notified so the model describes only what's new.
+    prev = _read_last_digest() if mode in ("auto", "auto_cap") else None
+    if prev:
+        log.info("Continuity: previous digest at %s referenced in prompt", prev.get("sent_at"))
+
     # Build the consolidation prompt once — reused for Ollama/OpenAI and the debug dump.
-    prompt, images = _build_prompt(events, context, baselines, snapshots, window_min)
+    prompt, images = _build_prompt(events, context, baselines, snapshots, window_min,
+                                   prev=prev, use_names=use_names,
+                                   threat_on=threat_on, soften=soften)
 
     # LLM inference
     llm_mode = get_ha_state("input_select.frigate_digest_llm", ha_token) or "Ollama (local)"
@@ -1314,9 +1640,14 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
             f"🔍 *Frigate Digest* · {mode}\n"
             f"⏱ burst {span_start} → {span_end}\n"
             f"📸 {len(events)} event(s) · {', '.join(cameras_seen)}\n"
-            f"🖼 {len(images)} LLM image(s) — {n_snaps} snapshot(s) + {len(baselines)} baseline(s) · "
-            f"🎞 {'ok' if video_path else 'none'} → {llm_mode}\n"
-            f"⏳ Inference starting…",
+            f"🖼 {len(images)} LLM image(s) de {n_snaps} snapshot(s) + {len(baselines)} baseline(s) "
+            f"(limite {MAX_LLM_IMAGES}) · 🎞 {'ok' if video_path else 'none'} → {llm_mode}\n"
+            f"👤 {', '.join(burst_names) if burst_names else '—'}"
+            + (f" · rotina" if soften else "")
+            + (f" · ⚠️ ameaça nível {burst_threat}" if burst_threat else "")
+            + (f"\n🔁 continuação (digest anterior há "
+               f"{max(0, int((time.time() - prev['sent_ts']) / 60))} min)" if prev else "")
+            + "\n⏳ Inference starting…",
             secrets,
         )
         send_debug_whatsapp(f"🧾 *Prompt enviado ao LLM:*\n\n{prompt}", secrets)
@@ -1351,22 +1682,23 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
                           error=None if result else "no narrative returned")
         return result
 
-    if llm_mode in ("Ollama (local)", "Both"):
-        narrative_ollama, ollama_stats = call_ollama(prompt, images)
+    def _ollama_tracked() -> str | None:
+        """Ollama call with KPI recording + D2 debug stats. Returns narrative or None."""
+        nonlocal ollama_stats
+        result, ollama_stats = call_ollama(prompt, images)
         _record_llm_stats(
-            "ollama", success=bool(narrative_ollama),
+            "ollama", success=bool(result),
             prompt_tokens=ollama_stats.get("prompt_tokens", 0),
             output_tokens=ollama_stats.get("output_tokens", 0),
             attempts=ollama_stats.get("attempts", 1),
             elapsed_s=ollama_stats.get("elapsed_s", 0.0),
-            error=None if narrative_ollama else (
+            error=None if result else (
                 f"timeout after {LLM_TIMEOUT}s" if ollama_stats.get("timed_out")
                 else ollama_stats.get("error")
                 or f"empty response (done={ollama_stats.get('done_reason')}, "
                    f"thinking={ollama_stats.get('thinking_chars', 0)} chars)"
             ),
         )
-
         # Debug D2: post-inference stats / failure detail.
         if debug_mode:
             if ollama_stats.get("timed_out"):
@@ -1385,6 +1717,10 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
                 + f"\n🔁 attempt {ollama_stats.get('attempts', 1)}/{OLLAMA_MAX_ATTEMPTS} · num_predict={ollama_stats.get('num_predict', OLLAMA_NUM_PREDICT)}",
                 secrets,
             )
+        return result
+
+    if llm_mode in ("Ollama (local)", "Both"):
+        narrative_ollama = _ollama_tracked()
 
     if llm_mode in ("OpenAI (cloud)", "Both"):
         narrative_openai = _openai_tracked()
@@ -1393,12 +1729,14 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         log.info("=== OLLAMA NARRATIVE ===\n%s", narrative_ollama)
         log.info("=== OPENAI NARRATIVE ===\n%s", narrative_openai)
 
+    # Symmetric cross-backend fallback: whichever backend the toggle selects is primary;
+    # if it fails entirely, try the OTHER one once (same prompt → the RELEVANTE gate still
+    # applies). "Both" already ran both, so it skips straight to tier 2 if neither answered.
     narrative = narrative_ollama or narrative_openai
     used_openai_fallback = False
+    used_ollama_fallback = False
     if not narrative and llm_mode == "Ollama (local)":
-        # Fallback tier 1: Ollama exhausted every attempt (thinking runaway / timeout /
-        # unreachable) → try the cloud model once. gpt-4.1-mini is non-reasoning, so it
-        # cannot fail the same way. Same prompt → the RELEVANTE gate still applies.
+        # gpt-4.1-mini is non-reasoning — immune to the thinking-runaway failure mode.
         log.warning("Ollama failed all attempts — falling back to OpenAI (%s)", OPENAI_MODEL)
         if debug_mode:
             send_debug_whatsapp(
@@ -1409,6 +1747,16 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         narrative_openai = _openai_tracked()
         narrative = narrative_openai
         used_openai_fallback = narrative is not None
+    elif not narrative and llm_mode == "OpenAI (cloud)":
+        log.warning("OpenAI failed — falling back to Ollama (%s)", OLLAMA_MODEL)
+        if debug_mode:
+            send_debug_whatsapp(
+                f"⚠️ *Fallback* — OpenAI falhou; tentando Ollama ({OLLAMA_MODEL})…",
+                secrets,
+            )
+        narrative_ollama = _ollama_tracked()
+        narrative = narrative_ollama
+        used_ollama_fallback = narrative is not None
 
     used_fallback = False
     if not narrative:
@@ -1437,6 +1785,16 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     # shadows, light, birds), suppress the notification. Advance the watermark so the same
     # burst isn't re-evaluated on the next cooldown.
     relevant, narrative = _parse_relevance(narrative)
+    # Threat override (only with the threat toggle on): a burst Frigate flagged with
+    # potential_threat_level >= 1 is never suppressed by the gate — deliver it.
+    if not relevant and burst_threat >= 1:
+        log.warning("Relevance gate NAO overridden — potential_threat_level=%d", burst_threat)
+        if debug_mode:
+            send_debug_whatsapp(
+                f"⚠️ Gate NAO ignorado — evento com nível de ameaça {burst_threat}", secrets)
+        relevant = True
+        if not narrative.strip():   # gate-only reply: fall back to Frigate's own text
+            narrative = "\n".join(f"{e['location']}: {e['text']}" for e in events if e.get("text"))
     # Never ship a digest whose body is empty: if the model produced only the RELEVANTE gate
     # and no summary, treat it as a failed inference (surfaced to debug) rather than sending a
     # caption with no text — that is the "digest sent without any summary" symptom.
@@ -1458,6 +1816,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     llm_label = (
         "Frigate (fallback)" if used_fallback else
         "OpenAI (fallback)" if used_openai_fallback else
+        "Ollama (fallback)" if used_ollama_fallback else
         "Ollama" if (narrative_ollama and not narrative_openai) else
         "OpenAI" if (narrative_openai and not narrative_ollama) else
         "Ollama + OpenAI"
@@ -1481,11 +1840,15 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     notify_whatsapp = get_ha_state("input_boolean.frigate_notify_whatsapp", ha_token)
     notify_email    = get_ha_state("input_boolean.frigate_notify_email",    ha_token)
 
+    delivered = False
     if notify_whatsapp == "on":
         wa_ok, wa_detail = send_whatsapp_digest(events, narrative, video_path, secrets,
-                                                continuing=(mode == "auto_cap"))
+                                                continuing=(mode == "auto_cap"),
+                                                names=(burst_names if use_names else None),
+                                                soften=soften, threat_level=burst_threat)
         if wa_ok and mode in ("auto", "auto_cap"):
             _write_watermark(latest_ts)   # mark this burst delivered → never re-send it
+        delivered = delivered or wa_ok
         if debug_mode:
             # Debug D3: did the real notification actually go out?
             send_debug_whatsapp(
@@ -1499,8 +1862,14 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     if notify_email == "on":
         send_email_digest(events, narrative, video_path, since, window_min,
                           secrets, llm_label, openai_cost)
+        delivered = True
     else:
         log.info("Email disabled (frigate_notify_email=off) — skipping")
+
+    # Continuity memory: remember what was just delivered so the next digest (within
+    # CONTINUITY_WINDOW_MIN) describes only what's new instead of re-telling the story.
+    if delivered:
+        _write_last_digest(events, narrative, mode, burst_names, burst_threat, use_names)
 
     # Update last_run only for auto mode
     if mode in ("auto", "auto_cap"):
