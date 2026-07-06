@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 """Minimal WAHA (WhatsApp HTTP API) client — deploy to /config/scripts/waha.py.
 
-Shared by frigate_digest.py and frigate_whatsapp.py. WAHA replaced the Evolution
-API for the bnu region; it runs in LXC 101 "docker" at 10.1.1.126:3000 with the
-NOWEB engine and a persisted session, so a dropped connection auto-reconnects
-instead of dying silently (the failure mode that plagued Evolution).
+Shared by frigate_digest.py and frigate_whatsapp.py. Runs in LXC 101 "docker"
+at 10.1.1.126:3000 with the NOWEB engine and a persisted session, so a dropped
+connection auto-reconnects instead of dying silently.
 
 Config keys (secrets.yaml):
   waha_api_url   e.g. http://10.1.1.126:3000
   waha_api_key   value sent in the X-Api-Key header
   waha_session   session name (default: "default")
 
-For groups the chatId IS the WhatsApp JID "<id>@g.us" — the same value Evolution
-took as `number`, so existing JIDs migrate unchanged. Every send retries with
+For groups the chatId IS the WhatsApp JID "<id>@g.us". Every send retries with
 linear backoff and returns (ok, detail) so callers can surface what went wrong.
 """
 import logging
