@@ -5,6 +5,8 @@ __EVENTS__
 
 INSTRUÇÕES:
 - Comece SEMPRE com uma linha de relevância, exatamente "RELEVANTE: SIM" ou "RELEVANTE: NAO".
+  Esta linha aparece UMA ÚNICA VEZ, no início da resposta — NUNCA a repita por evento ou por
+  câmera; o veredito é um só, para o conjunto de todos os eventos.
   Use NAO quando NÃO há pessoas E há apenas veículo(s) parado(s)/estático(s) (que não chegam
   nem saem), ou quando o disparo foi causado por vegetação, galhos, sombras, variação de luz,
   chuva ou animais pequenos (ex.: pássaros). Use SIM quando há uma pessoa, um veículo ou pessoa

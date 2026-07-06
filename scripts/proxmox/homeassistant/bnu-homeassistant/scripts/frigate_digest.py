@@ -474,6 +474,8 @@ __EVENTS__
 
 INSTRUÇÕES:
 - Comece SEMPRE com uma linha de relevância, exatamente "RELEVANTE: SIM" ou "RELEVANTE: NAO".
+  Esta linha aparece UMA ÚNICA VEZ, no início da resposta — NUNCA a repita por evento ou por
+  câmera; o veredito é um só, para o conjunto de todos os eventos.
   Use NAO quando NÃO há pessoas E há apenas veículo(s) parado(s)/estático(s) (que não chegam
   nem saem), ou quando o disparo foi causado por vegetação, galhos, sombras, variação de luz,
   chuva ou animais pequenos (ex.: pássaros). Use SIM quando há uma pessoa, um veículo ou pessoa
@@ -509,28 +511,28 @@ _REL_GATE_RE = re.compile(
 
 
 def _parse_relevance(text: str) -> tuple[bool, str]:
-    """Split the LLM output into (is_relevant, narrative). The model emits a leading
-    'RELEVANTE: SIM|NAO' gate (see prompt). The verdict may be on its own line OR be followed
-    by the narrative on the same line — only the verdict token is stripped, the rest is kept.
-    Fail-safe: relevant unless an explicit NAO."""
+    """Split the LLM output into (is_relevant, narrative). The model is told to emit ONE
+    leading 'RELEVANTE: SIM|NAO' gate (see prompt), but it sometimes repeats the gate once
+    per event (2026-07-06 09:47: 4-event digest → 'RELEVANTE: SIM' before each event line;
+    the old first-match-only strip let the repeats leak into the WhatsApp caption). Strip
+    the token from EVERY line that starts with it, keeping any narrative that follows on
+    the same line. Verdicts aggregate fail-safe: suppress only when every gate says NAO —
+    mixed or absent verdicts count as relevant (over-notifying beats missing a person)."""
     if not text:
         return True, text
-    relevant = True
+    verdicts: list[bool] = []            # True = SIM-ish, False = NAO-ish
     out: list[str] = []
-    matched = False
     for line in text.splitlines():
-        if not matched:
-            m = _REL_GATE_RE.match(line)
-            if m:
-                matched = True
-                verdict = m.group(1).upper().replace("Ã", "A").replace("Á", "A")
-                if verdict.startswith("NAO") or verdict in ("N", "NO", "FALSE"):
-                    relevant = False
-                tail = line[m.end():]            # narrative after the verdict on this line
-                if tail.strip():
-                    out.append(tail)
-                continue
+        m = _REL_GATE_RE.match(line)
+        if m:
+            verdict = m.group(1).upper().replace("Ã", "A").replace("Á", "A")
+            verdicts.append(not (verdict.startswith("NAO") or verdict in ("N", "NO", "FALSE")))
+            tail = line[m.end():]        # narrative after the verdict on this line
+            if tail.strip():
+                out.append(tail)
+            continue
         out.append(line)
+    relevant = any(verdicts) if verdicts else True
     return relevant, "\n".join(out).strip()
 
 
