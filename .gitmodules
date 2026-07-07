@@ -4,3 +4,6 @@
 [submodule "globalnet"]
 	path = globalnet
 	url = https://github.com/eduardocenci/globalnet
+[submodule "homes/ara"]
+	path = homes/ara
+	url = https://github.com/eduardocenci/home-ara
