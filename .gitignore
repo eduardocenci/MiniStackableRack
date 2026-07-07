@@ -1,6 +1,10 @@
 # Credentials
 .env
+.env.*
 gitignore/
 
 # Python
 __pycache__/
+
+# Claude Code local settings (personal overrides)
+.claude/settings.local.json
