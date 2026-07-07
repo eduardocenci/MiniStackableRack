@@ -1,0 +1,173 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Ronda da Casa (scene check) — bnu-homeassistant
+# Deploy to: /config/packages/frigate_scene_check.yaml
+#
+# Proactive camera checks against ground-truth references: at scheduled times
+# (hourly 20:07–23:07) and when rain is expected within ~1 h, snapshot each
+# configured camera, compare with an "all clear" reference via the VLM
+# (frigate_scene_check.py) and WhatsApp the family ONLY when something is off
+# (clothes on the varal, gates/doors open, objects left outside).
+#
+# Companions (all must be deployed together):
+#   /config/scripts/frigate_scene_check.py           the pipeline
+#   /config/frigate_scene_check_profiles.yaml        which checks on which cameras
+#   /config/frigate_scene_check_prompt.txt           editable VLM prompt (optional)
+#   /config/frigate_scene_baselines/<cam>_{day,night}.jpg  ground truth (capture button)
+#
+# No new secrets — reuses frigate_host/port, waha_*, whatsapp_group_jid,
+# whatsapp_smoketest_jid, openai_api_key, boiler_ha_token.
+# ──────────────────────────────────────────────────────────────────────────────
+
+input_boolean:
+  # NOTE: no `initial:` on purpose — HA RestoreEntity keeps the last on/off
+  # state across restarts (same lesson as the Frigate/AlertaBlu helpers).
+  frigate_scene_check_enabled:
+    name: "Ronda da Casa — Ativada"
+    icon: mdi:home-search
+  frigate_scene_check_nightly:
+    name: "Ronda da Casa — Noturna (horária após 20h)"
+    icon: mdi:weather-night
+  frigate_scene_check_rain:
+    name: "Ronda da Casa — Antes da chuva"
+    icon: mdi:weather-pouring
+  # Separate from frigate_debug so digest noise and ronda noise don't mix.
+  frigate_scene_check_debug:
+    name: "Ronda da Casa — Debug"
+    icon: mdi:bug
+
+input_button:
+  frigate_scene_check_now:
+    name: "Checar a casa agora"
+    icon: mdi:home-search
+  frigate_scene_check_capture:
+    name: "Capturar referência (cena atual = tudo certo)"
+    icon: mdi:camera-plus
+
+shell_command:
+  # The script self-daemonizes (spawns a worker with start_new_session=True and exits
+  # immediately), so HA's 60-second shell_command timeout never fires. Capture runs
+  # inline — it is just a handful of snapshot downloads.
+  frigate_scene_check: "python3 /config/scripts/frigate_scene_check.py {{ profile }}"
+  frigate_scene_check_capture: "python3 /config/scripts/frigate_scene_check.py capture"
+
+# ── Rain-forecast sensor ──────────────────────────────────────────────────────
+# Trigger-based template sensor: polls the hourly forecast every 15 min and turns ON
+# when either of the next two hourly entries brings rain. If weather.get_forecasts
+# fails, the templates don't render and the sensor holds its last state — the rain
+# automation only fires on the off→on edge, so a stale sensor cannot spam.
+template:
+  - trigger:
+      - platform: time_pattern
+        minutes: "/15"
+      - platform: homeassistant
+        event: start
+    action:
+      - action: weather.get_forecasts
+        target:
+          entity_id: weather.forecast_casa
+        data:
+          type: hourly
+        response_variable: hourly
+    binary_sensor:
+      - name: "Ronda — Chuva em 1h"
+        unique_id: frigate_scene_check_rain_soon
+        icon: mdi:weather-pouring
+        state: >
+          {% set fc = (hourly.get('weather.forecast_casa', {}).get('forecast') or [])[:2] %}
+          {% set ns = namespace(rain=false) %}
+          {% for f in fc %}
+            {% if (f.precipitation | default(0) | float(0)) >= 0.3
+                  or (f.condition | default('')) in ['rainy', 'pouring', 'lightning-rainy', 'hail'] %}
+              {% set ns.rain = true %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.rain }}
+        attributes:
+          previsao: >
+            {% set fc = (hourly.get('weather.forecast_casa', {}).get('forecast') or [])[:2] %}
+            {{ fc | map(attribute='condition') | list | join(', ') }} —
+            {{ fc | map(attribute='precipitation') | map('default', 0) | list | join(' / ') }} mm
+
+# ── Automations ───────────────────────────────────────────────────────────────
+automation:
+  # Hourly night rounds: 20:07, 21:07, 22:07, 23:07. The :07 stagger avoids
+  # top-of-the-hour GPU collisions with digest inferences on the shared Ollama.
+  - id: frigate_scene_check_nightly
+    alias: "Ronda — noturna (horária após 20h)"
+    mode: single
+    trigger:
+      - platform: time_pattern
+        minutes: "7"
+    condition:
+      - condition: state
+        entity_id: input_boolean.frigate_scene_check_enabled
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.frigate_scene_check_nightly
+        state: "on"
+      - condition: template
+        value_template: "{{ now().hour >= 20 }}"
+    action:
+      - action: shell_command.frigate_scene_check
+        data:
+          profile: night
+
+  # Rain approaching: one round per weather system. Three dedup layers — the sensor's
+  # off→on edge, the 4h last_triggered cooldown here, and per-finding suppression
+  # inside the script.
+  - id: frigate_scene_check_rain
+    alias: "Ronda — chuva se aproximando"
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.ronda_chuva_em_1h
+        from: "off"
+        to: "on"
+      # Second path: Defesa Civil escalation (any change; gated to Alerta* below).
+      - platform: state
+        entity_id: sensor.alertablu_vorstadt_condicao
+    condition:
+      - condition: state
+        entity_id: input_boolean.frigate_scene_check_enabled
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.frigate_scene_check_rain
+        state: "on"
+      # Waking hours only — nobody brings clothes in at 3 AM.
+      - condition: template
+        value_template: "{{ 7 <= now().hour < 23 }}"
+      # AlertaBlu path only counts when escalated to Alerta / Alerta Maximo.
+      - condition: template
+        value_template: >
+          {{ trigger.entity_id != 'sensor.alertablu_vorstadt_condicao'
+             or (states('sensor.alertablu_vorstadt_condicao') | lower).startswith('alerta') }}
+      # One run per rain event: 4h cooldown at the automation level.
+      - condition: template
+        value_template: >
+          {{ this.attributes.last_triggered is none
+             or (now() - this.attributes.last_triggered) > timedelta(hours=4) }}
+    action:
+      - action: shell_command.frigate_scene_check
+        data:
+          profile: rain
+
+  # Buttons deliberately skip the `enabled` condition — an explicit press always works.
+  - id: frigate_scene_check_manual
+    alias: "Ronda — botão manual"
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: input_button.frigate_scene_check_now
+    action:
+      - action: shell_command.frigate_scene_check
+        data:
+          profile: manual
+
+  - id: frigate_scene_check_capture_btn
+    alias: "Ronda — capturar referência"
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: input_button.frigate_scene_check_capture
+    action:
+      - action: shell_command.frigate_scene_check_capture

@@ -1,0 +1,46 @@
+# Ronda da Casa — perfis e checagens
+# Deploy to: /config/frigate_scene_check_profiles.yaml
+#
+# checks:    O QUE procurar e em QUAIS câmeras. O `id` (a chave) aparece no formato
+#            de resposta do LLM ("- [varal] ...") e na memória de supressão — não
+#            renomeie sem limpar /config/frigate_scene_check.state.json.
+# profiles:  quais checagens rodam em cada gatilho.
+#   suppress_hours:    não repetir o MESMO achado (câmera+checagem) dentro desta
+#                      janela, por perfil (0 = sempre notifica).
+#   confirm_positives: achado positivo só alerta se confirmado numa 2ª foto ~20 s
+#                      depois (mata falsos positivos de um quadro só).
+
+checks:
+  varal:
+    label: "roupas no varal"
+    cameras: [fundos_overview]
+    instruction: >
+      Há roupas, toalhas ou tecidos pendurados no varal? Varal vazio ou apenas
+      pregadores NÃO é achado.
+  portoes:
+    label: "portões/portas abertos"
+    cameras: [frente_principal, frente_pedestres, frente_garagem, fundos_overview]
+    instruction: >
+      Algum portão ou porta que aparece FECHADO na imagem de referência está
+      aberto ou entreaberto agora?
+  objetos:
+    label: "objetos deixados fora"
+    cameras: [frente_overview, frente_garagem, lateral_direita, lateral_esquerda, fundos_overview]
+    instruction: >
+      Há objetos que NÃO aparecem na imagem de referência deixados no chão ou no
+      quintal — brinquedos, ferramentas, cadeiras, bicicletas? Ignore carros
+      estacionados, plantas e diferenças de luz e sombra.
+
+profiles:
+  night:
+    checks: [varal, portoes, objetos]
+    suppress_hours: 6        # uma notificação por noite, mesmo com 4 rondas horárias
+    confirm_positives: true
+  rain:
+    checks: [varal, objetos]
+    suppress_hours: 3        # chuva dá urgência: re-alerta mesmo se a ronda noturna já avisou
+    confirm_positives: true
+  manual:
+    checks: [varal, portoes, objetos]
+    suppress_hours: 0        # botão manual sempre responde
+    confirm_positives: false
