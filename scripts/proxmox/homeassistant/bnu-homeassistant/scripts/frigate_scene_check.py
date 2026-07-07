@@ -63,10 +63,16 @@ DAY_END          = 20    # 20:00
 CONFIRM_DELAY_S  = 20    # wait before the 2-of-2 confirmation snapshot (kills one-frame glitches)
 MAX_ALERT_IMAGES = 4     # cap on snapshot images attached to a family-group alert
 LLM_TIMEOUT      = 600   # seconds — hard per-attempt wall clock (SIGALRM)
-# qwen3-vl:8b thinking-runaway workaround — same ladder as frigate_digest.py: thinking tokens
-# count against num_predict, so an empty done_reason="length" response retries with ×1.5 more.
+# Unlike frigate_digest.py, this is a BINARY verdict, not a narrative — the qwen3-vl thinking
+# phase adds nothing and reliably runs away: measured 2026-07-06, the 2-image comparison prompt
+# burned the whole budget on thinking and returned an EMPTY done_reason="length" response on all
+# 3 ladder attempts (8192→12288→18432, ~3 min each), forcing the OpenAI fallback every time.
+# Prepending Qwen3's `/no_think` soft-switch (OLLAMA_NO_THINK) disables thinking: the same prompt
+# then returned "ALERTA: NAO" in 7.7 s. So we keep a small num_predict and the ×1.5 length-retry
+# ladder purely as a safety net (it should never trigger now).
+OLLAMA_NO_THINK     = "/no_think"
 OLLAMA_NUM_CTX      = 16384
-OLLAMA_NUM_PREDICT  = 8192
+OLLAMA_NUM_PREDICT  = 1024
 OLLAMA_MAX_ATTEMPTS = 3
 SEND_ATTEMPTS    = 3     # WhatsApp send retries
 
@@ -298,6 +304,8 @@ def call_ollama(prompt: str, images: list[bytes]) -> tuple[str | None, dict]:
     """Returns (verdict_text_or_None, stats). Retries with a ×1.5 larger num_predict each
     time the model returns an EMPTY response cut off by length (done_reason="length")."""
     img_payload = [base64.b64encode(img).decode() for img in images] if images else None
+    # Disable the thinking phase for this binary verdict (see OLLAMA_NO_THINK note above).
+    no_think_prompt = f"{OLLAMA_NO_THINK}\n{prompt}"
     stats: dict = {"n_images": len(images), "elapsed_s": 0.0, "timed_out": False,
                    "error": None, "attempts": 0, "done_reason": None, "backend": "ollama"}
 
@@ -309,8 +317,9 @@ def call_ollama(prompt: str, images: list[bytes]) -> tuple[str | None, dict]:
         stats["attempts"] = attempt
         payload: dict = {
             "model":   OLLAMA_MODEL,
-            "prompt":  prompt,
+            "prompt":  no_think_prompt,
             "stream":  False,
+            "think":   False,  # newer Ollama honours this; harmless where ignored (/no_think covers it)
             "options": {"temperature": 0.3, "num_predict": num_predict,
                         "num_ctx": max(OLLAMA_NUM_CTX, num_predict + 8192)},
         }
