@@ -1,0 +1,281 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Frigate Cross-Camera Digest — HA Package
+# Deploy to: /config/packages/frigate_digest.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+
+input_boolean:
+  frigate_debug:
+    name: "Frigate Debug"
+    icon: mdi:bug
+    # No `initial:` — HA restores the last value after a restart (an `initial:` would force it back).
+
+  frigate_digest_use_names:
+    name: "Frigate Digest — Usar nomes reconhecidos"
+    icon: mdi:account-check
+    # ON: eventos com reconhecimento facial usam o nome ("Silvana estende roupas...").
+    # No `initial:` — script defaults to ON when the entity is missing/unset.
+
+  frigate_digest_soften_known:
+    name: "Frigate Digest — Suavizar rotina de conhecidos"
+    icon: mdi:home-heart
+    # ON: burst composto SÓ por pessoas reconhecidas (todas as detecções são 'person'
+    # com nome) vira um digest curto "Rotina da Família" em vez do resumo completo.
+    # No `initial:` — script defaults to ON when the entity is missing/unset.
+
+  frigate_digest_threat_alerts:
+    name: "Frigate Digest — Alertas de ameaça (IA)"
+    icon: mdi:shield-alert
+    # OFF (padrão): o nível de ameaça avaliado pela IA do Frigate é IGNORADO.
+    # ON: eventos com potential_threat_level ≥ 1 são marcados no prompt, nunca são
+    # suprimidos pelo gate de relevância e escalam o cabeçalho (⚠️/🔴).
+    # No `initial:` — script defaults to OFF unless explicitly ON.
+
+input_select:
+  frigate_alert_mode:
+    name: "Frigate Alert Mode"
+    icon: mdi:camera-outline
+    options:
+      - "Individual only"       # current behaviour — no digest
+      - "Individual + Digest"   # individual alerts + cooldown digest
+      - "Digest only"           # suppress individual alerts; digest only
+    # No `initial:` — restores the last selected mode across restarts.
+
+  frigate_digest_llm:
+    name: "Digest LLM"
+    icon: mdi:robot
+    options:
+      - "Ollama (local)"        # ply-desktop qwen3-vl:8b — free
+      - "OpenAI (cloud)"        # gpt-4o — billed
+      - "Both"                  # run both; log comparison; send Ollama narrative
+    # No `initial:` — restores the last selected LLM across restarts.
+
+input_datetime:
+  frigate_digest_last_run:
+    name: "Frigate Digest Last Run"
+    has_date: true
+    has_time: true
+
+  frigate_burst_start:
+    name: "Frigate Burst Start"
+    has_date: true
+    has_time: true
+
+input_number:
+  frigate_digest_openai_cost_total:
+    name: "OpenAI Digest Cost (USD)"
+    min: 0
+    max: 1000
+    step: 0.0001
+    unit_of_measurement: "USD"
+    mode: box
+    icon: mdi:currency-usd
+
+  frigate_digest_window_min:
+    name: "Frigate Digest Window (min)"
+    min: 1
+    max: 30
+    step: 1
+    mode: box
+    unit_of_measurement: "min"
+    icon: mdi:timer-outline
+    # No `initial:` — persists across restarts. Set to 5 on first deploy via UI.
+
+  frigate_digest_max_cap_min:
+    name: "Frigate Burst Max Cap (min)"
+    min: 2
+    max: 60
+    step: 1
+    mode: box
+    unit_of_measurement: "min"
+    icon: mdi:timer-stop-outline
+    # No `initial:` — persists across restarts. Set to 10 on first deploy via UI.
+
+timer:
+  frigate_digest_cooldown:
+    name: "Frigate Digest Cooldown"
+    duration: "00:05:00"   # default; overridden at runtime by input_number.frigate_digest_window_min
+
+# ── LLM inference KPIs ────────────────────────────────────────────────────────
+# frigate_digest.py appends per-backend counters to /config/frigate_llm_stats.json
+# after every inference (calls, failures, attempts, tokens, wall time, cost).
+# These sensors expose the file as dashboard entities; state = total calls,
+# details live in the attributes. Fail-rate is derived by the template sensors below.
+command_line:
+  - sensor:
+      name: "Frigate LLM Ollama Stats"
+      unique_id: frigate_llm_ollama_stats
+      command: >
+        python3 -c "import json,os;p='/config/frigate_llm_stats.json';d=json.load(open(p)) if os.path.exists(p) else {};print(json.dumps(d.get('ollama',{})))"
+      value_template: "{{ value_json.calls | default(0) }}"
+      unit_of_measurement: "calls"
+      icon: mdi:chip
+      json_attributes:
+        - calls
+        - failures
+        - attempts
+        - prompt_tokens
+        - output_tokens
+        - elapsed_s
+        - last_success
+        - last_failure
+        - last_error
+      scan_interval: 300
+
+  - sensor:
+      name: "Frigate LLM OpenAI Stats"
+      unique_id: frigate_llm_openai_stats
+      command: >
+        python3 -c "import json,os;p='/config/frigate_llm_stats.json';d=json.load(open(p)) if os.path.exists(p) else {};print(json.dumps(d.get('openai',{})))"
+      value_template: "{{ value_json.calls | default(0) }}"
+      unit_of_measurement: "calls"
+      icon: mdi:cloud-outline
+      json_attributes:
+        - calls
+        - failures
+        - attempts
+        - prompt_tokens
+        - output_tokens
+        - elapsed_s
+        - cost_usd
+        - last_success
+        - last_failure
+        - last_error
+      scan_interval: 300
+
+template:
+  - sensor:
+      - name: "Frigate LLM Ollama Fail Rate"
+        unique_id: frigate_llm_ollama_fail_rate
+        unit_of_measurement: "%"
+        icon: mdi:alert-circle-outline
+        state: >
+          {% set c = state_attr('sensor.frigate_llm_ollama_stats', 'calls') | int(0) %}
+          {% set f = state_attr('sensor.frigate_llm_ollama_stats', 'failures') | int(0) %}
+          {{ ((100 * f / c) | round(1)) if c > 0 else 0 }}
+
+      - name: "Frigate LLM OpenAI Fail Rate"
+        unique_id: frigate_llm_openai_fail_rate
+        unit_of_measurement: "%"
+        icon: mdi:alert-circle-outline
+        state: >
+          {% set c = state_attr('sensor.frigate_llm_openai_stats', 'calls') | int(0) %}
+          {% set f = state_attr('sensor.frigate_llm_openai_stats', 'failures') | int(0) %}
+          {{ ((100 * f / c) | round(1)) if c > 0 else 0 }}
+
+button:
+  frigate_digest_now:
+    name: "Enviar Digest Agora (30 min)"
+    icon: mdi:camera-burst
+
+shell_command:
+  # The script self-daemonizes: it spawns a worker with start_new_session=True and
+  # exits immediately, so HA's 60-second shell_command timeout never fires.
+  # The worker runs fully independent of HA's process group and handles its own logging.
+  frigate_send_digest: "python3 /config/scripts/frigate_digest.py {{ mode }}"
+
+script:
+  frigate_trigger_digest:
+    alias: "Frigate — Send Cross-Camera Digest"
+    mode: single
+    sequence:
+      - action: shell_command.frigate_send_digest
+        data:
+          mode: "auto"
+
+  frigate_trigger_digest_cap:
+    alias: "Frigate — Send Digest (burst cap hit)"
+    mode: single
+    sequence:
+      - action: shell_command.frigate_send_digest
+        data:
+          mode: "auto_cap"
+
+  frigate_trigger_digest_manual:
+    alias: "Frigate — Digest Now (30 min)"
+    mode: single
+    sequence:
+      - action: shell_command.frigate_send_digest
+        data:
+          mode: "manual"
+
+automation:
+  - alias: "Frigate: Reset digest cooldown on new review"
+    trigger:
+      - platform: mqtt
+        topic: frigate/reviews
+    condition:
+      - condition: template
+        value_template: >
+          {{ trigger.payload_json.after.end_time is not none and
+             states('input_select.frigate_alert_mode') in
+               ['Individual + Digest', 'Digest only'] }}
+    action:
+      # Record the start of a new burst when the timer is currently idle (not running).
+      # Subsequent reviews within the same burst leave burst_start unchanged.
+      - if:
+          - condition: template
+            value_template: "{{ not is_state('timer.frigate_digest_cooldown', 'active') }}"
+        then:
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: input_datetime.frigate_burst_start
+            data:
+              datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+      # If the burst has been running longer than the max cap, fire the digest now
+      # (the continuous activity won't settle naturally) and reset the burst clock.
+      # The script appends "(continua...)" to the caption in this case.
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: >
+                  {{ as_timestamp(now()) - as_timestamp(states('input_datetime.frigate_burst_start'))
+                     > states('input_number.frigate_digest_max_cap_min') | float * 60 }}
+            sequence:
+              - action: timer.cancel
+                target:
+                  entity_id: timer.frigate_digest_cooldown
+              - action: script.frigate_trigger_digest_cap
+              - action: input_datetime.set_datetime
+                target:
+                  entity_id: input_datetime.frigate_burst_start
+                data:
+                  datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+        default:
+          # Restart the quiet-window timer. Duration is driven by the UI helper so the
+          # user can tune it without a redeploy. Format: HH:MM:SS from minutes.
+          - action: timer.start
+            target:
+              entity_id: timer.frigate_digest_cooldown
+            data:
+              duration: >
+                {{ '%02d:%02d:00' | format(
+                   states('input_number.frigate_digest_window_min') | int // 60,
+                   states('input_number.frigate_digest_window_min') | int % 60) }}
+
+  - alias: "Frigate: Send digest after quiet window"
+    # Fires once per burst: the cooldown timer is restarted on every review and only
+    # finishes after `frigate_digest_window_min` minutes of quiet. The script groups
+    # events by the same gap and sends just the latest burst; its lock file dedupes
+    # overlapping runs. This keeps distant bursts in separate digests.
+    trigger:
+      - platform: event
+        event_type: timer.finished
+        event_data:
+          entity_id: timer.frigate_digest_cooldown
+    condition:
+      # Don't even start a digest when the family is home and muting is enabled.
+      # (The script re-checks right before sending, so an in-flight digest is also
+      # cancelled if the family arrives mid-run.)
+      - condition: template
+        value_template: >
+          {{ not (is_state('input_boolean.frigate_digest_mute_when_home', 'on')
+                  and is_state('binary_sensor.family_present', 'on')) }}
+    action:
+      - action: script.frigate_trigger_digest
+
+  - alias: "Frigate: On-demand digest button"
+    trigger:
+      - platform: state
+        entity_id: button.frigate_digest_now
+    action:
+      - action: script.frigate_trigger_digest_manual

@@ -1,0 +1,29 @@
+input_boolean:
+  notify_whatsapp:
+    name: "WhatsApp Notifications"
+    icon: mdi:whatsapp
+
+rest_command:
+  # WAHA (central worldwide instance on bnu). Path:
+  #   bg-homeassistant → bg-proxmox :3001 (socat) → Tailscale → bnu-proxmox 100.113.204.100:3001 → WAHA 10.1.1.126:3000
+  # WAHA Core has one session ("default" = bnu account), which must be a member of the Casa BG group.
+  send_whatsapp_bg:
+    url: "http://192.168.0.120:3001/api/sendText"
+    method: POST
+    headers:
+      X-Api-Key: !secret waha_api_key
+      content_type: application/json
+    payload: '{"session": "default", "chatId": "{{ number }}", "text": {{ message | to_json }}}'
+
+script:
+  notify_whatsapp_bg:
+    alias: "WhatsApp Notification (BG)"
+    mode: queued
+    max: 5
+    variables:
+      jid: !secret whatsapp_group_jid
+    sequence:
+      - action: rest_command.send_whatsapp_bg
+        data:
+          number: "{{ jid }}"
+          message: "{{ message }}"

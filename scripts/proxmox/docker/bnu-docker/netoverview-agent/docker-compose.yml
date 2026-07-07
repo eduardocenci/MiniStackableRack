@@ -1,0 +1,18 @@
+# Reference copy — deployed at /root/netoverview-agent/ inside bnu-proxmox
+# LXC 101 (the Docker/WAHA LXC), with a 5-min root-cron pull:
+#   */5 * * * * cd /root/netoverview-agent && docker compose pull -q && docker compose up -d
+#
+# netoverview in agent mode: container stats only (/api/containers on :5005),
+# consumed by globalnet's dashboard. No LAN scanning here — the bnu Pi's full
+# netoverview owns ARP on this LAN.
+services:
+  netoverview-agent:
+    container_name: netoverview-agent
+    image: cenci/netoverview:latest
+    restart: unless-stopped
+    environment:
+      NETOVERVIEW_AGENT: "1"
+    ports:
+      - "5005:5000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro

@@ -1,0 +1,113 @@
+# ============================================================================
+# Contexto da Propriedade — Digest de Câmeras
+# ============================================================================
+# O LLM usa este arquivo para descrever eventos em linguagem familiar,
+# evitando nomes técnicos de câmeras.
+#
+# Estrutura por câmera:
+#   id            -> nome técnico da câmera (placeholder {camera})
+#   localizacao   -> onde a câmera está montada e para onde aponta
+#   layout        -> o que há em cada REGIÃO da imagem
+#   movimento     -> como interpretar deslocamento (entrando/saindo/etc.)
+#   prioridade    -> regiões de maior/menor relevância de análise
+#
+# O bloco `trajetos:` descreve os caminhos da propriedade — o LLM de consolidação
+# usa a ordem cronológica entre câmeras + estes trajetos para decidir se alguém
+# está CHEGANDO ou SAINDO (linhas de comentário # são removidas do prompt).
+#
+# Edite com os detalhes da SUA propriedade.
+# Após editar, implante em: /config/frigate_property_context.txt
+# ============================================================================
+
+cameras:
+
+  - id: frente_principal
+    localizacao: Visão geral da frente da casa; casa à esquerda, rua à direita.
+    layout:
+      esquerda:                 a casa
+      centro_esquerda:          portão da garagem
+      superior_esquerda:        entrada de pedestres para os FUNDOS, via portão na lateral DIREITA da casa
+      inferior_esquerda:        entrada de pedestres pelas portas PRINCIPAIS da frente
+      direita:                  a rua
+      centro:                   passagem compartilhada (veículos + pedestres)
+    movimento:
+      pessoa_indo_para_a_direita:  SAINDO da propriedade, em direção à rua
+      pessoa_indo_para_a_esquerda: CHEGANDO da rua, em direção à casa
+
+  - id: frente_pedestres
+    localizacao: Montada no telhado da frente, voltada para a rua e para o lado ESQUERDO da casa.
+    layout:
+      diagonal_sup_esq_p_inf_dir: passagem de pedestres da rua até as entradas principais da frente
+      superior:                   a rua
+    movimento:
+      pessoa_indo_para_inferior_direita: CHEGANDO da rua, em direção às portas da frente
+      pessoa_indo_para_o_topo:           SAINDO, em direção à rua
+    prioridade:
+      menor: rua (parte superior da imagem)
+
+  - id: frente_overview
+    localizacao: Montada no telhado da frente, voltada para a rua e para o lado DIREITO da casa.
+    layout:
+      direita:    passagem de PEDESTRES — da rua (topo) até as portas da frente (inferior direita)
+      esquerda:   passagem de VEÍCULOS — da rua (topo) até a garagem (lado esquerdo)
+      superior:   a rua
+    movimento:
+      descendo_na_imagem: CHEGANDO da rua (em direção às portas da frente ou à garagem)
+      subindo_na_imagem:  SAINDO da casa, em direção à rua
+    prioridade:
+      menor: rua (parte superior da imagem)
+
+  - id: frente_garagem
+    localizacao: Na entrada da garagem.
+    layout:
+      superior:           a rua
+      centro:             entrada de veículos
+      inferior_esquerda:  passagem de pedestres via portão na lateral DIREITA da casa
+      inferior_centro_dir: porta da garagem (não visível)
+    movimento:
+      carro_se_aproxima_e_some: entrando na garagem
+      carro_se_afasta:          saindo da garagem em direção à rua
+
+  - id: lateral_direita
+    localizacao: Montada no telhado da lateral DIREITA, apontada para os fundos da casa.
+    movimento:
+      afastando_da_camera:  indo em direção aos FUNDOS da casa
+      aproximando_da_camera: indo em direção à FRENTE da casa
+    regras:
+      - Se em todos os frames houver apenas uma pessoa andando no TERÇO SUPERIOR da imagem,
+        ela está apenas circulando nos fundos da casa.
+
+  - id: lateral_esquerda
+    localizacao: Montada nos FUNDOS do terreno (canto esquerdo), voltada para os fundos da casa; cobre a lateral ESQUERDA da residência.
+    layout:
+      direita:           corredor ao longo do lado esquerdo da casa, em direção à frente
+      esquerda:          janela da cozinha e, abaixo, os botijões de gás
+      inferior:          jardim (não visível)
+
+  - id: fundos_overview
+    localizacao: Nos fundos da residência.
+    layout:
+      direita:            passagem para o lado esquerdo da casa (não visível)
+      inferior_direita:   pequeno jardim
+      inferior_esquerda:  varal de roupas
+      superior_esquerda:  mesa (parcialmente encoberta por árvore); à esquerda, área de preparo de comida e lixeiras
+      centro:             duas portas para os fundos
+    portas:
+      centro:   porta da LAVANDERIA
+      esquerda: porta da GARAGEM
+
+  - id: frente_campainha
+    localizacao: Câmera da campainha, na entrada principal da frente, voltada para o caminho sinuoso do jardim que leva à rua.
+    movimento:
+      afastando_da_camera_diminuindo:  SAINDO de casa, pelo caminho em direção à rua
+      aproximando_da_camera_crescendo: CHEGANDO da rua, em direção à entrada principal
+    instrucao: Descreva o que veículos, pedestres ou animais estão fazendo.
+
+trajetos:
+  frente: rua <-> passagem de pedestres <-> caminho sinuoso do jardim <-> portas principais (campainha)
+  sentido_chegando: da rua para as portas da frente
+  sentido_saindo: das portas da frente para a rua
+
+[Zonas]
+# Zonas do Frigate -> termos locais (aparecem como "(zona: ...)" nas linhas de evento)
+clothes_hanger: varal
