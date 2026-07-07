@@ -1,3 +1,7 @@
 # Credentials
 .env
+.env.*
 gitignore/
+
+# Claude Code local settings (personal overrides)
+.claude/settings.local.json
