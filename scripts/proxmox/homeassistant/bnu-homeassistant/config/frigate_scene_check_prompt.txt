@@ -17,5 +17,7 @@ REGRAS:
 __REFERENCES__
 FORMATO DA RESPOSTA (obrigatório):
 - Primeira linha: exatamente "ALERTA: SIM" ou "ALERTA: NAO".
-- Se SIM: uma linha por achado, no formato "- [id] descrição curta e factual", usando
-  apenas os ids da lista acima. Se NAO: nenhuma linha adicional.
+- Se SIM: uma linha por achado, no formato "- [id] descrição curta e factual".
+- O [id] deve ser EXATAMENTE um dos ids entre colchetes da lista acima — NÃO invente ids.
+  Ex.: uma bicicleta, cadeira, brinquedo ou ferramenta deixada é "[objetos]", nunca "[bicicleta]".
+- Se NAO: nenhuma linha adicional.

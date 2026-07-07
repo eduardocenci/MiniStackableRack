@@ -47,7 +47,15 @@ HA_URL           = "http://localhost:8123"
 OLLAMA_HOST      = "10.1.1.50"  # bnu-proxmox LAN IP — socat proxy forwards to ply-desktop:11434
 OLLAMA_PORT      = 11434
 OLLAMA_MODEL     = "qwen3-vl:8b"
-OPENAI_MODEL     = "gpt-4.1-mini"  # vision-capable, non-reasoning fallback (see frigate_digest.py)
+OPENAI_MODEL     = "gpt-4.1-mini"  # vision-capable, NON-reasoning — immune to the thinking runaway
+# Which backend answers the verdict first; the other is the fallback. Unlike the digest (rich
+# narrative, runs on every Frigate event → local GPU to avoid cloud cost), this is a BINARY
+# verdict at low frequency (~5 runs/night). qwen3-vl's thinking phase can't be reliably disabled
+# for the multi-check comparison prompt — measured 2026-07-06 it stochastically runs away (empty
+# done_reason="length") even with /no_think at num_predict=2048 — so gpt-4.1-mini (non-reasoning,
+# ~1-2 s, reliable, ~$1/month at this cadence) is primary. Flip to "ollama" to prefer the local
+# GPU (accepting the runaway → slow OpenAI fallback). Ollama is always the fallback when primary.
+LLM_PRIMARY      = "openai"   # "openai" | "ollama"
 LOG_FILE         = "/config/frigate_scene_check.log"
 LOCK_FILE        = "/config/frigate_scene_check.lock"    # separate from frigate_digest.lock —
                                                          # both pipelines may legitimately run at once
@@ -63,16 +71,17 @@ DAY_END          = 20    # 20:00
 CONFIRM_DELAY_S  = 20    # wait before the 2-of-2 confirmation snapshot (kills one-frame glitches)
 MAX_ALERT_IMAGES = 4     # cap on snapshot images attached to a family-group alert
 LLM_TIMEOUT      = 600   # seconds — hard per-attempt wall clock (SIGALRM)
-# Unlike frigate_digest.py, this is a BINARY verdict, not a narrative — the qwen3-vl thinking
-# phase adds nothing and reliably runs away: measured 2026-07-06, the 2-image comparison prompt
-# burned the whole budget on thinking and returned an EMPTY done_reason="length" response on all
-# 3 ladder attempts (8192→12288→18432, ~3 min each), forcing the OpenAI fallback every time.
-# Prepending Qwen3's `/no_think` soft-switch (OLLAMA_NO_THINK) disables thinking: the same prompt
-# then returned "ALERTA: NAO" in 7.7 s. So we keep a small num_predict and the ×1.5 length-retry
-# ladder purely as a safety net (it should never trigger now).
+# Ollama is the FALLBACK here (see LLM_PRIMARY) precisely because its thinking phase is
+# unreliable for this task. Prepending Qwen3's `/no_think` soft-switch (OLLAMA_NO_THINK) cuts
+# thinking ~10× vs full strength, but does NOT eliminate it: thinking length is stochastic and
+# scales with prompt size (a multi-check camera runs longer), so it still overflows num_predict
+# at random and returns an EMPTY done_reason="length" response. num_predict=2048 + the ×1.5 ladder
+# (2048→3072→4608) reduces how often that happens; when it still fails, the caller falls back to
+# the primary/other backend. (The Ollama `think:false` PARAM is deliberately NOT used — on this
+# model it INCREASED thinking vs /no_think.)
 OLLAMA_NO_THINK     = "/no_think"
 OLLAMA_NUM_CTX      = 16384
-OLLAMA_NUM_PREDICT  = 1024
+OLLAMA_NUM_PREDICT  = 2048
 OLLAMA_MAX_ATTEMPTS = 3
 SEND_ATTEMPTS    = 3     # WhatsApp send retries
 
@@ -233,8 +242,10 @@ REGRAS:
 __REFERENCES__
 FORMATO DA RESPOSTA (obrigatório):
 - Primeira linha: exatamente "ALERTA: SIM" ou "ALERTA: NAO".
-- Se SIM: uma linha por achado, no formato "- [id] descrição curta e factual", usando
-  apenas os ids da lista acima. Se NAO: nenhuma linha adicional.
+- Se SIM: uma linha por achado, no formato "- [id] descrição curta e factual".
+- O [id] deve ser EXATAMENTE um dos ids entre colchetes da lista acima — NÃO invente ids.
+  Ex.: uma bicicleta, cadeira, brinquedo ou ferramenta deixada é "[objetos]", nunca "[bicicleta]".
+- Se NAO: nenhuma linha adicional.
 """
 
 
@@ -277,22 +288,31 @@ _ALERT_GATE_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 _FINDING_RE = re.compile(r"^\s*[-•*]\s*\[\s*(\w+)\s*\]\s*(.+?)\s*$", re.MULTILINE)
+UNKNOWN_CHECK_ID = "outros"  # fallback bucket for a finding whose [id] isn't in the checklist
 
 
 def parse_verdict(text: str, allowed_ids: set[str]) -> list[tuple[str, str]] | None:
     """Returns [(check_id, description)] — empty list means a clean 'ALERTA: NAO'.
-    Returns None when the verdict is unparseable (no gate line, or SIM without any
-    finding that carries a known [id]) — the caller treats None as NO finding plus a
-    debug notice: for an 'is anything off' check, a false silence is cheaper than
-    crying wolf to the family group."""
+    Returns None only when there is no usable structure (no gate line, or 'ALERTA: SIM'
+    with no itemised finding at all) — the caller treats None as NO finding plus a debug
+    notice, since for an 'is anything off' check a false silence beats crying wolf.
+
+    The model often labels a real finding with an invented id (e.g. '[bicicleta]' or the
+    camera name '[frente_principal]') instead of the checklist id. Dropping those would
+    silently swallow genuine findings AND bypass the 2-of-2 confirmation that exists to
+    weed out false positives — so an unrecognised id is remapped to the camera's check
+    (its single id when unambiguous, else a generic bucket) rather than discarded."""
     m = _ALERT_GATE_RE.search(text or "")
     if not m:
         return None
     if m.group(1).upper().startswith("N"):
         return []
-    findings = [(cid.lower(), desc.strip()) for cid, desc in _FINDING_RE.findall(text)
-                if cid.lower() in allowed_ids]  # drop hallucinated categories
-    return findings or None
+    raw = _FINDING_RE.findall(text)
+    if not raw:
+        return None  # SIM with no itemised finding line — unusable
+    fallback = next(iter(allowed_ids)) if len(allowed_ids) == 1 else UNKNOWN_CHECK_ID
+    return [(cid.lower() if cid.lower() in allowed_ids else fallback, desc.strip())
+            for cid, desc in raw]
 
 
 # ── Ollama (from frigate_digest.py:905 — retry ladder intact) ─────────────────
@@ -319,7 +339,6 @@ def call_ollama(prompt: str, images: list[bytes]) -> tuple[str | None, dict]:
             "model":   OLLAMA_MODEL,
             "prompt":  no_think_prompt,
             "stream":  False,
-            "think":   False,  # newer Ollama honours this; harmless where ignored (/no_think covers it)
             "options": {"temperature": 0.3, "num_predict": num_predict,
                         "num_ctx": max(OLLAMA_NUM_CTX, num_predict + 8192)},
         }
@@ -410,17 +429,21 @@ def analyze_camera(camera: str, reference: bytes, current: bytes, checks: list[d
     prompt = build_prompt(prompt_template, location, checks, is_night, property_context)
     allowed = {c["id"] for c in checks}
     images = [reference, current]  # order matters: prompt says FIRST=reference, SECOND=current
+    api_key = secrets.get("openai_api_key", "")
 
-    text, stats = call_ollama(prompt, images)
-    backend = "ollama"
+    def _openai():
+        return (call_openai(prompt, images, api_key), "openai") if api_key else (None, "openai")
+
+    def _ollama():
+        text, _stats = call_ollama(prompt, images)
+        return text, "ollama"
+
+    primary, fallback = (_openai, _ollama) if LLM_PRIMARY == "openai" else (_ollama, _openai)
+    text, backend = primary()
     if text is None:
-        api_key = secrets.get("openai_api_key", "")
-        if api_key:
-            text = call_openai(prompt, images, api_key)
-            backend = "openai"
-        else:
-            log.error("Ollama failed and openai_api_key not in secrets.yaml — no fallback")
+        text, backend = fallback()
     if text is None:
+        log.error("Both LLM backends failed for %s (openai_key=%s)", camera, bool(api_key))
         return None, backend
     findings = parse_verdict(text, allowed)
     if findings is None:
