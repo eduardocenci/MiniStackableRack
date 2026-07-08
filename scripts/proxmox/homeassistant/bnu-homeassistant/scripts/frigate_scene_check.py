@@ -5,6 +5,13 @@ Deploy to: /config/scripts/frigate_scene_check.py
 
 Usage: python3 frigate_scene_check.py [night|rain|manual]   # run a check profile
        python3 frigate_scene_check.py capture [cam ...]     # snapshot current scene as ground truth
+       python3 frigate_scene_check.py selftest [cam]        # box+gate+draw one cam → SmokeTests only
+
+On a positive verdict the pipeline locates each finding (grounding call), re-checks it with a
+focused crop compare (the bbox verification gate — rejects weather/lighting false positives the
+whole-scene verdict lets through) and draws the surviving box on the alert image. Grounding and
+gate use the same OpenAI-primary / Ollama-fallback policy as the verdict; image ops use ffmpeg
+(no Pillow dependency) and fail open.
 
 Unlike frigate_digest.py (event-driven), this script is proactive: it fetches a CURRENT
 snapshot per camera (Frigate /api/<cam>/latest.jpg — no event needed), compares it against
@@ -84,6 +91,17 @@ OLLAMA_NUM_CTX      = 16384
 OLLAMA_NUM_PREDICT  = 2048
 OLLAMA_MAX_ATTEMPTS = 3
 SEND_ATTEMPTS    = 3     # WhatsApp send retries
+
+# ── Bounding-box verification gate ────────────────────────────────────────────
+# On a positive verdict, locate the finding (grounding call) and re-check it with a
+# focused crop compare before alerting; the surviving box is drawn on the alert image.
+# Same OpenAI-primary / Ollama-fallback policy as the verdict (no model mixing).
+ENABLE_BBOX_GATE = True
+BBOX_PAD_FRAC    = 0.45  # crop padding around the located box (fraction of box size)
+FFMPEG           = "/usr/bin/ffmpeg"  # present in the HA core container
+                                      # (frigate_whatsapp.py shells out to it in prod);
+                                      # every ffmpeg op fails OPEN so a missing binary
+                                      # degrades to "send without box", never a crash
 
 _handler = logging.FileHandler(LOG_FILE)
 _handler.setFormatter(logging.Formatter(
@@ -233,8 +251,13 @@ __CHECKS__
 REGRAS:
 - Compare a cena ATUAL com a REFERÊNCIA; reporte apenas diferenças que correspondam aos
   itens da lista acima.
-- Ignore diferenças de iluminação, sombras, reflexos, chuva, vento na vegetação, qualidade
-  de imagem, carimbo de hora/data e pequenas mudanças de ângulo ou cor.
+- Compare a PRESENÇA de objetos, não a APARÊNCIA deles. Um objeto que aparece nas DUAS
+  imagens NÃO é um achado, mesmo que pareça diferente por causa da luz ou da umidade.
+- Ignore por completo diferenças de: iluminação, brilho, sombras, reflexos, CHÃO MOLHADO vs
+  SECO, chuva, poças, vento na vegetação, qualidade de imagem, carimbo de hora/data e
+  pequenas mudanças de ângulo ou cor. Nada disso é uma anomalia.
+- Objetos permanentes que já aparecem na REFERÊNCIA (vasos, plantas, móveis de jardim,
+  decoração fixa) NUNCA são achados — nem quando ressaltam mais sob luz ou piso seco.
 - Ignore pessoas e animais: a ronda procura OBJETOS e ESTADOS (portas, portões, roupas,
   objetos deixados), não movimento.
 - Reporte um item SOMENTE se tiver certeza visual clara na imagem ATUAL. Na dúvida, NÃO reporte.
@@ -389,13 +412,14 @@ def call_ollama(prompt: str, images: list[bytes]) -> tuple[str | None, dict]:
 
 
 # ── OpenAI fallback (from frigate_digest.py:998) ──────────────────────────────
-def call_openai(prompt: str, images: list[bytes], api_key: str) -> str | None:
+def call_openai(prompt: str, images: list[bytes], api_key: str,
+                detail: str = "low") -> str | None:
     content: list[dict] = [{"type": "text", "text": prompt}]
     for img_bytes in images:
         b64 = base64.b64encode(img_bytes).decode()
         content.append({
             "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": "low"},
+            "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": detail},
         })
     payload = {
         "model":       OPENAI_MODEL,
@@ -421,18 +445,16 @@ def call_openai(prompt: str, images: list[bytes], api_key: str) -> str | None:
         return None
 
 
-def analyze_camera(camera: str, reference: bytes, current: bytes, checks: list[dict],
-                   prompt_template: str, is_night: bool, property_context: str,
-                   location: str, secrets: dict) -> tuple[list[tuple[str, str]] | None, str]:
-    """One VLM pass: reference + current → parsed findings.
-    Returns (findings_or_None, backend_label). None = analysis failed/unparseable."""
-    prompt = build_prompt(prompt_template, location, checks, is_night, property_context)
-    allowed = {c["id"] for c in checks}
-    images = [reference, current]  # order matters: prompt says FIRST=reference, SECOND=current
+# ── Shared LLM dispatch (OpenAI primary, Ollama fallback — no model mixing) ────
+def ask_llm(prompt: str, images: list[bytes], secrets: dict,
+            detail: str = "low") -> tuple[str | None, str]:
+    """One VLM pass with the configured primary backend, the other as fallback.
+    Returns (text_or_None, backend_label). Used by the verdict, the grounding call
+    and the gate so all three follow the same LLM_PRIMARY policy."""
     api_key = secrets.get("openai_api_key", "")
 
     def _openai():
-        return (call_openai(prompt, images, api_key), "openai") if api_key else (None, "openai")
+        return (call_openai(prompt, images, api_key, detail), "openai") if api_key else (None, "openai")
 
     def _ollama():
         text, _stats = call_ollama(prompt, images)
@@ -442,13 +464,197 @@ def analyze_camera(camera: str, reference: bytes, current: bytes, checks: list[d
     text, backend = primary()
     if text is None:
         text, backend = fallback()
+    return text, backend
+
+
+def analyze_camera(camera: str, reference: bytes, current: bytes, checks: list[dict],
+                   prompt_template: str, is_night: bool, property_context: str,
+                   location: str, secrets: dict) -> tuple[list[tuple[str, str]] | None, str]:
+    """One VLM pass: reference + current → parsed findings.
+    Returns (findings_or_None, backend_label). None = analysis failed/unparseable."""
+    prompt = build_prompt(prompt_template, location, checks, is_night, property_context)
+    allowed = {c["id"] for c in checks}
+    images = [reference, current]  # order matters: prompt says FIRST=reference, SECOND=current
+    text, backend = ask_llm(prompt, images, secrets)
     if text is None:
-        log.error("Both LLM backends failed for %s (openai_key=%s)", camera, bool(api_key))
+        log.error("Both LLM backends failed for %s (openai_key=%s)",
+                  camera, bool(secrets.get("openai_api_key")))
         return None, backend
     findings = parse_verdict(text, allowed)
     if findings is None:
         log.warning("Unparseable verdict for %s (%s): %r", camera, backend, (text or "")[:200])
     return findings, backend
+
+
+# ── Bounding box: locate a finding, then use the box as a false-positive gate ──
+# The box does double duty: (1) it crops a tight region so a SECOND, focused compare
+# can reject the weather/lighting false positives the whole-scene verdict lets through
+# (e.g. permanent planters that "appear" when wet pavement dries out), and (2) it is
+# drawn on the alert image. All image ops use ffmpeg (no Pillow dependency) and fail
+# OPEN — a missed real alert is worse than one false positive slipping through.
+BBOX_PROMPT = """\
+Esta é a imagem ATUAL de uma câmera de segurança residencial (pode ser visão noturna P&B).
+Um sistema detectou esta anomalia na cena:
+  "__DESC__"
+Localize na imagem a região exata dessa anomalia e devolva a caixa delimitadora.
+Responda SOMENTE com JSON válido, sem texto extra:
+{"present": true, "box_2d": [x_min, y_min, x_max, y_max]}
+- Coordenadas NORMALIZADAS de 0 a 1000, origem no canto SUPERIOR ESQUERDO
+  (x=0 esquerda, x=1000 direita; y=0 topo, y=1000 base).
+- Se a anomalia não estiver visível, responda {"present": false, "box_2d": []}."""
+
+GATE_PROMPT = """\
+Você recebe DOIS recortes da MESMA região de uma câmera de segurança FIXA (mesmo enquadramento).
+O PRIMEIRO recorte é a REFERÊNCIA (cena normal, "tudo certo"). O SEGUNDO é a cena ATUAL.
+Um sistema automático SUSPEITOU desta anomalia nesta região:
+  "__DESC__"
+Sua tarefa é REFUTAR esse alerta. O padrão é "confirmado": false — só confirme se for inequívoco.
+REGRAS:
+- Responda "confirmado": true SOMENTE se houver na ATUAL um objeto físico CLARO e INEQUÍVOCO
+  que NÃO existe na REFERÊNCIA.
+- Um objeto ou estrutura que aparece nos DOIS recortes NÃO é novo, mesmo que a aparência mude
+  por causa da luz ou da umidade → confirmado:false.
+- Chão/piso vazio, textura da superfície, iluminação, brilho, sombra, reflexo, chão molhado vs
+  seco, poças, ruído de imagem e carimbo de hora NÃO são objetos → confirmado:false.
+- Na MENOR dúvida, responda confirmado:false.
+Responda SOMENTE com JSON válido: {"confirmado": true, "motivo": "curto e factual"}"""
+
+_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def jpeg_size(data: bytes) -> tuple[int, int] | None:
+    """(width, height) from the JPEG SOF marker — avoids a Pillow dependency."""
+    i, n = 2, len(data)
+    while i + 9 < n:
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        if 0xD0 <= marker <= 0xD9:            # RSTn / SOI / EOI: no length field
+            i += 2
+            continue
+        # SOF0..SOF15 carry the frame dimensions; skip DHT(C4)/JPG(C8)/DAC(CC).
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            h = (data[i + 5] << 8) | data[i + 6]
+            w = (data[i + 7] << 8) | data[i + 8]
+            return w, h
+        seg = (data[i + 2] << 8) | data[i + 3]
+        i += 2 + seg
+    return None
+
+
+def _ffmpeg_pipe(vf_args: list[str], data: bytes, timeout: int = 30) -> bytes | None:
+    """Run ffmpeg reading a JPEG on stdin, return the JPEG on stdout. None on any
+    failure (fail-open: a missing/broken ffmpeg must never crash the ronda)."""
+    try:
+        p = subprocess.run([FFMPEG, "-hide_banner", "-loglevel", "error", "-i", "-",
+                            *vf_args, "-f", "mjpeg", "-"],
+                           input=data, capture_output=True, timeout=timeout)
+        if p.returncode == 0 and p.stdout:
+            return p.stdout
+        log.warning("ffmpeg rc=%s: %s", p.returncode, p.stderr.decode("utf-8", "replace")[:200])
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warning("ffmpeg unusable (%s) — image op skipped", exc)
+    return None
+
+
+def _box_to_px(box: list[float], w: int, h: int) -> tuple[float, float, float, float]:
+    """0-1000 normalized [x0,y0,x1,y1] → pixel (x0,y0,x1,y1), clamped and ordered."""
+    xs = sorted((max(0.0, min(box[0] / 1000 * w, w)), max(0.0, min(box[2] / 1000 * w, w))))
+    ys = sorted((max(0.0, min(box[1] / 1000 * h, h)), max(0.0, min(box[3] / 1000 * h, h))))
+    return xs[0], ys[0], xs[1], ys[1]
+
+
+def _crop(img: bytes, box: list[float], pad: float = BBOX_PAD_FRAC) -> bytes | None:
+    """Crop a padded region around `box`; each image uses its OWN dimensions so a
+    reference at a different resolution still crops the same physical spot."""
+    wh = jpeg_size(img)
+    if not wh:
+        return None
+    w, h = wh
+    x0, y0, x1, y1 = _box_to_px(box, w, h)
+    bw, bh = x1 - x0, y1 - y0
+    if bw < 2 or bh < 2:
+        return None
+    cx0 = int(max(0.0, x0 - bw * pad)); cy0 = int(max(0.0, y0 - bh * pad))
+    cx1 = int(min(float(w), x1 + bw * pad)); cy1 = int(min(float(h), y1 + bh * pad))
+    if cx1 - cx0 < 2 or cy1 - cy0 < 2:
+        return None
+    return _ffmpeg_pipe(["-vf", f"crop={cx1 - cx0}:{cy1 - cy0}:{cx0}:{cy0}"], img)
+
+
+def parse_bbox(text: str) -> list[float] | None:
+    """0-1000 box from a grounding reply; None if absent or present:false."""
+    m = _JSON_RE.search(text or "")
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group(0))
+    except ValueError:
+        return None
+    if obj.get("present") is False:
+        return None
+    box = obj.get("box_2d") or obj.get("box") or obj.get("bbox")
+    if not (isinstance(box, list) and len(box) == 4):
+        return None
+    try:
+        vals = [float(v) for v in box]
+    except (TypeError, ValueError):
+        return None
+    if max(vals) <= 1.5:            # model answered in 0-1 fractions
+        vals = [v * 1000 for v in vals]
+    return vals
+
+
+def request_bbox(current: bytes, description: str, secrets: dict) -> list[float] | None:
+    text, backend = ask_llm(BBOX_PROMPT.replace("__DESC__", description), [current],
+                            secrets, detail="high")
+    box = parse_bbox(text or "")
+    log.info("bbox(%s): %s", backend, box)
+    return box
+
+
+def parse_gate(text: str) -> bool | None:
+    m = _JSON_RE.search(text or "")
+    if not m:
+        return None
+    try:
+        obj = json.loads(m.group(0))
+    except ValueError:
+        return None
+    val = obj.get("confirmado")
+    return val if isinstance(val, bool) else None
+
+
+def gate_finding(reference: bytes, current: bytes, box: list[float],
+                 description: str, secrets: dict) -> tuple[bool, str]:
+    """Focused crop compare: is the finding REAL, ignoring weather/light? Returns
+    (keep, note). Fails OPEN (keep=True) on any infra hiccup."""
+    ref_c = _crop(reference, box)
+    cur_c = _crop(current, box)
+    if not ref_c or not cur_c:
+        return True, "crop indisponível → mantido"
+    text, backend = ask_llm(GATE_PROMPT.replace("__DESC__", description),
+                            [ref_c, cur_c], secrets, detail="high")
+    real = parse_gate(text or "")
+    if real is None:
+        return True, f"gate inconclusivo ({backend}) → mantido"
+    return real, f"{'confirmado' if real else 'falso positivo'} ({backend})"
+
+
+def draw_boxes(img: bytes, boxes: list[list[float]]) -> bytes:
+    """Draw a red rectangle for each 0-1000 box; returns the original on any failure."""
+    wh = jpeg_size(img)
+    if not wh or not boxes:
+        return img
+    w, h = wh
+    thick = max(3, w // 300)
+    filters = []
+    for box in boxes:
+        x0, y0, x1, y1 = _box_to_px(box, w, h)
+        filters.append(f"drawbox=x={int(x0)}:y={int(y0)}:w={int(x1 - x0)}:h={int(y1 - y0)}"
+                       f":color=red@1.0:thickness={thick}")
+    return _ffmpeg_pipe(["-vf", ",".join(filters), "-q:v", "3"], img) or img
 
 
 # ── Suppression state ─────────────────────────────────────────────────────────
@@ -507,8 +713,9 @@ def format_message(findings_by_cam: dict[str, list[tuple[str, str]]], profile: s
 
 
 def send_findings(findings_by_cam: dict[str, list[tuple[str, str]]],
-                  snapshots: dict[str, bytes], profile: str,
-                  cam_to_location: dict[str, str], secrets: dict) -> bool:
+                  snapshots: dict[str, bytes],
+                  boxes_by_cam: dict[str, dict[str, list[float]]],
+                  profile: str, cam_to_location: dict[str, str], secrets: dict) -> bool:
     jid = secrets["whatsapp_group_jid"]
     client = WahaClient(secrets, attempts=SEND_ATTEMPTS)
     text = format_message(findings_by_cam, profile, cam_to_location)
@@ -520,6 +727,11 @@ def send_findings(findings_by_cam: dict[str, list[tuple[str, str]]],
         img = snapshots.get(cam)
         if not img:
             continue
+        # Draw the located box for each finding still being alerted on this camera.
+        cam_boxes = [b for b in ((boxes_by_cam.get(cam) or {}).get(cid)
+                                 for cid, _ in findings_by_cam[cam]) if b]
+        if cam_boxes:
+            img = draw_boxes(img, cam_boxes)
         b64 = base64.b64encode(img).decode()
         client.send_image_b64(jid, b64, f"ronda_{cam}.jpg",
                               caption=humanize_cam(cam, cam_to_location))
@@ -588,6 +800,67 @@ def capture_baselines(cameras: list[str], base: str, is_night: bool,
         send_debug_images(captured, secrets)
 
 
+# ── Selftest (safe diagnostic — SmokeTests channel only) ──────────────────────
+def selftest(cam: str, secrets: dict) -> None:
+    """Run the box+gate+draw pipeline for ONE camera against the live scene and report
+    to the SmokeTests channel ONLY (never the family group). Validates ffmpeg crop/draw
+    and the gate end-to-end in the real runtime. Invoke: ...py selftest <cam>."""
+    now = datetime.datetime.now()
+    is_night = not (DAY_START <= now.hour < DAY_END)
+    cam_checks, _ = resolve_profile(load_profiles(), "manual")
+    checks = cam_checks.get(cam)
+    if not checks:
+        send_debug_whatsapp(f"🧪 selftest: '{cam}' sem checagens configuradas.", secrets)
+        return
+    prompt_template = load_prompt_template()
+    property_context, cam_to_location, _ = load_property_context(PROPERTY_CTX)
+    location = humanize_cam(cam, cam_to_location)
+    base = f"http://{secrets['frigate_host']}:{secrets['frigate_port']}"
+    current = fetch_latest(base, cam)
+    ref = load_reference(cam, is_night)
+    if not current or not ref:
+        send_debug_whatsapp(f"🧪 selftest {cam}: sem snapshot ou referência.", secrets)
+        return
+    ref_img, _ref_path = ref
+    findings, backend = analyze_camera(cam, ref_img, current, checks, prompt_template,
+                                       is_night, property_context, location, secrets)
+    header = ("verdict (%s): " % backend) + (
+        ", ".join(f"[{c}] {d}" for c, d in findings) if findings else "NAO")
+    lines = [f"🧪 *Selftest bbox — {location}*", header]
+    boxes: list[list[float]] = []
+    crops: list[tuple[bytes, str]] = []
+    for cid, desc in (findings or []):
+        box = request_bbox(current, desc, secrets)
+        if box is None:
+            lines.append(f"• [{cid}] sem bbox → manteria (sem verificação)")
+            continue
+        rc, cc = _crop(ref_img, box), _crop(current, box)
+        keep, note = gate_finding(ref_img, current, box, desc, secrets)
+        lines.append(f"• [{cid}] box={[round(v) for v in box]} → {note}")
+        if keep:
+            boxes.append(box)
+        if rc:
+            crops.append((rc, f"ref crop [{cid}]"))
+        if cc:
+            crops.append((cc, f"atual crop [{cid}]"))
+    if not findings:
+        lines.append("_Nada a verificar — cena limpa._")
+    # ffmpeg health probe: crop + draw a demo box so the real runtime is validated
+    # end-to-end even on a clean scene (draw_boxes returns the SAME object on failure).
+    demo_box = [350.0, 300.0, 650.0, 550.0]
+    crop_ok = _crop(current, demo_box) is not None
+    demo_img = draw_boxes(current, [demo_box])
+    draw_ok = demo_img is not current
+    lines.append(f"🔧 ffmpeg: crop={'ok' if crop_ok else 'FALHOU'}, "
+                 f"draw={'ok' if draw_ok else 'FALHOU'}")
+    if boxes:
+        imgs = [(draw_boxes(current, boxes), "cena atual + caixa(s) sobreviventes")] + crops
+    else:
+        imgs = [(demo_img, "🔧 caixa DEMO (sem achado) — valida render ffmpeg")]
+    send_debug_whatsapp("\n".join(lines), secrets)
+    send_debug_images(imgs, secrets)
+
+
 # ── Check run ─────────────────────────────────────────────────────────────────
 def _run_inner(profile: str, secrets: dict, debug: bool) -> None:
     now = datetime.datetime.now()
@@ -602,6 +875,7 @@ def _run_inner(profile: str, secrets: dict, debug: bool) -> None:
 
     findings_by_cam: dict[str, list[tuple[str, str]]] = {}
     snapshots: dict[str, bytes] = {}
+    boxes_by_cam: dict[str, dict[str, list[float]]] = {}   # cam → {check_id: box 0-1000}
     checked_keys: set[str] = set()          # (cam:check) pairs actually analyzed this run
     debug_lines: list[str] = []
     debug_pairs: list[tuple[bytes, str]] = []
@@ -654,6 +928,28 @@ def _run_inner(profile: str, secrets: dict, debug: bool) -> None:
                 current = second  # alert with the freshest image
                 backend = f"{backend}+{backend2}"
 
+        # Bounding-box verification gate: locate each finding, then run a focused crop
+        # compare to reject weather/lighting false positives the whole-scene verdict let
+        # through (e.g. permanent planters that "appear" once wet pavement dries out).
+        # The surviving boxes are drawn on the alert image. Fails OPEN on infra hiccups.
+        if findings and ENABLE_BBOX_GATE:
+            kept: list[tuple[str, str]] = []
+            for cid, desc in findings:
+                box = request_bbox(current, desc, secrets)
+                if box is None:
+                    kept.append((cid, desc))          # no localization → keep, don't draw
+                    debug_lines.append(f"    ↳ [{cid}] sem bbox → mantido")
+                    continue
+                keep, note = gate_finding(ref_img, current, box, desc, secrets)
+                if keep:
+                    kept.append((cid, desc))
+                    boxes_by_cam.setdefault(cam, {})[cid] = box
+                    debug_lines.append(f"    ↳ [{cid}] {note}")
+                else:
+                    log.info("%s: [%s] SUPPRESSED by bbox gate — %s", cam, cid, note)
+                    debug_lines.append(f"    ↳ [{cid}] 🚫 {note}")
+            findings = kept
+
         verdict = ", ".join(cid for cid, _ in findings) if findings else "NAO"
         debug_lines.append(f"{cam} → {verdict} ({backend}, {elapsed:.0f}s)")
         if findings:
@@ -681,7 +977,7 @@ def _run_inner(profile: str, secrets: dict, debug: bool) -> None:
 
     sent = False
     if to_send:
-        sent = send_findings(to_send, snapshots, profile, cam_to_location, secrets)
+        sent = send_findings(to_send, snapshots, boxes_by_cam, profile, cam_to_location, secrets)
         if sent:
             for cam, findings in to_send.items():
                 for cid, desc in findings:
@@ -759,9 +1055,17 @@ def _lock_is_held() -> bool:
 
 
 def main() -> None:
-    profile = (sys.argv[1].strip() if len(sys.argv) > 1 else "manual").lower()
-    if profile not in ("night", "rain", "manual", "capture"):
-        profile = "manual"
+    arg = (sys.argv[1].strip() if len(sys.argv) > 1 else "manual").lower()
+
+    if arg == "selftest":
+        # Safe diagnostic: reports to SmokeTests only. Runs inline (fast, a few calls).
+        secrets = load_secrets()
+        cam = sys.argv[2].strip() if len(sys.argv) > 2 else "frente_garagem"
+        log.info("=== Selftest starting (cam=%s) ===", cam)
+        selftest(cam, secrets)
+        return
+
+    profile = arg if arg in ("night", "rain", "manual", "capture") else "manual"
 
     if profile == "capture":
         # Capture is fast (a handful of snapshot GETs) — run inline so the button
