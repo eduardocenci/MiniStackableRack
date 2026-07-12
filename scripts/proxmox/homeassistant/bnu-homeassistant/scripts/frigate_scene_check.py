@@ -539,6 +539,29 @@ REGRAS:
 - Na MENOR dúvida, responda confirmado:false.
 Responda SOMENTE com JSON válido: {"confirmado": true, "motivo": "curto e factual"}"""
 
+# State-aware variant for REGION-ANCHORED findings (portões abertos, roupas no varal):
+# the generic gate above only confirms NEW OBJECTS, so it would auto-refute a genuinely
+# open gate — the gate exists in both crops, only its STATE changed. Anchored regions
+# frame exactly the object being checked, so here the question is whether the SUSPECTED
+# CHANGE is visible, keeping the same refute-by-default posture for light/weather.
+GATE_STATE_PROMPT = """\
+Você recebe DOIS recortes da MESMA região de uma câmera de segurança FIXA (mesmo enquadramento),
+mostrando exatamente o objeto verificado (ex.: um portão, uma porta, o varal).
+O PRIMEIRO recorte é a REFERÊNCIA (estado normal, "tudo certo": portões/portas fechados,
+varal vazio). O SEGUNDO é a cena ATUAL.
+Um sistema automático SUSPEITOU desta mudança nesta região:
+  "__DESC__"
+Sua tarefa é REFUTAR esse alerta. O padrão é "confirmado": false — só confirme se for inequívoco.
+REGRAS:
+- Responda "confirmado": true SOMENTE se a mudança suspeitada estiver CLARA e INEQUÍVOCA na
+  ATUAL em comparação com a REFERÊNCIA (ex.: portão visivelmente aberto/entreaberto que na
+  referência aparece fechado; roupas/tecidos pendurados onde a referência mostra varal vazio).
+- Diferenças de iluminação, brilho, sombra, reflexo, molhado vs seco, ruído de imagem e
+  carimbo de hora NÃO são mudanças → confirmado:false.
+- Se o objeto aparenta o MESMO estado nos dois recortes → confirmado:false.
+- Na MENOR dúvida, responda confirmado:false.
+Responda SOMENTE com JSON válido: {"confirmado": true, "motivo": "curto e factual"}"""
+
 _JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
 
 
@@ -648,14 +671,18 @@ def parse_gate(text: str) -> bool | None:
 
 def gate_finding(reference: bytes, current: bytes, box: list[float],
                  description: str, secrets: dict,
-                 pad: float = BBOX_PAD_FRAC) -> tuple[bool, str]:
+                 pad: float = BBOX_PAD_FRAC,
+                 state_check: bool = False) -> tuple[bool, str]:
     """Focused crop compare: is the finding REAL, ignoring weather/light? Returns
-    (keep, note). Fails OPEN (keep=True) on any infra hiccup."""
+    (keep, note). Fails OPEN (keep=True) on any infra hiccup. `state_check=True`
+    (region-anchored findings) judges a STATE change of the framed object instead
+    of new-object presence — the object itself appears in both crops."""
     ref_c = _crop(reference, box, pad)
     cur_c = _crop(current, box, pad)
     if not ref_c or not cur_c:
         return True, "crop indisponível → mantido"
-    text, backend = ask_llm(GATE_PROMPT.replace("__DESC__", description),
+    prompt = GATE_STATE_PROMPT if state_check else GATE_PROMPT
+    text, backend = ask_llm(prompt.replace("__DESC__", description),
                             [ref_c, cur_c], secrets, detail="high")
     real = parse_gate(text or "")
     if real is None:
@@ -891,7 +918,7 @@ def selftest(cam: str, secrets: dict) -> None:
             box = region
             rc, cc = _crop(ref_img, box, REGION_PAD_FRAC), _crop(current, box, REGION_PAD_FRAC)
             keep, note = gate_finding(ref_img, current, box, desc, secrets,
-                                      pad=REGION_PAD_FRAC)
+                                      pad=REGION_PAD_FRAC, state_check=True)
             note = f"região configurada: {note}"
         else:
             box = request_bbox(current, desc, secrets)
@@ -1021,7 +1048,7 @@ def _run_inner(profile: str, secrets: dict, debug: bool) -> None:
                     # gate is guaranteed to examine the right object (not, say, a
                     # window across the yard). Tighter pad: the region is generous.
                     keep, note = gate_finding(ref_img, current, region, desc, secrets,
-                                              pad=REGION_PAD_FRAC)
+                                              pad=REGION_PAD_FRAC, state_check=True)
                     note = f"região configurada: {note}"
                     box = region
                 else:
