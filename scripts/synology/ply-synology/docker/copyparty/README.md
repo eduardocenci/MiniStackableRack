@@ -23,18 +23,14 @@ so `copyparty.local.conf` overrides `[accounts]` from `copyparty.conf`.
 
 ## Prerequisites
 
-1. **Tailscale on the NAS.** Install the Tailscale package on DSM
-   (Package Center → *Tailscale*, or SynoCommunity), sign in, and confirm the
-   NAS shows up in your tailnet. Grab its address:
-   ```sh
-   tailscale ip -4        # e.g. 100.101.102.103
-   tailscale status       # MagicDNS name, e.g. ply-nas-ds918plus.<tailnet>.ts.net
-   ```
+1. **Tailscale on the NAS** — ✅ done: the NAS is on the tailnet as
+   `ply-nas-ds918plus` (100.110.80.51). If it ever needs reinstalling:
+   Package Center → *Tailscale*, sign in, then `tailscale ip -4`.
 2. **Container Manager** installed (Package Center).
 3. A **shared folder** for the files, e.g. create `copyparty` (or reuse an
    existing share). Note its path, typically `/volume1/copyparty`.
-4. **SSH enabled** (Control Panel → Terminal & SNMP) if you want to deploy from
-   the command line and to look up the owning user's UID/GID.
+4. **SSH enabled** — ✅ done (port 22 open over Tailscale). LLM access details:
+   `scripts/synology/README.md`.
 
 ## Deploy
 
