@@ -98,6 +98,17 @@ SEND_ATTEMPTS    = 3     # WhatsApp send retries
 # Same OpenAI-primary / Ollama-fallback policy as the verdict (no model mixing).
 ENABLE_BBOX_GATE = True
 BBOX_PAD_FRAC    = 0.45  # crop padding around the located box (fraction of box size)
+REGION_PAD_FRAC  = 0.15  # smaller pad for configured region anchors (already generous)
+
+# ── Region anchors ─────────────────────────────────────────────────────────────
+# A check may pin WHERE its object lives per camera (`regions:` in the profiles file,
+# 0-1000 normalized [x0,y0,x1,y1]). Anchored checks get the region drawn as a colored
+# marker box on the REFERENCE image sent to the verdict (the prompt tells the model to
+# look only there), and the region replaces the model-grounding bbox in the verification
+# gate — added after a night run flagged "portão aberto" while looking at a WINDOW: the
+# whole-scene verdict, the grounding call and the gate all examined the wrong object.
+REGION_COLORS = [("green", "VERDE"), ("blue", "AZUL"),
+                 ("yellow", "AMARELO"), ("magenta", "MAGENTA")]
 FFMPEG           = "/usr/bin/ffmpeg"  # present in the HA core container
                                       # (frigate_whatsapp.py shells out to it in prod);
                                       # every ffmpeg op fails OPEN so a missing binary
@@ -287,10 +298,19 @@ def load_prompt_template() -> str:
 
 def build_prompt(template: str, location: str, checks: list[dict],
                  is_night: bool, property_context: str) -> str:
-    checks_txt = "\n".join(
-        f"- [{c['id']}] {' '.join(str(c.get('instruction', c.get('label', c['id']))).split())}"
-        for c in checks
-    )
+    lines = []
+    for c in checks:
+        instr = " ".join(str(c.get("instruction", c.get("label", c["id"]))).split())
+        anchor = (f"(verifique APENAS a região marcada em {c['_color_pt']} "
+                  f"na imagem de REFERÊNCIA) " if c.get("_color_pt") else "")
+        lines.append(f"- [{c['id']}] {anchor}{instr}")
+    if any(c.get("_color_pt") for c in checks):
+        # Injected into __CHECKS__ so the user-editable template needs no new placeholder.
+        lines.append(
+            "- ATENÇÃO: as caixas coloridas desenhadas na imagem de REFERÊNCIA são apenas "
+            "MARCADORES da região a verificar — elas NÃO existem na cena real e NUNCA são "
+            "um achado. Examine a MESMA região na imagem ATUAL (que não tem caixa).")
+    checks_txt = "\n".join(lines)
     if is_night:
         time_note = ("As imagens são noturnas (infravermelho, preto e branco); a referência pode "
                      "ter sido capturada em condição de luz diferente — ignore diferenças de cor e brilho.")
@@ -627,11 +647,12 @@ def parse_gate(text: str) -> bool | None:
 
 
 def gate_finding(reference: bytes, current: bytes, box: list[float],
-                 description: str, secrets: dict) -> tuple[bool, str]:
+                 description: str, secrets: dict,
+                 pad: float = BBOX_PAD_FRAC) -> tuple[bool, str]:
     """Focused crop compare: is the finding REAL, ignoring weather/light? Returns
     (keep, note). Fails OPEN (keep=True) on any infra hiccup."""
-    ref_c = _crop(reference, box)
-    cur_c = _crop(current, box)
+    ref_c = _crop(reference, box, pad)
+    cur_c = _crop(current, box, pad)
     if not ref_c or not cur_c:
         return True, "crop indisponível → mantido"
     text, backend = ask_llm(GATE_PROMPT.replace("__DESC__", description),
@@ -654,6 +675,23 @@ def draw_boxes(img: bytes, boxes: list[list[float]]) -> bytes:
         x0, y0, x1, y1 = _box_to_px(box, w, h)
         filters.append(f"drawbox=x={int(x0)}:y={int(y0)}:w={int(x1 - x0)}:h={int(y1 - y0)}"
                        f":color=red@1.0:thickness={thick}")
+    return _ffmpeg_pipe(["-vf", ",".join(filters), "-q:v", "3"], img) or img
+
+
+def draw_region_markers(img: bytes, regions: list[tuple[list[float], str]]) -> bytes:
+    """Colored marker boxes (region anchors) on a COPY of the reference sent to the
+    verdict VLM. `regions` is [(0-1000 box, ffmpeg color)]. Fails OPEN: on any ffmpeg
+    problem the plain reference is used and the prompt anchor note still applies."""
+    wh = jpeg_size(img)
+    if not wh or not regions:
+        return img
+    w, h = wh
+    thick = max(4, w // 200)
+    filters = []
+    for box, color in regions:
+        x0, y0, x1, y1 = _box_to_px(box, w, h)
+        filters.append(f"drawbox=x={int(x0)}:y={int(y0)}:w={int(x1 - x0)}:h={int(y1 - y0)}"
+                       f":color={color}@1.0:thickness={thick}")
     return _ffmpeg_pipe(["-vf", ",".join(filters), "-q:v", "3"], img) or img
 
 
@@ -822,20 +860,46 @@ def selftest(cam: str, secrets: dict) -> None:
         send_debug_whatsapp(f"🧪 selftest {cam}: sem snapshot ou referência.", secrets)
         return
     ref_img, _ref_path = ref
-    findings, backend = analyze_camera(cam, ref_img, current, checks, prompt_template,
+
+    # Region anchors — same wiring as _run_inner, so the selftest validates them too.
+    region_by_check: dict[str, list[float]] = {}
+    markers: list[tuple[list[float], str]] = []
+    for c in checks:
+        rbox = (c.get("regions") or {}).get(cam)
+        if isinstance(rbox, list) and len(rbox) == 4:
+            color, color_pt = REGION_COLORS[len(markers) % len(REGION_COLORS)]
+            region_by_check[c["id"]] = [float(v) for v in rbox]
+            markers.append(([float(v) for v in rbox], color))
+            c["_color_pt"] = color_pt
+    ref_for_verdict = draw_region_markers(ref_img, markers) if markers else ref_img
+
+    findings, backend = analyze_camera(cam, ref_for_verdict, current, checks, prompt_template,
                                        is_night, property_context, location, secrets)
     header = ("verdict (%s): " % backend) + (
         ", ".join(f"[{c}] {d}" for c, d in findings) if findings else "NAO")
     lines = [f"🧪 *Selftest bbox — {location}*", header]
+    if markers:
+        lines.append(f"🎯 regiões configuradas: "
+                     + ", ".join(f"[{cid}]" for cid in region_by_check))
     boxes: list[list[float]] = []
     crops: list[tuple[bytes, str]] = []
+    if markers:
+        crops.append((ref_for_verdict, "ref anotada (marcadores de região)"))
     for cid, desc in (findings or []):
-        box = request_bbox(current, desc, secrets)
-        if box is None:
-            lines.append(f"• [{cid}] sem bbox → manteria (sem verificação)")
-            continue
-        rc, cc = _crop(ref_img, box), _crop(current, box)
-        keep, note = gate_finding(ref_img, current, box, desc, secrets)
+        region = region_by_check.get(cid)
+        if region:
+            box = region
+            rc, cc = _crop(ref_img, box, REGION_PAD_FRAC), _crop(current, box, REGION_PAD_FRAC)
+            keep, note = gate_finding(ref_img, current, box, desc, secrets,
+                                      pad=REGION_PAD_FRAC)
+            note = f"região configurada: {note}"
+        else:
+            box = request_bbox(current, desc, secrets)
+            if box is None:
+                lines.append(f"• [{cid}] sem bbox → manteria (sem verificação)")
+                continue
+            rc, cc = _crop(ref_img, box), _crop(current, box)
+            keep, note = gate_finding(ref_img, current, box, desc, secrets)
         lines.append(f"• [{cid}] box={[round(v) for v in box]} → {note}")
         if keep:
             boxes.append(box)
@@ -895,9 +959,25 @@ def _run_inner(profile: str, secrets: dict, debug: bool) -> None:
             continue
         ref_img, ref_path = ref
 
+        # Region anchors for this camera: stamp each anchored check with its marker
+        # color (used by build_prompt) and draw the markers on a COPY of the reference
+        # for the verdict call. The CLEAN ref_img keeps serving the crop-compare gate.
+        region_by_check: dict[str, list[float]] = {}
+        markers: list[tuple[list[float], str]] = []
+        for c in checks:
+            c.pop("_color_pt", None)
+            box = (c.get("regions") or {}).get(cam)
+            if isinstance(box, list) and len(box) == 4:
+                color, color_pt = REGION_COLORS[len(markers) % len(REGION_COLORS)]
+                region_by_check[c["id"]] = [float(v) for v in box]
+                markers.append(([float(v) for v in box], color))
+                c["_color_pt"] = color_pt
+        ref_for_verdict = draw_region_markers(ref_img, markers) if markers else ref_img
+
         t0 = time.monotonic()
-        findings, backend = analyze_camera(cam, ref_img, current, checks, prompt_template,
-                                           is_night, property_context, location, secrets)
+        findings, backend = analyze_camera(cam, ref_for_verdict, current, checks,
+                                           prompt_template, is_night, property_context,
+                                           location, secrets)
         elapsed = time.monotonic() - t0
         if findings is None:
             debug_lines.append(f"{cam} → ⚠️ análise falhou ({backend}, {elapsed:.0f}s)")
@@ -908,7 +988,7 @@ def _run_inner(profile: str, secrets: dict, debug: bool) -> None:
 
         if findings and debug:
             # Show the debug channel exactly what the model saw on a positive.
-            debug_pairs.append((ref_img, f"ref: {cam} ({os.path.basename(ref_path)})"))
+            debug_pairs.append((ref_for_verdict, f"ref: {cam} ({os.path.basename(ref_path)})"))
             debug_pairs.append((current, f"atual (1ª): {cam}"))
 
         if findings and confirm_positive:
@@ -917,7 +997,7 @@ def _run_inner(profile: str, secrets: dict, debug: bool) -> None:
             time.sleep(CONFIRM_DELAY_S)
             second = fetch_latest(base, cam)
             if second:
-                findings2, backend2 = analyze_camera(cam, ref_img, second, checks,
+                findings2, backend2 = analyze_camera(cam, ref_for_verdict, second, checks,
                                                      prompt_template, is_night,
                                                      property_context, location, secrets)
                 confirmed_ids = {cid for cid, _ in (findings2 or [])}
@@ -935,12 +1015,22 @@ def _run_inner(profile: str, secrets: dict, debug: bool) -> None:
         if findings and ENABLE_BBOX_GATE:
             kept: list[tuple[str, str]] = []
             for cid, desc in findings:
-                box = request_bbox(current, desc, secrets)
-                if box is None:
-                    kept.append((cid, desc))          # no localization → keep, don't draw
-                    debug_lines.append(f"    ↳ [{cid}] sem bbox → mantido")
-                    continue
-                keep, note = gate_finding(ref_img, current, box, desc, secrets)
+                region = region_by_check.get(cid)
+                if region:
+                    # Configured anchor is authoritative — no model grounding, so the
+                    # gate is guaranteed to examine the right object (not, say, a
+                    # window across the yard). Tighter pad: the region is generous.
+                    keep, note = gate_finding(ref_img, current, region, desc, secrets,
+                                              pad=REGION_PAD_FRAC)
+                    note = f"região configurada: {note}"
+                    box = region
+                else:
+                    box = request_bbox(current, desc, secrets)
+                    if box is None:
+                        kept.append((cid, desc))      # no localization → keep, don't draw
+                        debug_lines.append(f"    ↳ [{cid}] sem bbox → mantido")
+                        continue
+                    keep, note = gate_finding(ref_img, current, box, desc, secrets)
                 if keep:
                     kept.append((cid, desc))
                     boxes_by_cam.setdefault(cam, {})[cid] = box

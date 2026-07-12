@@ -4,6 +4,13 @@
 # checks:    O QUE procurar e em QUAIS câmeras. O `id` (a chave) aparece no formato
 #            de resposta do LLM ("- [varal] ...") e na memória de supressão — não
 #            renomeie sem limpar /config/frigate_scene_check.state.json.
+#   regions: (opcional) ancora a checagem numa REGIÃO da imagem, por câmera:
+#            [x0, y0, x1, y1] normalizado 0-1000, origem no canto superior esquerdo.
+#            A região vira uma caixa colorida desenhada na REFERÊNCIA enviada ao LLM
+#            ("verifique apenas aqui") e substitui a localização por modelo no gate de
+#            verificação — o recorte comparado é garantidamente o objeto certo.
+#            Coordenadas medidas sobre os baselines de 2026-07-06/08; refaça se a
+#            câmera for reposicionada. Valide com: ...py selftest <camera>.
 # profiles:  quais checagens rodam em cada gatilho.
 #   suppress_hours:    não repetir o MESMO achado (câmera+checagem) dentro desta
 #                      janela, por perfil (0 = sempre notifica).
@@ -17,12 +24,21 @@ checks:
     instruction: >
       Há roupas, toalhas ou tecidos pendurados no varal? Varal vazio ou apenas
       pregadores NÃO é achado.
+    regions:
+      fundos_overview: [0, 480, 460, 1000]      # estrutura do varal, canto inferior esquerdo
   portoes:
     label: "portões/portas abertos"
     cameras: [frente_principal, frente_pedestres, frente_garagem, fundos_overview]
     instruction: >
       Algum portão ou porta que aparece FECHADO na imagem de referência está
       aberto ou entreaberto agora?
+    regions:
+      # 2026-07-11 22:07: a ronda apontou "portão da garagem aberto" olhando para a
+      # JANELA de cortina branca — estas âncoras prendem a checagem ao portão real.
+      frente_principal: [185, 140, 390, 480]    # portão da garagem (folhas de madeira ripada)
+      fundos_overview: [395, 165, 595, 585]     # portas da lavanderia/garagem nos fundos
+      # frente_pedestres / frente_garagem: sem portão claramente visível no quadro —
+      # sem âncora, seguem com localização por modelo (comportamento anterior).
   objetos:
     label: "objetos deixados fora"
     cameras: [frente_overview, frente_garagem, lateral_direita, lateral_esquerda, fundos_overview]
