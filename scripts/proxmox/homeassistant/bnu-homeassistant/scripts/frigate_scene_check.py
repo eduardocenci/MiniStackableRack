@@ -3,7 +3,7 @@
 Ronda da Casa — proactive scene check against ground-truth references
 Deploy to: /config/scripts/frigate_scene_check.py
 
-Usage: python3 frigate_scene_check.py [night|rain|manual]   # run a check profile
+Usage: python3 frigate_scene_check.py [night|rain|away|manual]   # run a check profile
        python3 frigate_scene_check.py capture [cam ...]     # snapshot current scene as ground truth
        python3 frigate_scene_check.py selftest [cam]        # box+gate+draw one cam → SmokeTests only
 
@@ -757,6 +757,7 @@ def is_suppressed(state: dict, key: str, profile: str, suppress_hours: float) ->
 PROFILE_HEADERS = {
     "night":  "🌙 *Ronda noturna — {t}*",
     "rain":   "🌧️ *Chuva prevista para a próxima hora — {t}*",
+    "away":   "🚶 *Saída de casa — {t}*",
     "manual": "🔍 *Ronda manual — {t}*",
 }
 
@@ -774,6 +775,8 @@ def format_message(findings_by_cam: dict[str, list[tuple[str, str]]], profile: s
         lines.append("")
     if profile == "rain":
         lines.append("_Chuva se aproximando — vale recolher._")
+    elif profile == "away":
+        lines.append("_Todos saíram de casa — vale conferir._")
     return "\n".join(lines).strip()
 
 
@@ -1182,7 +1185,7 @@ def main() -> None:
         selftest(cam, secrets)
         return
 
-    profile = arg if arg in ("night", "rain", "manual", "capture") else "manual"
+    profile = arg if arg in ("night", "rain", "away", "manual", "capture") else "manual"
 
     if profile == "capture":
         # Capture is fast (a handful of snapshot GETs) — run inline so the button

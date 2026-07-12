@@ -30,6 +30,9 @@ input_boolean:
   frigate_scene_check_rain:
     name: "Ronda da Casa — Antes da chuva"
     icon: mdi:weather-pouring
+  frigate_scene_check_away:
+    name: "Ronda da Casa — Ao sair de casa"
+    icon: mdi:home-export-outline
   # Separate from frigate_debug so digest noise and ronda noise don't mix.
   frigate_scene_check_debug:
     name: "Ronda da Casa — Debug"
@@ -150,6 +153,31 @@ automation:
       - action: shell_command.frigate_scene_check
         data:
           profile: rain
+
+  # Family left the house: check the gates once everyone is gone. family_present
+  # (family_presence.yaml) already carries a 10-min delay_off, so this fires
+  # ~10 min after the last member leaves — gates are settled and nobody is
+  # mid-frame. Each departure is a fresh event (profile `away` has suppress_hours 0);
+  # dedup against flapping comes from the sensor's own delay_off.
+  - id: frigate_scene_check_away
+    alias: "Ronda — saída de casa (portões)"
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.family_present
+        from: "on"
+        to: "off"
+    condition:
+      - condition: state
+        entity_id: input_boolean.frigate_scene_check_enabled
+        state: "on"
+      - condition: state
+        entity_id: input_boolean.frigate_scene_check_away
+        state: "on"
+    action:
+      - action: shell_command.frigate_scene_check
+        data:
+          profile: away
 
   # Buttons deliberately skip the `enabled` condition — an explicit press always works.
   - id: frigate_scene_check_manual

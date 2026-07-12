@@ -56,6 +56,10 @@ profiles:
     checks: [varal, objetos]
     suppress_hours: 3        # chuva dá urgência: re-alerta mesmo se a ronda noturna já avisou
     confirm_positives: true
+  away:
+    checks: [portoes]
+    suppress_hours: 0        # cada saída é um evento novo — sempre avisa se há portão aberto
+    confirm_positives: true
   manual:
     checks: [varal, portoes, objetos]
     suppress_hours: 0        # botão manual sempre responde
