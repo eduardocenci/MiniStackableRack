@@ -6,10 +6,13 @@ reachable **only from devices on the Tailscale network** — never from the LAN 
 the public internet.
 
 > **Status: DEPLOYED & VERIFIED** (2026-07-12) at `/volume1/docker/copyparty/`
-> on `ply-nas-ds918plus`, serving the dedicated `copyparty` DSM share
-> (`/volume1/copyparty`, created via `synoshare --add`). Verified end-to-end
-> over the tailnet: auth-gated listing, PUT/GET/DELETE round-trip, WebDAV on,
-> anonymous denied.
+> on `ply-nas-ds918plus`, serving ALL user shares: `/` = dedicated `copyparty`
+> share (uploads; created via `synoshare --add`), plus `/shared`, `/homes`,
+> `/video`, `/NetBackup`, `/Plex`, and `/surveillance` (read-only). Excluded:
+> `PlexMediaServer` (app internals) and `docker` (holds this deploy's secrets).
+> Verified end-to-end over the tailnet: every volume auth-gated and listable as
+> `ed`, PUT/GET/DELETE round-trip, WebDAV on, anonymous denied, surveillance
+> write-blocked (403).
 
 > **Which NAS:** the `ply-nas-ds918plus` (Synology DS918+, DSM 7.1) in the PLY
 > rack — the only Synology NAS in the fleet (see `systemarchitecture.excalidraw`).

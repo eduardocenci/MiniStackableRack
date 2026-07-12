@@ -38,11 +38,19 @@ services:
       # copyparty.conf (and the gitignored copyparty.local.conf, if present)
       # are picked up automatically.
       - ./:/cfg:z
-      # DSM shared folder(s) → the served data root. Adjust the left side to the
-      # real share path(s) on the NAS (e.g. /volume1/files, /volume2/media).
-      # Add more lines and matching [/url] volumes in copyparty.conf to expose
-      # additional shares.
-      - /volume1/copyparty:/w:z
+      # DSM shared folders → served tree. Binding each share individually (vs
+      # mounting /volume1 wholesale) keeps @appdata/@database/etc system dirs
+      # and deliberately-excluded shares unreachable even inside the container.
+      # Excluded: PlexMediaServer (app internals), docker (holds this deploy's
+      # secrets — serving it would expose copyparty.local.conf via the web UI).
+      # Each mount needs a matching [/url] volume in copyparty.conf.
+      - /volume1/copyparty:/w:z                  # root: upload/incoming share
+      - /volume1/shared:/w/shared:z
+      - /volume1/homes:/w/homes:z
+      - /volume1/video:/w/video:z
+      - /volume1/NetBackup:/w/NetBackup:z
+      - /volume1/Plex:/w/Plex:z
+      - /volume1/surveillance:/w/surveillance:ro # camera recordings: read-only
 
     environment:
       PYTHONUNBUFFERED: "1"
