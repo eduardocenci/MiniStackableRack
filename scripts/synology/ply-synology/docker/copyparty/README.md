@@ -1,13 +1,20 @@
 # Copyparty on the Synology NAS (Tailscale-only)
 
 [Copyparty](https://github.com/9001/copyparty) is a portable file server (web UI
-+ WebDAV + FTP). This deployment runs it in Docker on the Synology NAS via DSM's
-**Container Manager**, reachable **only from devices on the Tailscale network** —
-never from the LAN or the public internet.
++ WebDAV + FTP). This deployment runs it in Docker on the Synology NAS,
+reachable **only from devices on the Tailscale network** — never from the LAN or
+the public internet.
 
-> **Which NAS:** the `ply-nas-ds918plus` (Synology DS918+) in the PLY rack — the
-> only Synology NAS in the fleet (see `systemarchitecture.excalidraw`). Its DSM
-> WebUI is on `:5000`; Copyparty adds `:3923`, no conflict.
+> **Status: DEPLOYED & VERIFIED** (2026-07-12) at `/volume1/docker/copyparty/`
+> on `ply-nas-ds918plus`, serving the dedicated `copyparty` DSM share
+> (`/volume1/copyparty`, created via `synoshare --add`). Verified end-to-end
+> over the tailnet: auth-gated listing, PUT/GET/DELETE round-trip, WebDAV on,
+> anonymous denied.
+
+> **Which NAS:** the `ply-nas-ds918plus` (Synology DS918+, DSM 7.1) in the PLY
+> rack — the only Synology NAS in the fleet (see `systemarchitecture.excalidraw`).
+> DSM WebUI on `:5000`; Copyparty adds `:3923`, no conflict. The Docker package
+> ships compose **v1** — the command is `docker-compose`, not `docker compose`.
 
 ## Files
 
@@ -50,25 +57,27 @@ cat > copyparty.local.conf <<'EOF'
 EOF
 
 # 2) create the .env the compose reads (gitignored):
-#    - PLY_NAS_TAILSCALE_IP: from `tailscale ip -4`
+#    - BIND_IP: 127.0.0.1 for userspace tailscale (Synology default — see
+#      "Why it's tailnet-only" below), else the NAS 100.x Tailscale IP
 #    - PUID/PGID: from `id <the-dsm-user-that-owns-/volume1/copyparty>`
 cat > .env <<'EOF'
-PLY_NAS_TAILSCALE_IP=100.101.102.103
-PLY_COPYPARTY_PUID=1026
+PLY_COPYPARTY_BIND_IP=127.0.0.1
+PLY_COPYPARTY_PUID=1028
 PLY_COPYPARTY_PGID=100
 EOF
 
-# 3) start it
-sudo docker compose up -d
-sudo docker compose logs -f copyparty     # watch it come up
+# 3) start it (DSM Docker package = compose v1, hyphenated command)
+sudo docker-compose up -d
+sudo docker-compose logs -f copyparty     # watch it come up
 ```
 
-### Option B — DSM GUI (Container Manager)
+### Option B — DSM GUI
 
 1. Put this folder on the NAS (File Station) under `/volume1/docker/copyparty/`.
 2. Create `copyparty.local.conf` and `.env` beside the compose (see Option A).
-3. Container Manager → **Project** → **Create** → point at this folder → it
-   detects `docker-compose.yml` → **Build/Up**.
+3. DSM 7.1's **Docker** package UI has no compose-project support (that arrived
+   with Container Manager in DSM 7.2) — run Option A's `docker-compose up -d`
+   over SSH; the running container then shows up in the Docker UI.
 
 ## Access
 
@@ -78,18 +87,27 @@ From any device on the tailnet:
 http://ply-nas-ds918plus.<your-tailnet>.ts.net:3923
 ```
 
-or `http://100.101.102.103:3923`. Log in as `ed` with the password from
-`copyparty.local.conf`.
+or `http://100.110.80.51:3923`. Log in as `ed` with the password from
+`copyparty.local.conf` (mirrored in the repo-root `.env` as
+`PLY_COPYPARTY_PASSWORD`).
 
 - **WebDAV:** same URL — mount it in Finder / Windows Explorer / mobile apps.
 - **Mobile:** any WebDAV client, or just the web UI (it's mobile-friendly).
 
 ### Why it's tailnet-only
 
-`docker-compose.yml` publishes the port as `${PLY_NAS_TAILSCALE_IP}:3923:3923`,
-i.e. it binds **only** to the NAS's Tailscale interface. The LAN and WAN never
-see port 3923. If `PLY_NAS_TAILSCALE_IP` is unset, `docker compose up` fails
-loudly rather than defaulting to `0.0.0.0` — fail safe.
+Synology's Tailscale package runs in **userspace-networking mode** by default:
+there is no `tailscale0` interface, the 100.x IP is not assigned to any NIC
+(binding to it fails with `cannot assign requested address`), and `tailscaled`
+instead **proxies inbound tailnet connections to `127.0.0.1`** on the same port.
+So the container binds `${PLY_COPYPARTY_BIND_IP}` = `127.0.0.1:3923`:
+
+- tailnet client → `100.110.80.51:3923` → tailscaled → `127.0.0.1:3923` ✓
+- LAN/WAN client → `192.168.0.10:3923` → nothing listening ✗ (by design)
+
+If Tailscale is ever switched to TUN mode (a `tailscale0` interface appears),
+set `PLY_COPYPARTY_BIND_IP` to the NAS's 100.x IP instead. If the var is unset,
+`docker-compose up` fails loudly rather than defaulting to `0.0.0.0` — fail safe.
 
 > **Public access?** Not enabled by design. If you ever want it reachable
 > outside the tailnet, prefer `tailscale serve` (HTTPS inside the tailnet) or,
@@ -98,11 +116,11 @@ loudly rather than defaulting to `0.0.0.0` — fail safe.
 
 ## Updates
 
-Container Manager does not auto-pull. To update Copyparty:
+Nothing auto-pulls. To update Copyparty:
 
 ```sh
 cd /volume1/docker/copyparty
-sudo docker compose pull && sudo docker compose up -d
+sudo docker-compose pull && sudo docker-compose up -d
 ```
 
 Optionally automate it with **DSM → Control Panel → Task Scheduler** (a

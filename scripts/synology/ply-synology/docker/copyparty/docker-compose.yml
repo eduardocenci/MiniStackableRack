@@ -22,11 +22,16 @@ services:
     user: "${PLY_COPYPARTY_PUID:-1026}:${PLY_COPYPARTY_PGID:-100}"
 
     ports:
-      # host_ip:host_port:container_port — bind ONLY to the NAS Tailscale IP so
-      # the service is tailnet-only. Set PLY_NAS_TAILSCALE_IP in the local .env
-      # (get it with `tailscale ip -4` on the NAS). Compose errors out with the
-      # message below if it is unset — fail safe, never accidentally 0.0.0.0.
-      - "${PLY_NAS_TAILSCALE_IP:?set PLY_NAS_TAILSCALE_IP in the .env beside this compose (run: tailscale ip -4 on the NAS)}:3923:3923"
+      # host_ip:host_port:container_port — tailnet-only binding. Which IP to use
+      # depends on the Tailscale mode on the NAS (check: `ip addr | grep tailscale0`):
+      #   - userspace-networking (Synology package DEFAULT, no tailscale0 iface):
+      #     bind 127.0.0.1 — tailscaled proxies inbound tailnet connections to
+      #     localhost, and the LAN can't reach a loopback bind. VERIFIED on
+      #     ply-nas-ds918plus.
+      #   - TUN mode (tailscale0 iface exists): bind the NAS Tailscale 100.x IP.
+      # Either way the LAN/WAN never see :3923. Compose errors out if the var is
+      # unset — fail safe, never accidentally 0.0.0.0.
+      - "${PLY_COPYPARTY_BIND_IP:?set PLY_COPYPARTY_BIND_IP in the .env beside this compose (127.0.0.1 for userspace tailscale, else the NAS 100.x IP)}:3923:3923"
 
     volumes:
       # This folder → /cfg. Copyparty auto-loads every *.conf here, so

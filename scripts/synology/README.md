@@ -21,13 +21,26 @@ PLY_NAS_SSH_PW=...        # for paramiko password auth
 PLY_NAS_SSH_KEY=gitignore/ply-nas_id_ed25519
 ```
 
-- **Key auth (preferred):** plain `ssh -i <key> $PLY_NAS_SSH_LOGIN@ply-nas-ds918plus '<cmd>'`
-  is fully non-interactive.
-- **Password auth (works today):** use Python `paramiko` — `plink`/`sshpass` are
-  NOT installed on the Claude host (see CLAUDE.md → Remote Access).
-- **Docker needs root:** run docker via `sudo` (pipe the password from `.env` to
-  `sudo -S`), or install the one-time sudoers drop-in below to make it
-  passwordless.
+- **Password auth (the working path):** use Python `paramiko` — `plink`/`sshpass`
+  are NOT installed on the Claude host (see CLAUDE.md → Remote Access). A ready
+  helper pattern: connect with `look_for_keys=False`, `exec_command`, and for
+  root pipe the password to `sudo -S -p ''`.
+- **Key auth (pending):** a keypair exists at `gitignore/ply-nas_id_ed25519`,
+  but installing the pubkey into `authorized_keys` needs an explicitly-named
+  user authorization (the permission classifier blocks it as a persistent
+  access grant). Once installed, plain
+  `ssh -i <key> $PLY_NAS_SSH_LOGIN@ply-nas-ds918plus '<cmd>'` is fully
+  non-interactive.
+- **Docker needs root:** pipe the password to `sudo -S`. The sudoers drop-in
+  below (also pending explicit authorization) would make it passwordless.
+- **Verified facts (2026-07-12):** user `globalnet` uid=1028 gid=100(users),
+  member of `administrators`; sudo works; DSM 7.1; Docker 20.10.3 with
+  docker-compose **v1** (1.28.5) — command is `docker-compose`, and it lives in
+  `/usr/local/bin` (not in the non-login SSH PATH: use full paths).
+- **Git Bash gotcha on the Claude host:** a remote command string starting with
+  `/` (e.g. `/usr/syno/sbin/synoshare ...`) can get MSYS path-converted into a
+  `C:/Program Files/...` path before reaching SSH. Export
+  `MSYS_NO_PATHCONV=1` before such calls.
 
 ## One-time setup (already done / how to redo)
 
@@ -36,16 +49,14 @@ DSM → Control Panel → Terminal & SNMP → **Enable SSH service** (port 22).
 Status: **done** (port 22 confirmed open over Tailscale).
 
 ### 2. SSH user
-DSM only permits SSH for users in the **administrators** group. Either reuse the
-main admin account, or (cleaner) create a dedicated one so LLM access can be
-audited/revoked independently:
+Status: **done** — the `globalnet` account (uid 1028, `administrators` member)
+is the LLM SSH user; credentials in `.env` (`PLY_NAS_SSH_LOGIN` /
+`PLY_NAS_SSH_PW`).
 
-1. DSM → Control Panel → User & Group → **Create** → e.g. `claude`
-2. Add to group **administrators** (required for SSH)
-3. Deny access to all shared folders except the ones it must manage
-   (e.g. `copyparty`, `docker`) — admin group membership does NOT auto-grant
-   share access; per-share permissions still apply
-4. Put login + password into `.env` (`PLY_NAS_SSH_LOGIN` / `PLY_NAS_SSH_PW`)
+Background: DSM only permits SSH for users in the **administrators** group. To
+recreate or replace the user: DSM → Control Panel → User & Group → create it,
+add to `administrators`, deny the shares it must not touch (admin membership
+does NOT auto-grant share access), and update `.env`.
 
 ### 3. Key auth (upgrade from password — DSM has quirks)
 
