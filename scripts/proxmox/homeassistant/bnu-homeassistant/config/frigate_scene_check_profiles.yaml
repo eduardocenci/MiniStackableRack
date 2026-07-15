@@ -11,6 +11,21 @@
 #            verificação — o recorte comparado é garantidamente o objeto certo.
 #            Coordenadas medidas sobre os baselines de 2026-07-06/08; refaça se a
 #            câmera for reposicionada. Valide com: ...py selftest <camera>.
+#   state_cues: (opcional, por câmera) pistas ESTRUTURAIS de como cada estado do objeto
+#            aparece nesta câmera — injetadas no prompt do gate de exemplares. Escreva o
+#            que distingue os estados independente de luz/hora (formas, molduras, frestas).
+#
+# Exemplares de estado (gate de exemplares): quadros REAIS dos dois estados do objeto,
+#   em /config/frigate_scene_exemplars/<camera>__<check>__{normal,anomaly}{_day,_night,}.jpg
+#   (quadro INTEIRO na geometria do latest.jpg; o gate recorta com a mesma região).
+#   Quando o par existe, o gate deixa de perguntar "mudou vs referência?" e passa a
+#   classificar a cena atual entre os dois gabaritos (modelo OPENAI_GATE_MODEL).
+#   Caso 2026-07-15 (porta da lavanderia): o baseline diurno foi capturado com a porta
+#   ABERTA — verdict e gate comparavam aberto-vs-aberto e SUPRIMIRAM uma porta realmente
+#   aberta; à noite, o IR faz a porta fechada parecer um vão (FPs crônicos). Bench sobre
+#   os quadros reais: gate exemplar + cues + gpt-4.1 = 15/18 (12/12 FPs refutados);
+#   gpt-4.1-mini = 4/18. Exemplares capturados: normal = 2026-07-14 16:27 (fechada),
+#   anomaly = 2026-07-15 08:27 (aberta, confirmada pelo Eduardo).
 # profiles:  quais checagens rodam em cada gatilho.
 #   suppress_hours:    não repetir o MESMO achado (câmera+checagem) dentro desta
 #                      janela, por perfil (0 = sempre notifica).
@@ -39,6 +54,16 @@ checks:
       fundos_overview: [395, 165, 595, 585]     # portas da lavanderia/garagem nos fundos
       # frente_pedestres / frente_garagem: sem portão claramente visível no quadro —
       # sem âncora, seguem com localização por modelo (comportamento anterior).
+    state_cues:
+      # Redigidas a partir dos quadros reais de 2026-07-14/15 (ver nota no cabeçalho).
+      fundos_overview: |
+        Pistas específicas deste local (duas portas: GARAGEM à esquerda, LAVANDERIA no centro):
+        - Porta FECHADA: a folha de madeira escura preenche o vão por inteiro — nota-se a JANELA
+          (vidro com moldura) na metade superior da folha e madeira contínua até a soleira.
+        - Porta ABERTA: o vão vira um buraco escuro uniforme SEM a janela da folha; costuma haver
+          uma fresta de luz vertical na lateral do batente e o capacho/piso interno visível na base.
+        - À noite (infravermelho) a janela da folha fechada pode refletir ou brilhar; um vão aberto
+          não tem moldura de janela nenhuma.
   objetos:
     label: "objetos deixados fora"
     cameras: [frente_overview, frente_garagem, lateral_direita, lateral_esquerda, fundos_overview]

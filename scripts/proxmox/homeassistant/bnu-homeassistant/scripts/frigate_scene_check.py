@@ -55,6 +55,11 @@ OLLAMA_HOST      = "10.1.1.50"  # bnu-proxmox LAN IP — socat proxy forwards to
 OLLAMA_PORT      = 11434
 OLLAMA_MODEL     = "qwen3-vl:8b"
 OPENAI_MODEL     = "gpt-4.1-mini"  # vision-capable, NON-reasoning — immune to the thinking runaway
+# Exemplar gate only (see GATE_EXEMPLAR_PROMPT): discriminating a dark closed door from a
+# dark open doorway is beyond 4.1-mini — benched 2026-07-15 on real fundos_overview frames:
+# mini 4/18 vs full 15/18 (all 12 closed-door FPs refuted, clean open-door TP confirmed 3/3).
+# Only fires on region-anchored findings that have exemplars (~a few calls/night).
+OPENAI_GATE_MODEL = "gpt-4.1"
 # Which backend answers the verdict first; the other is the fallback. Unlike the digest (rich
 # narrative, runs on every Frigate event → local GPU to avoid cloud cost), this is a BINARY
 # verdict at low frequency (~5 runs/night). qwen3-vl's thinking phase can't be reliably disabled
@@ -72,6 +77,8 @@ PROMPT_FILE      = "/config/frigate_scene_check_prompt.txt"  # user-editable, fa
 PROPERTY_CTX     = "/config/frigate_property_context.txt"
 BASELINES_DIR    = "/config/frigate_scene_baselines"     # scene-check ground truth ("all clear")
 DIGEST_BASELINES_DIR = "/config/frigate_baselines"       # digest baselines double as fallback anchors
+EXEMPLARS_DIR    = "/config/frigate_scene_exemplars"     # ground-truth STATE exemplars for the
+                                                         # exemplar gate (see load_state_exemplars)
 SNAPSHOT_H       = 720   # latest.jpg height; bump per camera only if a check underperforms
 DAY_START        = 6     # 06:00 — matches frigate_digest.py's day/night split
 DAY_END          = 20    # 20:00
@@ -248,6 +255,31 @@ def load_reference(camera: str, is_night: bool) -> tuple[bytes, str] | None:
                 with open(path, "rb") as f:
                     return f.read(), path
     return None
+
+
+def load_state_exemplars(camera: str, check_id: str, is_night: bool) -> tuple[bytes, bytes] | None:
+    """(normal_bytes, anomaly_bytes) ground-truth STATE pair for a camera+check, or None.
+
+    Full frames in EXEMPLARS_DIR named {camera}__{check}__normal*.jpg / __anomaly*.jpg —
+    e.g. fundos_overview__portoes__anomaly_day.jpg is a REAL capture of the laundry door
+    open (2026-07-15). The gate crops them with the same region box as the current
+    snapshot, so they must come from the same camera framing (latest.jpg geometry).
+    Day/night ladder with cross-fallback: a day exemplar still anchors a night gate —
+    GATE_EXEMPLAR_PROMPT compares STRUCTURAL state, not lighting. Both states must
+    resolve, else None (a lone exemplar can't anchor the A/B comparison)."""
+    suffix = "_night" if is_night else "_day"
+    other = "_day" if is_night else "_night"
+    pair: list[bytes] = []
+    for state in ("normal", "anomaly"):
+        for suf in (suffix, other, ""):
+            path = os.path.join(EXEMPLARS_DIR, f"{camera}__{check_id}__{state}{suf}.jpg")
+            if os.path.exists(path):
+                with open(path, "rb") as f:
+                    pair.append(f.read())
+                break
+        else:
+            return None
+    return pair[0], pair[1]
 
 
 # ── Prompt ────────────────────────────────────────────────────────────────────
@@ -433,7 +465,7 @@ def call_ollama(prompt: str, images: list[bytes]) -> tuple[str | None, dict]:
 
 # ── OpenAI fallback (from frigate_digest.py:998) ──────────────────────────────
 def call_openai(prompt: str, images: list[bytes], api_key: str,
-                detail: str = "low") -> str | None:
+                detail: str = "low", model: str = OPENAI_MODEL) -> str | None:
     content: list[dict] = [{"type": "text", "text": prompt}]
     for img_bytes in images:
         b64 = base64.b64encode(img_bytes).decode()
@@ -442,7 +474,7 @@ def call_openai(prompt: str, images: list[bytes], api_key: str,
             "image_url": {"url": f"data:image/jpeg;base64,{b64}", "detail": detail},
         })
     payload = {
-        "model":       OPENAI_MODEL,
+        "model":       model,
         "messages":    [{"role": "user", "content": content}],
         "max_tokens":  400,
         "temperature": 0.3,
@@ -467,14 +499,15 @@ def call_openai(prompt: str, images: list[bytes], api_key: str,
 
 # ── Shared LLM dispatch (OpenAI primary, Ollama fallback — no model mixing) ────
 def ask_llm(prompt: str, images: list[bytes], secrets: dict,
-            detail: str = "low") -> tuple[str | None, str]:
+            detail: str = "low", openai_model: str = OPENAI_MODEL) -> tuple[str | None, str]:
     """One VLM pass with the configured primary backend, the other as fallback.
     Returns (text_or_None, backend_label). Used by the verdict, the grounding call
-    and the gate so all three follow the same LLM_PRIMARY policy."""
+    and the gate so all three follow the same LLM_PRIMARY policy. `openai_model`
+    lets the exemplar gate upgrade to OPENAI_GATE_MODEL without touching the rest."""
     api_key = secrets.get("openai_api_key", "")
 
     def _openai():
-        return (call_openai(prompt, images, api_key, detail), "openai") if api_key else (None, "openai")
+        return (call_openai(prompt, images, api_key, detail, openai_model), "openai") if api_key else (None, "openai")
 
     def _ollama():
         text, _stats = call_ollama(prompt, images)
@@ -559,6 +592,37 @@ REGRAS:
 - Diferenças de iluminação, brilho, sombra, reflexo, molhado vs seco, ruído de imagem e
   carimbo de hora NÃO são mudanças → confirmado:false.
 - Se o objeto aparenta o MESMO estado nos dois recortes → confirmado:false.
+- Na MENOR dúvida, responda confirmado:false.
+Responda SOMENTE com JSON válido: {"confirmado": true, "motivo": "curto e factual"}"""
+
+# Exemplar variant: when a REAL capture of both states exists (load_state_exemplars), the
+# gate stops asking "did it change vs the reference?" and instead classifies the current
+# crop against two ground-truth anchors of THIS object on THIS camera. Added 2026-07-15
+# after the laundry-door incident: the day baseline itself had the door OPEN, so both the
+# verdict and the ref-vs-current gates were comparing open-vs-open and suppressed a REAL
+# open door; conversely, night IR makes the closed door read as an opening (chronic FPs).
+# The A/B-classification framing survived both failure modes in the bench (15/18 with
+# OPENAI_GATE_MODEL; all 12 closed-door FPs refuted). __CUES__ receives the per-camera
+# `state_cues` text from the profiles file ("" when absent).
+GATE_EXEMPLAR_PROMPT = """\
+Você recebe TRÊS recortes da MESMA região de uma câmera de segurança FIXA (mesmo
+enquadramento), mostrando o MESMO objeto verificado:
+1) ESTADO NORMAL — registro real do objeto em estado normal ("tudo certo": porta/portão
+   fechado, varal vazio).
+2) ESTADO ANORMAL — registro real e CONFIRMADO da anomalia verificada neste mesmo objeto.
+3) ATUAL — a cena agora.
+Um sistema automático SUSPEITOU desta mudança na cena ATUAL:
+  "__DESC__"
+__CUES__
+Sua tarefa: decidir se, na imagem ATUAL, o objeto está no estado da imagem 1 (NORMAL) ou
+da imagem 2 (ANORMAL). O padrão é "confirmado": false — só confirme se a ATUAL mostrar
+claramente o mesmo estado da imagem 2 (ANORMAL).
+REGRAS:
+- Compare o ESTADO físico do objeto (as pistas estruturais), nunca iluminação, cor,
+  sombra, nitidez ou horário — os três recortes podem ser de momentos e condições de luz
+  diferentes (dia colorido vs noite infravermelho P&B).
+- Objetos na frente (varais, roupas, móveis) podem ocultar parte da cena — julgue pelo
+  que estiver visível.
 - Na MENOR dúvida, responda confirmado:false.
 Responda SOMENTE com JSON válido: {"confirmado": true, "motivo": "curto e factual"}"""
 
@@ -672,13 +736,33 @@ def parse_gate(text: str) -> bool | None:
 def gate_finding(reference: bytes, current: bytes, box: list[float],
                  description: str, secrets: dict,
                  pad: float = BBOX_PAD_FRAC,
-                 state_check: bool = False) -> tuple[bool, str]:
+                 state_check: bool = False,
+                 exemplars: tuple[bytes, bytes] | None = None,
+                 cues: str = "") -> tuple[bool, str]:
     """Focused crop compare: is the finding REAL, ignoring weather/light? Returns
     (keep, note). Fails OPEN (keep=True) on any infra hiccup. `state_check=True`
     (region-anchored findings) judges a STATE change of the framed object instead
-    of new-object presence — the object itself appears in both crops."""
-    ref_c = _crop(reference, box, pad)
+    of new-object presence — the object itself appears in both crops.
+
+    `exemplars=(normal, anomaly)` upgrades the state gate to an A/B classification
+    against real captures of both states (GATE_EXEMPLAR_PROMPT + OPENAI_GATE_MODEL);
+    `cues` is the per-camera state_cues text injected into that prompt. Falls back
+    to the ref-vs-current gate when an exemplar crop fails."""
     cur_c = _crop(current, box, pad)
+    if exemplars and cur_c:
+        norm_c = _crop(exemplars[0], box, pad)
+        anom_c = _crop(exemplars[1], box, pad)
+        if norm_c and anom_c:
+            prompt = (GATE_EXEMPLAR_PROMPT
+                      .replace("__DESC__", description)
+                      .replace("__CUES__", cues.strip()))
+            text, backend = ask_llm(prompt, [norm_c, anom_c, cur_c], secrets,
+                                    detail="high", openai_model=OPENAI_GATE_MODEL)
+            real = parse_gate(text or "")
+            if real is None:
+                return True, f"gate exemplar inconclusivo ({backend}) → mantido"
+            return real, f"{'confirmado' if real else 'falso positivo'} (exemplar, {backend})"
+    ref_c = _crop(reference, box, pad)
     if not ref_c or not cur_c:
         return True, "crop indisponível → mantido"
     prompt = GATE_STATE_PROMPT if state_check else GATE_PROMPT
@@ -893,12 +977,14 @@ def selftest(cam: str, secrets: dict) -> None:
 
     # Region anchors — same wiring as _run_inner, so the selftest validates them too.
     region_by_check: dict[str, list[float]] = {}
+    cues_by_check: dict[str, str] = {}
     markers: list[tuple[list[float], str]] = []
     for c in checks:
         rbox = (c.get("regions") or {}).get(cam)
         if isinstance(rbox, list) and len(rbox) == 4:
             color, color_pt = REGION_COLORS[len(markers) % len(REGION_COLORS)]
             region_by_check[c["id"]] = [float(v) for v in rbox]
+            cues_by_check[c["id"]] = str((c.get("state_cues") or {}).get(cam, ""))
             markers.append(([float(v) for v in rbox], color))
             c["_color_pt"] = color_pt
     ref_for_verdict = draw_region_markers(ref_img, markers) if markers else ref_img
@@ -920,9 +1006,11 @@ def selftest(cam: str, secrets: dict) -> None:
         if region:
             box = region
             rc, cc = _crop(ref_img, box, REGION_PAD_FRAC), _crop(current, box, REGION_PAD_FRAC)
+            exemplars = load_state_exemplars(cam, cid, is_night)
             keep, note = gate_finding(ref_img, current, box, desc, secrets,
-                                      pad=REGION_PAD_FRAC, state_check=True)
-            note = f"região configurada: {note}"
+                                      pad=REGION_PAD_FRAC, state_check=True,
+                                      exemplars=exemplars, cues=cues_by_check.get(cid, ""))
+            note = f"região configurada{' + exemplar' if exemplars else ''}: {note}"
         else:
             box = request_bbox(current, desc, secrets)
             if box is None:
@@ -993,6 +1081,7 @@ def _run_inner(profile: str, secrets: dict, debug: bool) -> None:
         # color (used by build_prompt) and draw the markers on a COPY of the reference
         # for the verdict call. The CLEAN ref_img keeps serving the crop-compare gate.
         region_by_check: dict[str, list[float]] = {}
+        cues_by_check: dict[str, str] = {}
         markers: list[tuple[list[float], str]] = []
         for c in checks:
             c.pop("_color_pt", None)
@@ -1000,6 +1089,7 @@ def _run_inner(profile: str, secrets: dict, debug: bool) -> None:
             if isinstance(box, list) and len(box) == 4:
                 color, color_pt = REGION_COLORS[len(markers) % len(REGION_COLORS)]
                 region_by_check[c["id"]] = [float(v) for v in box]
+                cues_by_check[c["id"]] = str((c.get("state_cues") or {}).get(cam, ""))
                 markers.append(([float(v) for v in box], color))
                 c["_color_pt"] = color_pt
         ref_for_verdict = draw_region_markers(ref_img, markers) if markers else ref_img
@@ -1051,7 +1141,9 @@ def _run_inner(profile: str, secrets: dict, debug: bool) -> None:
                     # gate is guaranteed to examine the right object (not, say, a
                     # window across the yard). Tighter pad: the region is generous.
                     keep, note = gate_finding(ref_img, current, region, desc, secrets,
-                                              pad=REGION_PAD_FRAC, state_check=True)
+                                              pad=REGION_PAD_FRAC, state_check=True,
+                                              exemplars=load_state_exemplars(cam, cid, is_night),
+                                              cues=cues_by_check.get(cid, ""))
                     note = f"região configurada: {note}"
                     box = region
                 else:
