@@ -1,0 +1,27 @@
+# waha-listener rules — one entry per WhatsApp automation.
+# ${VARS} expand from the container environment (see docker-compose.yml).
+#
+# Rule fields:
+#   name         rule id — also the pending-queue folder name
+#   chat         chat JID to watch ("<id>@g.us" for groups)
+#   from_me      true = only messages sent by the WAHA account itself (wake words)
+#   participant  optional sender JID filter within a group
+#   pattern      case-insensitive regex the message body must match
+#   modes        {mode-name: extra-regex} — first match wins, else "default"
+#   notify_url   optional URL POSTed on match (job JSON, X-Listener-Token header)
+#
+# Chats referenced by rules are archived automatically. Add extra chats to
+# archive (without any rule) under archive_chats; "*" archives everything.
+
+archive_chats: []
+
+rules:
+  # Casa Hangar finances — Eduardo's wake word in the obra group triggers a
+  # headless Claude run on the PC (see scripts/finance_trigger.py).
+  - name: finance
+    chat: "120363402090094156@g.us"
+    from_me: true
+    pattern: "casa[,\\s]+financeiro"
+    modes:
+      aprovado: "aprovado"
+    notify_url: "${FINANCE_NOTIFY_URL}"
