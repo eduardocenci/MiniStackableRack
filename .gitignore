@@ -3,6 +3,9 @@
 .env.*
 gitignore/
 
+# Copyparty — real account passwords live here on the NAS, never committed
+copyparty.local.conf
+
 # Python
 __pycache__/
 

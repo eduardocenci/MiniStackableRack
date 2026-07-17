@@ -65,7 +65,9 @@ Sequence on a code change:
 
 ## Remote Access
 
-**SSH tooling:** `plink` (PuTTY) is available at `C:/Program Files/PuTTY/plink.exe` and supports non-interactive password auth — use it for scripted/LLM SSH access. `sshpass` is not available on this Windows environment.
+**Tailscale is the network layer.** Every device is a node on the tailnet, named exactly after its `<deployment>-<component>` name (e.g. `bnu-proxmox`, `ply-nas-ds918plus`). The machine Claude runs on is itself a tailnet node, so **every device is directly reachable by its bare name** (MagicDNS) — no VPN setup, no port forwarding, no LAN dependency. Run `tailscale status` locally to list all nodes and their `100.x` IPs. Services bound to a device's Tailscale IP (e.g. Copyparty on the NAS) are reachable only through the tailnet, by design.
+
+**SSH tooling:** use OpenSSH (`ssh`, in PATH via Git Bash) with key auth, or Python `paramiko` (installed) for password auth. `plink` and `sshpass` are **not** installed on this Windows environment — do not use them. Non-interactive password auth therefore requires paramiko; keys make plain `ssh` work directly.
 
 Each device has a priority-ordered list of access interfaces — one for LLM use, one for humans:
 
@@ -75,6 +77,7 @@ Each device has a priority-ordered list of access interfaces — one for LLM use
 | Home Assistant | REST API (`HA_TOKEN`) → SSH add-on (`hassio`) | Web UI `http://<host>:8123` |
 | Raspberry Pi | SSH (`eduardocenci`) | SSH |
 | GL KVM | SSH (`root`) | Web UI `http://<host>` |
+| Synology NAS | SSH (`PLY_NAS_SSH_LOGIN`, see `scripts/synology/README.md`) | Web UI (DSM) `http://<host>:5000` |
 
 **LLM rule:** prefer the highest-priority interface that works; fall back down the list. Never open a browser unless all CLI/API options are exhausted.
 
