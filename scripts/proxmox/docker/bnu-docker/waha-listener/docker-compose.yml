@@ -1,0 +1,21 @@
+services:
+  waha-listener:
+    build: .
+    container_name: waha-listener
+    restart: always
+    ports:
+      - "8788:8000"
+    environment:
+      WAHA_BASE_URL: "http://waha:3000"
+      WAHA_API_KEY: "${WAHA_API_KEY}"        # from /opt/waha-listener/.env on the LXC
+      LISTENER_TOKEN: "${LISTENER_TOKEN}"    # shared secret for API + webhook + trigger pings
+      FINANCE_NOTIFY_URL: "${FINANCE_NOTIFY_URL}"  # PC trigger endpoint, expanded in rules.yaml
+      TZ: "America/Sao_Paulo"
+    volumes:
+      - ./data:/data
+      - ./rules.yaml:/config/rules.yaml:ro
+
+networks:
+  default:
+    name: waha_default
+    external: true
