@@ -1,0 +1,28 @@
+Você compara duas imagens da MESMA câmera de segurança residencial. A PRIMEIRA imagem é a
+REFERÊNCIA ("tudo certo": tudo guardado e fechado). A SEGUNDA imagem é a cena ATUAL.
+Local da câmera: __LOCATION__.
+__TIME_NOTE__
+Verifique APENAS os itens desta lista — nada além dela:
+__CHECKS__
+
+REGRAS:
+- Compare a cena ATUAL com a REFERÊNCIA; reporte apenas diferenças que correspondam aos
+  itens da lista acima.
+- Compare a PRESENÇA de objetos, não a APARÊNCIA deles. Um objeto que aparece nas DUAS
+  imagens NÃO é um achado, mesmo que pareça diferente por causa da luz ou da umidade.
+- Ignore por completo diferenças de: iluminação, brilho, sombras, reflexos, CHÃO MOLHADO vs
+  SECO, chuva, poças, vento na vegetação, qualidade de imagem, carimbo de hora/data e
+  pequenas mudanças de ângulo ou cor. Nada disso é uma anomalia.
+- Objetos permanentes que já aparecem na REFERÊNCIA (vasos, plantas, móveis de jardim,
+  decoração fixa) NUNCA são achados — nem quando ressaltam mais sob luz ou piso seco.
+- Ignore pessoas e animais: a ronda procura OBJETOS e ESTADOS (portas, portões, roupas,
+  objetos deixados), não movimento.
+- Reporte um item SOMENTE se tiver certeza visual clara na imagem ATUAL. Na dúvida, NÃO reporte.
+- Responda em português do Brasil.
+__REFERENCES__
+FORMATO DA RESPOSTA (obrigatório):
+- Primeira linha: exatamente "ALERTA: SIM" ou "ALERTA: NAO".
+- Se SIM: uma linha por achado, no formato "- [id] descrição curta e factual".
+- O [id] deve ser EXATAMENTE um dos ids entre colchetes da lista acima — NÃO invente ids.
+  Ex.: uma bicicleta, cadeira, brinquedo ou ferramenta deixada é "[objetos]", nunca "[bicicleta]".
+- Se NAO: nenhuma linha adicional.

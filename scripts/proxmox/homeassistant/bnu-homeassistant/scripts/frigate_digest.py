@@ -91,6 +91,13 @@ OLLAMA_MAX_ATTEMPTS = 3
 RECORDING_PAD_S  = 2     # small pad on each run's bounds (segment bounds already align to activity)
 REC_LOOKBACK_S   = 20    # fetch recording segments this far before the first detection…
 REC_LOOKAHEAD_S  = 120   # …and after the last, to catch activity Frigate stopped tracking early
+# A detection's start_time may predate the review by HOURS: a stationary tracked object (e.g.
+# a parked car) keeps the start_time from when it FIRST appeared, and when it finally moves it
+# re-activates inside a brand-new review. Detection starts earlier than this slack before the
+# review are ignored (the review start is used instead), so one re-activated object can't
+# stretch the digest span — and its video — back to mid-morning (seen 2026-07-12: a 13:43
+# digest spanning "10:03–13:36" with a 3.5 h-old clip).
+DET_START_SLACK_S = 300  # tolerate detection starts up to 5 min before their review
 REC_GAP_TOL_S    = 5     # gap between segments above which a new run begins (a recording hole)
 DAY_START        = 6     # 06:00
 DAY_END          = 20    # 20:00
@@ -1582,6 +1589,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     # The same per-detection fetch also carries identity: sub_label = face-recognized name
     # (e.g. "Silvana") and the detector label, feeding the names/soften features.
     for event in events:
+        review_start = event["start_ts"]   # review-item start, before detection enrichment
         starts: list[float] = []
         ends: list[float]   = []
         names: list[str]    = []
@@ -1589,7 +1597,16 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         for did in event["detections"]:
             m = fetch_event_meta(base, did)
             if m.get("start_time"):
-                starts.append(m["start_time"])
+                # Stationary objects re-activate carrying the start_time of when they FIRST
+                # appeared (hours ago) — trust the review for when THIS activity began:
+                # a detection start beyond DET_START_SLACK_S before the review is treated
+                # as the review start (neutral), so it can't stretch the digest span.
+                st = m["start_time"]
+                if st < review_start - DET_START_SLACK_S:
+                    log.info("Detection %s start %.0f predates review by %.0fs — clamping",
+                             did, st, review_start - st)
+                    st = review_start
+                starts.append(st)
             if m.get("end_time"):
                 ends.append(m["end_time"])
             if m.get("label"):

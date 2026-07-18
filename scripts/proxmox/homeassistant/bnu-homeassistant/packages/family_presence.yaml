@@ -29,6 +29,14 @@ input_boolean:
     name: "Mute Frigate digest when family home"
     icon: mdi:home-account
 
+input_text:
+  # Last presence state actually ANNOUNCED on WhatsApp ("on"/"off"). Written by the
+  # notify automation below; lets it dedup by CONTENT instead of filtering edges,
+  # so a template reload or HA restart can never swallow a real transition.
+  family_presence_last_announced:
+    name: "Family presence — last announced state"
+    icon: mdi:message-check
+
 rest_command:
   # Generic WhatsApp sender for bnu via the local WAHA (LXC 101 @ 10.1.1.126:3000).
   send_whatsapp_bnu:
@@ -52,10 +60,15 @@ automation:
         to: "off"
         id: left
     condition:
-      # Ignore startup transitions out of unknown/unavailable (avoids spurious alerts
-      # after an HA restart).
+      # Dedup by CONTENT, not by edge: announce only when the new state differs from
+      # the last state we actually announced. The old guard (from_state in on/off)
+      # silently ate a real arrival on 2026-07-12 — a YAML reload recreated the
+      # template sensor mid-arrival, so the edge looked like unavailable→on. With
+      # content dedup, reloads/restarts can neither swallow a transition (state
+      # differs → announces) nor spam duplicates (state matches → suppressed).
       - condition: template
-        value_template: "{{ trigger.from_state.state in ['on', 'off'] }}"
+        value_template: >
+          {{ states('input_text.family_presence_last_announced') != trigger.to_state.state }}
     action:
       - action: rest_command.send_whatsapp_bnu
         data:
@@ -64,3 +77,9 @@ automation:
             {{ '🏠 Casa Blumenau — a família chegou em casa.'
                if trigger.id == 'arrived'
                else '🚪 Casa Blumenau — casa vazia (a família saiu).' }}
+      # Stamp AFTER the send so a failed/skipped send retries on the next edge.
+      - action: input_text.set_value
+        target:
+          entity_id: input_text.family_presence_last_announced
+        data:
+          value: "{{ trigger.to_state.state }}"
