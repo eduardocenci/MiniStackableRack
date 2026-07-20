@@ -1,0 +1,91 @@
+# Ronda da Casa — perfis e checagens
+# Deploy to: /config/frigate_scene_check_profiles.yaml
+#
+# checks:    O QUE procurar e em QUAIS câmeras. O `id` (a chave) aparece no formato
+#            de resposta do LLM ("- [varal] ...") e na memória de supressão — não
+#            renomeie sem limpar /config/frigate_scene_check.state.json.
+#   regions: (opcional) ancora a checagem numa REGIÃO da imagem, por câmera:
+#            [x0, y0, x1, y1] normalizado 0-1000, origem no canto superior esquerdo.
+#            A região vira uma caixa colorida desenhada na REFERÊNCIA enviada ao LLM
+#            ("verifique apenas aqui") e substitui a localização por modelo no gate de
+#            verificação — o recorte comparado é garantidamente o objeto certo.
+#            Coordenadas medidas sobre os baselines de 2026-07-06/08; refaça se a
+#            câmera for reposicionada. Valide com: ...py selftest <camera>.
+#   state_cues: (opcional, por câmera) pistas ESTRUTURAIS de como cada estado do objeto
+#            aparece nesta câmera — injetadas no prompt do gate de exemplares. Escreva o
+#            que distingue os estados independente de luz/hora (formas, molduras, frestas).
+#
+# Exemplares de estado (gate de exemplares): quadros REAIS dos dois estados do objeto,
+#   em /config/frigate_scene_exemplars/<camera>__<check>__{normal,anomaly}{_day,_night,}.jpg
+#   (quadro INTEIRO na geometria do latest.jpg; o gate recorta com a mesma região).
+#   Quando o par existe, o gate deixa de perguntar "mudou vs referência?" e passa a
+#   classificar a cena atual entre os dois gabaritos (modelo OPENAI_GATE_MODEL).
+#   Caso 2026-07-15 (porta da lavanderia): o baseline diurno foi capturado com a porta
+#   ABERTA — verdict e gate comparavam aberto-vs-aberto e SUPRIMIRAM uma porta realmente
+#   aberta; à noite, o IR faz a porta fechada parecer um vão (FPs crônicos). Bench sobre
+#   os quadros reais: gate exemplar + cues + gpt-4.1 = 15/18 (12/12 FPs refutados);
+#   gpt-4.1-mini = 4/18. Exemplares capturados: normal = 2026-07-14 16:27 (fechada),
+#   anomaly = 2026-07-15 08:27 (aberta, confirmada pelo Eduardo).
+# profiles:  quais checagens rodam em cada gatilho.
+#   suppress_hours:    não repetir o MESMO achado (câmera+checagem) dentro desta
+#                      janela, por perfil (0 = sempre notifica).
+#   confirm_positives: achado positivo só alerta se confirmado numa 2ª foto ~20 s
+#                      depois (mata falsos positivos de um quadro só).
+
+checks:
+  varal:
+    label: "roupas no varal"
+    cameras: [fundos_overview]
+    instruction: >
+      Há roupas, toalhas ou tecidos pendurados no varal? Varal vazio ou apenas
+      pregadores NÃO é achado.
+    regions:
+      fundos_overview: [0, 480, 460, 1000]      # estrutura do varal, canto inferior esquerdo
+  portoes:
+    label: "portões/portas abertos"
+    cameras: [frente_principal, frente_pedestres, frente_garagem, fundos_overview]
+    instruction: >
+      Algum portão ou porta que aparece FECHADO na imagem de referência está
+      aberto ou entreaberto agora?
+    regions:
+      # 2026-07-11 22:07: a ronda apontou "portão da garagem aberto" olhando para a
+      # JANELA de cortina branca — estas âncoras prendem a checagem ao portão real.
+      frente_principal: [185, 140, 390, 480]    # portão da garagem (folhas de madeira ripada)
+      fundos_overview: [395, 165, 595, 585]     # portas da lavanderia/garagem nos fundos
+      # frente_pedestres / frente_garagem: sem portão claramente visível no quadro —
+      # sem âncora, seguem com localização por modelo (comportamento anterior).
+    state_cues:
+      # Redigidas a partir dos quadros reais de 2026-07-14/15 (ver nota no cabeçalho).
+      fundos_overview: |
+        Pistas específicas deste local (duas portas: GARAGEM à esquerda, LAVANDERIA no centro):
+        - Porta FECHADA: a folha de madeira escura preenche o vão por inteiro — nota-se a JANELA
+          (vidro com moldura) na metade superior da folha e madeira contínua até a soleira.
+        - Porta ABERTA: o vão vira um buraco escuro uniforme SEM a janela da folha; costuma haver
+          uma fresta de luz vertical na lateral do batente e o capacho/piso interno visível na base.
+        - À noite (infravermelho) a janela da folha fechada pode refletir ou brilhar; um vão aberto
+          não tem moldura de janela nenhuma.
+  objetos:
+    label: "objetos deixados fora"
+    cameras: [frente_overview, frente_garagem, lateral_direita, lateral_esquerda, fundos_overview]
+    instruction: >
+      Há objetos que NÃO aparecem na imagem de referência deixados no chão ou no
+      quintal — brinquedos, ferramentas, cadeiras, bicicletas? Ignore carros
+      estacionados, plantas e diferenças de luz e sombra.
+
+profiles:
+  night:
+    checks: [varal, portoes, objetos]
+    suppress_hours: 6        # uma notificação por noite, mesmo com 4 rondas horárias
+    confirm_positives: true
+  rain:
+    checks: [varal, objetos]
+    suppress_hours: 3        # chuva dá urgência: re-alerta mesmo se a ronda noturna já avisou
+    confirm_positives: true
+  away:
+    checks: [portoes]
+    suppress_hours: 0        # cada saída é um evento novo — sempre avisa se há portão aberto
+    confirm_positives: true
+  manual:
+    checks: [varal, portoes, objetos]
+    suppress_hours: 0        # botão manual sempre responde
+    confirm_positives: false
