@@ -54,6 +54,22 @@ detect:
 
 record:
   enabled: true
+  # mode "all" (default: motion) keeps EVERY segment inside an alert/detection window —
+  # motion-gated retention was dropping the tail of events (person/car still tracked but
+  # motion below threshold), which cut the digest's last clip short. post_capture 10 adds
+  # margin past the review end so departures aren't clipped mid-action.
+  alerts:
+    pre_capture: 5
+    post_capture: 10
+    retain:
+      days: 10
+      mode: all
+  detections:
+    pre_capture: 5
+    post_capture: 10
+    retain:
+      days: 10
+      mode: all
 
 snapshots:
   enabled: true
@@ -72,14 +88,12 @@ cameras:
     review:
       genai:
         enabled: true
-        activity_context_prompt: Analyze the these images from the {camera} 
-          security camera from my home. At the left side of the image is the 
-          house. Left side center portion there is a garage gate from the house,
-          at the left top side a pedestrian entrance to the back of the house 
-          through a gate. At the bottom left a pedestrian entrance through the 
-          main front doors of the home. At the right of the image is the main 
-          street. At the center of the image a pathway for both vehicles and 
-          pedestrians. Describe what vehicles, pedestrians or animals are doing.
+        activity_context_prompt: Analise estas imagens da câmera de segurança {camera} da minha casa. Use a descrição estruturada abaixo para interpretar a posição dos elementos na imagem.
+         Localização - visão geral da frente da casa, com a casa à esquerda e a rua à direita.
+         Layout - à esquerda fica a casa; no centro-esquerda fica o portão da garagem; no superior-esquerda fica a entrada de pedestres para os fundos, pelo portão na lateral direita da casa; no inferior-esquerda ficam as entradas de pedestres pelas portas principais da frente; à direita fica a rua; no centro fica a passagem compartilhada por veículos e pedestres.
+         Movimento - pessoa se deslocando para a DIREITA da imagem está SAINDO da propriedade em direção à rua; pessoa se deslocando para a ESQUERDA está CHEGANDO da rua em direção à casa. Só afirme direção de deslocamento (chegando/saindo/"em direção a") quando o movimento entre os frames mostrar isso claramente; na dúvida, descreva a pessoa caminhando pela passagem SEM afirmar direção.
+         Descreva o que os veículos, pedestres ou animais estão fazendo.
+         Se existem apenas veículo(s) na imagem e eles não mudarem de posição ao longo de todo vídeo, mencione isso (pode ser um falso positivo).
 
     motion:
       threshold: 29
@@ -104,12 +118,13 @@ cameras:
     review:
       genai:
         enabled: true
-        activity_context_prompt: Analyze the these images from the {camera} 
-          security camera from my home. Camera is mounted in the top of the 
-          front of the house, towards the street and the left side of the house.
-          There is a pedestrian pathway that leads to the main front door 
-          entrances at the bottom right of the image. The top portion of the 
-          image is the street, less priority.
+        activity_context_prompt: Analise estas imagens da câmera de segurança {camera} da minha casa. Use a descrição estruturada abaixo para interpretar a posição dos elementos na imagem.
+         Localização - câmera montada no telhado da frente, voltada para a rua e para o lado esquerdo da casa.
+         Layout - a diagonal do superior-esquerda para o inferior-direita é a passagem de pedestres da rua até as entradas principais da frente; a parte superior da imagem é a rua.
+         Movimento - pessoa se deslocando para o INFERIOR-DIREITA está CHEGANDO da rua em direção às portas da frente; pessoa se deslocando para o TOPO da imagem está SAINDO em direção à rua. Só afirme direção de deslocamento (chegando/saindo/"em direção a") quando o movimento entre os frames mostrar isso claramente; na dúvida, descreva a pessoa caminhando pela passagem SEM afirmar direção.
+         Prioridade - dê menor prioridade à rua, que aparece na parte superior da imagem.
+         Descreva o que os veículos, pedestres ou animais estão fazendo.
+         Se existem apenas veículo(s) na imagem e eles não mudarem de posição ao longo de todo vídeo, mencione isso (pode ser um falso positivo).
     ffmpeg:
       inputs:
         - path: rtsp://127.0.0.1:8554/frente_pedestres
@@ -135,14 +150,13 @@ cameras:
     review:
       genai:
         enabled: true
-        activity_context_prompt: Analyze the these images from the {camera} 
-          security camera from my home. Camera is mounted in the top of the 
-          front of the house, towards the street and the right side of the 
-          house. On the right side of the image there is a pedestrian pathway 
-          from the street to the main front door entrances at the bottom right 
-          of the image. At the left side of the image we have the vehicle 
-          pathway from the street to the garage. The top portion of the image is
-          the street, less priority of analysis.
+        activity_context_prompt: Analise estas imagens da câmera de segurança {camera} da minha casa. Use a descrição estruturada abaixo para interpretar a posição dos elementos na imagem.
+         Localização - câmera montada no telhado da frente, voltada para a rua e para o lado direito da casa.
+         Layout - à direita fica a passagem de pedestres, indo da rua no topo da imagem até as portas da frente no inferior-direita; à esquerda fica a passagem de veículos, indo da rua no topo da imagem até a garagem no lado esquerdo; a parte superior da imagem é a rua.
+         Movimento - pessoa ou veículo DESCENDO na imagem (da rua para as portas da frente ou para a garagem) está CHEGANDO; SUBINDO em direção ao topo da imagem está SAINDO em direção à rua. Só afirme direção de deslocamento (chegando/saindo/"em direção a") quando o movimento entre os frames mostrar isso claramente; na dúvida, descreva a pessoa caminhando pela passagem SEM afirmar direção.
+         Prioridade - dê menor prioridade à rua, que aparece na parte superior da imagem.
+         Descreva o que os veículos, pedestres ou animais estão fazendo.
+         Se existem apenas veículo(s) na imagem e eles não mudarem de posição ao longo de todo vídeo, mencione isso (pode ser um falso positivo).
     friendly_name: Frente Overview
     ffmpeg:
       inputs:
@@ -209,14 +223,12 @@ cameras:
     review:
       genai:
         enabled: true
-        activity_context_prompt: Analyze these images from the {camera} security
-          camera at the garage entrance. At the top of the image is the street. 
-          At the center of the image is the driveway. At the bottom left of the 
-          image is a pedestrian pathway through a gate on the right side of the 
-          house. At the bottom center/right of the image is the garage entrance 
-          door. If a car drives towards the camera and disappears it is driving 
-          inside the garage. If a car drives away from the camera it is driving 
-          to the street.
+        activity_context_prompt: Analise estas imagens da câmera de segurança {camera} na entrada da garagem. Use a descrição estruturada abaixo para interpretar a posição dos elementos na imagem.
+         Localização - câmera na entrada da garagem.
+         Layout - a parte superior da imagem é a rua; o centro é a entrada de veículos; o inferior-esquerda é a passagem de pedestres pelo portão na lateral direita da casa; o inferior-centro/direita corresponde à porta da garagem, que não fica visível na imagem.
+         Movimento - se um carro se aproxima da câmera e desaparece, ele está entrando na garagem; se um carro se afasta da câmera, ele está saindo da garagem em direção à rua.
+         Descreva o que os veículos, pedestres ou animais estão fazendo.
+         Se existem apenas veículo(s) na imagem e eles não mudarem de posição ao longo de todo vídeo, mencione isso (pode ser um falso positivo).
     motion:
       mask: 0.532,0,0.995,0.002,0.999,0.289
       threshold: 21
@@ -228,10 +240,11 @@ cameras:
     review:
       genai:
         enabled: true
-        activity_context_prompt: This camera mounted in the roof of the house at
-          it's right side, pointed towards the back of the house. Anyone walking
-          away from the camera is going towards the back of the house. Anyone 
-          walking towards the camera is walking to the front of the house.
+        activity_context_prompt: Analise estas imagens da câmera de segurança {camera} da minha casa. Use a descrição estruturada abaixo para interpretar a posição dos elementos na imagem.
+         Localização - câmera montada no telhado da lateral direita, apontada para os fundos da casa.
+         Movimento - pessoa ou animal se afastando da câmera está indo em direção aos fundos da casa; pessoa ou animal se aproximando da câmera está indo em direção à frente da casa.
+         Regra de contexto - se ao longo de todos os frames houver apenas uma pessoa andando no terço superior da imagem, interprete como circulação normal nos fundos da casa.
+         Descreva o que os pedestres ou animais estão fazendo.
     enabled: true
     friendly_name: Lateral Direita
     ffmpeg:
@@ -253,12 +266,10 @@ cameras:
     review:
       genai:
         enabled: true
-        activity_context_prompt: This camera is mounted at the back of the 
-          property, left corner, facing the back of the house. At the right of 
-          the image you can see the hallway along the left side of the house. At
-          the left side of the image you see the kitchen window and beneath it 
-          the bottled gas cylinders. At the bottom of the frame of the image 
-          there is a garden.
+        activity_context_prompt: Analise estas imagens da câmera de segurança {camera} da minha casa. Use a descrição estruturada abaixo para interpretar a posição dos elementos na imagem.
+         Localização - câmera montada nos fundos do terreno, no canto esquerdo, voltada para os fundos da casa; cobre a lateral esquerda da residência.
+         Layout - à direita fica o corredor ao longo do lado esquerdo da casa, em direção à frente; à esquerda ficam a janela da cozinha e, abaixo dela, os botijões de gás; na parte inferior fica o jardim, que não está visível no enquadramento.
+         Descreva o que os pedestres ou animais estão fazendo.
     ffmpeg:
       inputs:
         - path: rtsp://127.0.0.1:8554/lateral_esquerda
@@ -304,16 +315,11 @@ cameras:
     review:
       genai:
         enabled: true
-        activity_context_prompt: Analyze the these images from a security camera
-          from my home located at it's back. At the right side of the image 
-          there is a pathway to the left side of the house. At the Bottom right 
-          side of the image is a small garden. At the bottom left side of the 
-          image is a clothes hanger. At the top left side is a table obscured by
-          the tree, and to the left of it a cooking area and some trash cans. 
-          There are two entrance doors to the back of the house on the right 
-          side of the image, one more in the center of the image (door to 
-          laundry), another higher in the image (door to garage). Describe what 
-          a person or animal is doing in the images.
+        activity_context_prompt: Analise estas imagens da câmera de segurança {camera} da minha casa. Use a descrição estruturada abaixo para interpretar a posição dos elementos na imagem.
+         Localização - câmera localizada nos fundos da residência.
+         Layout - à direita fica a passagem para o lado esquerdo da casa, embora não esteja visível; no inferior-direita há um pequeno jardim; no inferior-esquerda há um varal de roupas; no superior-esquerda há uma mesa parcialmente encoberta por árvore e, à esquerda dela, a área de preparo de comida e lixeiras; no centro há duas portas de entrada para os fundos.
+         Portas - a porta mais central é a porta da lavanderia; a porta mais à esquerda é a porta da garagem.
+         Descreva o que uma pessoa ou animal está fazendo nas imagens.
   frente_campainha:
     lpr:
       enabled: false
@@ -322,8 +328,10 @@ cameras:
     review:
       genai:
         enabled: true
-        activity_context_prompt: This is the doorbell camera from the house, at 
-          the main entrance of the home in it's front.
+        activity_context_prompt: Analise estas imagens da câmera de segurança {camera} da minha casa. Use a descrição estruturada abaixo para interpretar a posição dos elementos na imagem.
+         Localização - câmera da campainha, instalada na entrada principal da frente da residência, voltada para o caminho sinuoso do jardim que leva à rua.
+         Movimento - pessoa se AFASTANDO da câmera (diminuindo ao longo dos frames) está SAINDO de casa em direção à rua; pessoa se APROXIMANDO da câmera (aumentando ao longo dos frames) está CHEGANDO da rua à entrada principal. Só afirme direção de deslocamento (chegando/saindo/"em direção a") quando a mudança entre os frames mostrar isso claramente; na dúvida, descreva o que a pessoa está fazendo SEM afirmar direção.
+         Descreva o que os veículos, pedestres ou animais estão fazendo.
     ffmpeg:
       inputs:
         - path: rtsp://127.0.0.1:8554/frente_campainha

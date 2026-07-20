@@ -1,0 +1,66 @@
+# Copyparty file server — runs on the Synology NAS via DSM "Container Manager".
+#
+# Reference copy. On the NAS this folder is deployed at (suggested)
+#   /volume1/docker/copyparty/
+# and Container Manager runs `docker compose up -d` from here. Container Manager
+# reads a `.env` sitting BESIDE this file for the ${...} substitutions below —
+# that `.env` is NOT committed (see .gitignore / README).
+#
+# Access model: Tailscale-only. The published port is bound to the NAS's own
+# Tailscale IP, so Copyparty is never reachable on the LAN or WAN — only from
+# devices on the tailnet. See README.md for the Tailscale-on-DSM setup and the
+# LAN-firewall alternative.
+services:
+  copyparty:
+    image: copyparty/ac:latest        # 'ac' variant = ffmpeg (thumbnails, media tags, transcode)
+    container_name: copyparty
+    restart: unless-stopped
+
+    # PUID:PGID of the DSM user that OWNS the shared folders mounted below.
+    # Find it over SSH:  id <dsm-user>   (DSM's first admin is often 1026; the
+    # shared "users" group is 100). Copyparty reads/writes /w as this user.
+    user: "${PLY_COPYPARTY_PUID:-1026}:${PLY_COPYPARTY_PGID:-100}"
+
+    ports:
+      # host_ip:host_port:container_port — tailnet-only binding. Which IP to use
+      # depends on the Tailscale mode on the NAS (check: `ip addr | grep tailscale0`):
+      #   - userspace-networking (Synology package DEFAULT, no tailscale0 iface):
+      #     bind 127.0.0.1 — tailscaled proxies inbound tailnet connections to
+      #     localhost, and the LAN can't reach a loopback bind. VERIFIED on
+      #     ply-nas-ds918plus.
+      #   - TUN mode (tailscale0 iface exists): bind the NAS Tailscale 100.x IP.
+      # Either way the LAN/WAN never see :3923. Compose errors out if the var is
+      # unset — fail safe, never accidentally 0.0.0.0.
+      - "${PLY_COPYPARTY_BIND_IP:?set PLY_COPYPARTY_BIND_IP in the .env beside this compose (127.0.0.1 for userspace tailscale, else the NAS 100.x IP)}:3923:3923"
+
+    volumes:
+      # This folder → /cfg. Copyparty auto-loads every *.conf here, so
+      # copyparty.conf (and the gitignored copyparty.local.conf, if present)
+      # are picked up automatically.
+      - ./:/cfg:z
+      # DSM shared folders → served tree. Binding each share individually (vs
+      # mounting /volume1 wholesale) keeps @appdata/@database/etc system dirs
+      # and deliberately-excluded shares unreachable even inside the container.
+      # Excluded: PlexMediaServer (app internals), docker (holds this deploy's
+      # secrets — serving it would expose copyparty.local.conf via the web UI).
+      # Each mount needs a matching [/url] volume in copyparty.conf.
+      - /volume1/copyparty:/w:z                  # root: upload/incoming share
+      - /volume1/shared:/w/shared:z
+      - /volume1/homes:/w/homes:z
+      - /volume1/video:/w/video:z
+      - /volume1/NetBackup:/w/NetBackup:z
+      - /volume1/Plex:/w/Plex:z
+      - /volume1/surveillance:/w/surveillance:ro # camera recordings: read-only
+
+    environment:
+      PYTHONUNBUFFERED: "1"
+
+    # Give the thumbnailer a moment to finish on shutdown.
+    stop_grace_period: 15s
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q 127.0.0.1:3923/?reset=/._"]
+      interval: 1m
+      timeout: 2s
+      retries: 5
+      start_period: 15s

@@ -1,6 +1,13 @@
 # Credentials
 .env
+.env.*
 gitignore/
+
+# Copyparty — real account passwords live here on the NAS, never committed
+copyparty.local.conf
 
 # Python
 __pycache__/
+
+# Claude Code local settings (personal overrides)
+.claude/settings.local.json
