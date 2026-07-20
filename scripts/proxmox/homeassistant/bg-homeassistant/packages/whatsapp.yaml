@@ -12,7 +12,12 @@ rest_command:
     method: POST
     headers:
       X-Api-Key: !secret waha_api_key
-      content_type: application/json
+    # Content-Type MUST be the rest_command top-level `content_type:` option — NOT a header.
+    # Nesting it under `headers:` (and spelled `content_type`) sends a bogus header while the
+    # real Content-Type falls back to aiohttp's `text/plain`; WAHA then can't parse the JSON
+    # body and rejects every send with HTTP 400. (Matches the working bnu-homeassistant
+    # alertablu.yaml pattern.)
+    content_type: "application/json"
     payload: '{"session": "default", "chatId": "{{ number }}", "text": {{ message | to_json }}}'
 
 script:

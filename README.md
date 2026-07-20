@@ -270,7 +270,7 @@ Save the key to `.env`.
 4. Target disk: 500 GB M.2 SSD.
 5. Location / timezone: set as appropriate.
 6. Root password: set and save to `.env`.
-7. Network hostname: `<deployment>-proxmox` (e.g. `ply-proxmox`).
+7. Network hostname: `<deployment>-proxmox` (e.g. `ply-proxmox.home.local`).
 8. Complete install; machine reboots into Proxmox VE.
 9. Verify: **https://\<deployment\>-proxmox:8006/**
 
@@ -290,6 +290,7 @@ Tailscale runs on the Proxmox host itself, making the hypervisor directly reacha
      > /etc/apt/sources.list.d/pve-no-subscription.list
    apt-get update && apt-get install -y tailscale
    ```
+   (or for tailscale run: "curl -fsSL https://tailscale.com/install.sh | sh")
 
 3. Start and authenticate:
    ```bash

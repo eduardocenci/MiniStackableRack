@@ -106,10 +106,13 @@ DAY_END          = 20    # 20:00
 # (default 5 min). A value slightly larger than the timer window is fine — events won't
 # naturally arrive with a gap bigger than the quiet window that just elapsed.
 COOLDOWN_GAP_S   = 300  # 5 min — matches the default 5-min quiet window in the HA package
-# Video output — single-pass CFR re-encode eliminates frame jumps from VFR source clips.
+# Video output — per-clip CFR re-encode, then concat-demuxer stream copy (see
+# compile_digest_video for why it must NOT be a single filter_complex pass).
 VIDEO_FPS        = 15
 VIDEO_W          = 854
 VIDEO_H          = 480
+NORMALIZE_TIMEOUT_S = 180   # per-clip re-encode budget (clips are ≤ ~2 min at 480p veryfast)
+CONCAT_TIMEOUT_S    = 120   # stream-copy join budget
 SEND_ATTEMPTS    = 3     # WhatsApp send retries (rides over transient gateway hiccups)
 
 _handler = logging.FileHandler(LOG_FILE)
@@ -474,10 +477,19 @@ def load_baselines(cameras: list[str], baselines_dir: str, is_night: bool) -> di
 def compile_digest_video(segments: list[dict]) -> str | None:
     """Stitch recording-run clips into one MP4, chronological (oldest→newest).
 
-    `segments` is a list of {"start_ts": float, "path": str}. Single ffmpeg pass with a
-    concat filter: each input is normalised to a constant frame rate (VIDEO_FPS), padded to
-    VIDEO_W×VIDEO_H with square pixels, then concatenated. A single CFR re-encode eliminates
-    the frame jumps that occur when variable-frame-rate Frigate clips are stream-copied.
+    `segments` is a list of {"start_ts": float, "path": str}. Two-stage build:
+    stage 1 re-encodes EACH clip in its own ffmpeg pass to identical parameters
+    (CFR VIDEO_FPS, VIDEO_W×VIDEO_H letterboxed, yuv420p, no audio); stage 2 joins
+    the normalised files with the concat DEMUXER using stream copy.
+
+    This must NOT be a single filter_complex pass (the old approach): Frigate
+    export clips can change stream parameters MID-CLIP (frente_principal flips
+    1280x720 → 1920x1080), which makes ffmpeg rebuild the whole filter graph;
+    the concat filter's timeline state resets and the encoder silently drops the
+    already-scheduled frames (~30 s lost on a 4-clip montage — always perceived
+    as "the last clip is cut short"). A per-clip pass survives the same
+    reconfiguration losslessly, and demuxer concat of identical streams is a
+    plain copy. Bonus: one bad clip is skipped instead of failing the montage.
     """
     # Order strictly by run start timestamp so the montage is chronological.
     valid = [
@@ -488,41 +500,59 @@ def compile_digest_video(segments: list[dict]) -> str | None:
         log.info("No valid clips available — skipping video compilation")
         return None
 
-    inputs: list[str]  = []
-    filters: list[str] = []
-    for i, seg in enumerate(valid):
-        inputs += ["-i", seg["path"]]
-        filters.append(
-            f"[{i}:v]fps={VIDEO_FPS},"
-            f"scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=decrease,"
-            f"pad={VIDEO_W}:{VIDEO_H}:(ow-iw)/2:(oh-ih)/2,"
-            f"setsar=1,format=yuv420p[v{i}]"
-        )
-    concat_in = "".join(f"[v{i}]" for i in range(len(valid)))
-    filter_complex = ";".join(filters) + f";{concat_in}concat=n={len(valid)}:v=1:a=0[out]"
-
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    output = os.path.join(CLIP_DIR, f"frigate_digest_{timestamp}.mp4")
+    output    = os.path.join(CLIP_DIR, f"frigate_digest_{timestamp}.mp4")
+    # frigate_clip_* prefix so the periodic cleanup also catches leftovers.
+    list_path = os.path.join(CLIP_DIR, f"frigate_clip_norm_{timestamp}.txt")
+    vf = (f"fps={VIDEO_FPS},"
+          f"scale={VIDEO_W}:{VIDEO_H}:force_original_aspect_ratio=decrease,"
+          f"pad={VIDEO_W}:{VIDEO_H}:(ow-iw)/2:(oh-ih)/2,"
+          f"setsar=1,format=yuv420p")
 
-    # The per-input fps filter plus output -r both force constant frame rate, so the
-    # montage has one continuous, jump-free timeline regardless of source VFR clips.
-    cmd = [FFMPEG, "-y", *inputs,
-           "-filter_complex", filter_complex, "-map", "[out]",
-           "-r", str(VIDEO_FPS),
-           "-c:v", "libx264", "-crf", "28", "-preset", "veryfast",
-           "-pix_fmt", "yuv420p", "-movflags", "+faststart", output]
-    timeout = min(600, 60 + 25 * len(valid))
+    norm_paths: list[str] = []
     try:
-        subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)
-        log.info("Digest video compiled: %s (%d bytes, %d clips, CFR %dfps)",
-                 output, os.path.getsize(output), len(valid), VIDEO_FPS)
+        for i, seg in enumerate(valid):
+            norm = os.path.join(CLIP_DIR, f"frigate_clip_norm_{timestamp}_{i}.mp4")
+            cmd = [FFMPEG, "-y", "-i", seg["path"], "-vf", vf,
+                   "-r", str(VIDEO_FPS), "-an",
+                   "-c:v", "libx264", "-crf", "28", "-preset", "veryfast",
+                   "-pix_fmt", "yuv420p", norm]
+            try:
+                subprocess.run(cmd, check=True, capture_output=True,
+                               timeout=NORMALIZE_TIMEOUT_S)
+                norm_paths.append(norm)
+            except subprocess.CalledProcessError as exc:
+                log.warning("Clip normalise failed for %s — skipping it: %s",
+                            seg["path"], _ffmpeg_err(exc))
+            except subprocess.TimeoutExpired:
+                log.warning("Clip normalise timed out (%ds) for %s — skipping it",
+                            NORMALIZE_TIMEOUT_S, seg["path"])
+        if not norm_paths:
+            log.error("Video compile failed: no clip survived normalisation")
+            return None
+
+        with open(list_path, "w") as f:
+            for p in norm_paths:
+                f.write(f"file '{p}'\n")
+        cmd = [FFMPEG, "-y", "-f", "concat", "-safe", "0", "-i", list_path,
+               "-c", "copy", "-movflags", "+faststart", output]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=CONCAT_TIMEOUT_S)
+        except subprocess.CalledProcessError as exc:
+            log.error("Video concat failed: %s", _ffmpeg_err(exc))
+            return None
+        except subprocess.TimeoutExpired as exc:
+            log.error("Video concat timed out after %ds: %s", CONCAT_TIMEOUT_S, exc)
+            return None
+        log.info("Digest video compiled: %s (%d bytes, %d/%d clips, CFR %dfps)",
+                 output, os.path.getsize(output), len(norm_paths), len(valid), VIDEO_FPS)
         return output
-    except subprocess.CalledProcessError as exc:
-        log.error("Video compile failed: %s", _ffmpeg_err(exc))
-        return None
-    except subprocess.TimeoutExpired as exc:
-        log.error("Video compile timed out after %ds: %s", timeout, exc)
-        return None
+    finally:
+        for p in norm_paths + [list_path]:
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
 
 
 def _ffmpeg_err(exc: Exception) -> str:
@@ -548,18 +578,34 @@ INSTRUÇÕES:
 - Comece SEMPRE com uma linha de relevância, exatamente "RELEVANTE: SIM" ou "RELEVANTE: NAO".
   Esta linha aparece UMA ÚNICA VEZ, no início da resposta — NUNCA a repita por evento ou por
   câmera; o veredito é um só, para o conjunto de todos os eventos.
-  Use NAO quando NÃO há pessoas E há apenas veículo(s) parado(s)/estático(s) (que não chegam
-  nem saem), ou quando o disparo foi causado por vegetação, galhos, sombras, variação de luz,
-  chuva ou animais pequenos (ex.: pássaros). Use SIM quando há uma pessoa, um veículo ou pessoa
-  chegando/saindo/se movendo, ou qualquer situação relevante de segurança. Se algum evento
-  estiver marcado com [AMEAÇA POTENCIAL], responda SIM.
+  Use NAO quando NÃO há pessoas E os veículos apenas permanecem parados/estáticos (nenhum
+  chega, sai ou manobra), ou quando o disparo foi causado por vegetação, galhos, sombras,
+  variação de luz, chuva ou animais pequenos (ex.: pássaros). Use SIM quando há uma pessoa,
+  ou quando um veículo chega, sai, entra ou sai da garagem, manobra ou se move — mesmo SEM
+  nenhuma pessoa visível (ex.: "um carro entra na garagem" é SIM). Frases como "não há
+  pessoas detectadas" NÃO tornam o conjunto irrelevante quando alguma descrição relata
+  movimento de veículo. Se algum evento estiver marcado com [AMEAÇA POTENCIAL], responda SIM.
 - A descrição de cada evento em [EVENTOS DETECTADOS] vem de uma análise prévia de MÚLTIPLOS
   quadros do Frigate e é AUTORITATIVA sobre haver ou não pessoas/atividade. Rótulos de detector
   de objetos são NÃO-CONFIÁVEIS (muitos falsos positivos) e por isso não são fornecidos aqui.
-  Se a descrição indica ausência de pessoas/atividade (ex.: "nenhum indivíduo", "sem movimento",
-  "normalidade", "veículo estacionado"), responda RELEVANTE: NAO — a menos que você veja
-  INEQUIVOCAMENTE uma pessoa na imagem. Na dúvida entre a descrição e a imagem, confie na descrição.
-- HORÁRIOS: o intervalo entre colchetes no início de cada evento (ex.: [10:24–10:31]) é a fonte
+  Se a descrição indica ausência de pessoas E ausência de movimento de veículos (ex.: "nenhum
+  indivíduo", "sem movimento", "normalidade", "veículo permanece estacionado"), responda
+  RELEVANTE: NAO — a menos que você veja INEQUIVOCAMENTE uma pessoa na imagem. Na dúvida entre
+  a descrição e a imagem, confie na descrição.
+- DIREÇÃO DO MOVIMENTO (chegando × saindo): para o TRAJETO DE PESSOAS pela propriedade, as
+  descrições vêm de câmeras ISOLADAS e NÃO são confiáveis quanto à direção do deslocamento —
+  frequentemente erram ou se contradizem (ex.: uma diz "em direção à entrada" e outra "em
+  direção à rua" para a MESMA pessoa). Só afirme que uma pessoa está chegando/entrando ou
+  saindo/indo embora quando as evidências forem consistentes: a ordem cronológica das aparições
+  entre as câmeras (compare os SEGUNDOS dos colchetes) e os trajetos do [CONTEXTO DA
+  PROPRIEDADE] (sentido rua → portas da frente = CHEGANDO; portas da frente → rua = SAINDO).
+  Se as descrições divergirem entre si ou a sequência não for conclusiva, descreva o movimento
+  de forma NEUTRA (ex.: "uma pessoa passa pela área da frente da casa"), sem afirmar chegada,
+  saída, destino nem "em direção a". Esta cautela afeta apenas o TEXTO do resumo — NUNCA o
+  veredito RELEVANTE (movimento descrito conta como atividade mesmo com direção incerta).
+  Mudanças de estado explícitas relatadas pelo Frigate (ex.: "carro entra na garagem e a porta
+  fecha") são confiáveis: relate-as como estão.
+- HORÁRIOS: o intervalo entre colchetes no início de cada evento (ex.: [10:24:05–10:31:47]) é a fonte
   OFICIAL de horário. IGNORE horários citados dentro das descrições e carimbos de hora visíveis
   nas imagens — o relógio das câmeras pode estar errado. NUNCA mencione um horário que não seja
   o dos colchetes.
@@ -1488,8 +1534,10 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         events.append({
             "camera":       cam,
             "location":     humanize_cam(cam, camera_to_location),
-            "time":         datetime.datetime.fromtimestamp(start_ts).strftime("%H:%M"),
-            "time_end":     datetime.datetime.fromtimestamp(end_ts).strftime("%H:%M"),
+            # Seconds matter: the consolidation LLM infers direction of travel (arriving vs
+            # leaving) from the cross-camera chronology — minute-rounded times hid it.
+            "time":         datetime.datetime.fromtimestamp(start_ts).strftime("%H:%M:%S"),
+            "time_end":     datetime.datetime.fromtimestamp(end_ts).strftime("%H:%M:%S"),
             "start_ts":     start_ts,
             "end_ts":       end_ts,
             "text":         genai["text"],
@@ -1569,12 +1617,12 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         event["labels"] = labels
         if starts:
             event["start_ts"] = min(starts)
-            event["time"]     = datetime.datetime.fromtimestamp(min(starts)).strftime("%H:%M")
+            event["time"]     = datetime.datetime.fromtimestamp(min(starts)).strftime("%H:%M:%S")
         if ends:
             event["end_ts"] = max(ends)
         elif starts:
             event["end_ts"] = max(event.get("end_ts") or 0, max(starts))
-        event["time_end"] = datetime.datetime.fromtimestamp(event["end_ts"]).strftime("%H:%M")
+        event["time_end"] = datetime.datetime.fromtimestamp(event["end_ts"]).strftime("%H:%M:%S")
 
     # Build the digest video from contiguous RECORDING runs per camera — not the tracked-object
     # window. Frigate frequently stops tracking an object while activity (and recording) keeps
@@ -1812,6 +1860,22 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         relevant = True
         if not narrative.strip():   # gate-only reply: fall back to Frigate's own text
             narrative = "\n".join(f"{e['location']}: {e['text']}" for e in events if e.get("text"))
+    # A single NAO can be an unlucky sample on a borderline scene (2026-07-06 17:58:
+    # "carro entra na garagem" was suppressed, yet replaying the exact prompt+image gave
+    # SIM 8/8). Suppression is irreversible — the watermark advances and the burst is
+    # never reconsidered — so confirm it: re-ask the SAME backend once and suppress only
+    # when the second verdict is also NAO. Costs one extra call on suppression paths only.
+    if not relevant:
+        log.info("Relevance gate NAO — sampling a second verdict before suppressing")
+        second = _openai_tracked() if narrative_openai else _ollama_tracked()
+        rel2, narr2 = _parse_relevance(second) if second else (False, "")
+        if rel2 and narr2.strip():
+            log.warning("Second verdict is SIM — overriding the initial NAO (borderline scene)")
+            if debug_mode:
+                send_debug_whatsapp(
+                    "⚠️ Gate NAO revertido — segunda amostra respondeu SIM; enviando digest",
+                    secrets)
+            relevant, narrative = True, narr2
     # Never ship a digest whose body is empty: if the model produced only the RELEVANTE gate
     # and no summary, treat it as a failed inference (surfaced to debug) rather than sending a
     # caption with no text — that is the "digest sent without any summary" symptom.

@@ -10,6 +10,8 @@ Root
 ├── gitignore/                  Local-only files, never committed (gitignored)
 ├── netoverview/                Submodule — github.com/eduardocenci/netoverview (network overview tool)
 ├── globalnet/                  Submodule — github.com/eduardocenci/globalnet (private; multi-site dashboard)
+├── homes/                      One submodule per home build — construction documentation, not rack sites
+│   └── ara/                    Submodule — github.com/eduardocenci/home-ara (private; House Hangar, Araquari SC)
 └── scripts/
     ├── proxmox/                MiniPC runs Proxmox (hypervisor)
     │   ├── homeassistant/      Home Assistant OS runs as a VM on Proxmox
@@ -65,7 +67,9 @@ Sequence on a code change:
 
 ## Remote Access
 
-**SSH tooling:** `plink` (PuTTY) is available at `C:/Program Files/PuTTY/plink.exe` and supports non-interactive password auth — use it for scripted/LLM SSH access. `sshpass` is not available on this Windows environment.
+**Tailscale is the network layer.** Every device is a node on the tailnet, named exactly after its `<deployment>-<component>` name (e.g. `bnu-proxmox`, `ply-nas-ds918plus`). The machine Claude runs on is itself a tailnet node, so **every device is directly reachable by its bare name** (MagicDNS) — no VPN setup, no port forwarding, no LAN dependency. Run `tailscale status` locally to list all nodes and their `100.x` IPs. Services bound to a device's Tailscale IP (e.g. Copyparty on the NAS) are reachable only through the tailnet, by design.
+
+**SSH tooling:** use OpenSSH (`ssh`, in PATH via Git Bash) with key auth, or Python `paramiko` (installed) for password auth. `plink` and `sshpass` are **not** installed on this Windows environment — do not use them. Non-interactive password auth therefore requires paramiko; keys make plain `ssh` work directly.
 
 Each device has a priority-ordered list of access interfaces — one for LLM use, one for humans:
 
@@ -75,6 +79,7 @@ Each device has a priority-ordered list of access interfaces — one for LLM use
 | Home Assistant | REST API (`HA_TOKEN`) → SSH add-on (`hassio`) | Web UI `http://<host>:8123` |
 | Raspberry Pi | SSH (`eduardocenci`) | SSH |
 | GL KVM | SSH (`root`) | Web UI `http://<host>` |
+| Synology NAS | SSH (`PLY_NAS_SSH_LOGIN`, see `scripts/synology/README.md`) | Web UI (DSM) `http://<host>:5000` |
 
 **LLM rule:** prefer the highest-priority interface that works; fall back down the list. Never open a browser unless all CLI/API options are exhausted.
 
@@ -85,6 +90,7 @@ Each device has a priority-ordered list of access interfaces — one for LLM use
 - Independent rack components (Raspberry Pi, Remote KVM, Zigbee Gateway) sit at the top level of `scripts/`
 - Keep system architecture representation up-to-date using Excalidraw (`systemarchitecture.excalidraw` at repo root) — use the Excalidraw skill to edit it directly
 - In docs, reference devices by their bare component name (e.g. `proxmox`) when settings are uniform across all regions; list all three region-specific names (e.g. `bnu-proxmox`, `ply-proxmox`, `bg-proxmox`) only when providing per-region context or when settings differ between regions
+- A home build (`homes/<code>`, e.g. `homes/ara`) uses a region code but is **not** a globalnet site until it has a rack — its data lives in its own `home-<code>` repo (single-source `house.yaml` + registries), its cockpit is globalnet `/house/<code>`, and its document intake is the `ingest-home-docs` skill inside the home repo (see `homes/ara/CLAUDE.md`)
 
 ## Image Generation (Nano Banana)
 
