@@ -10,6 +10,8 @@ Root
 ├── gitignore/                  Local-only files, never committed (gitignored)
 ├── netoverview/                Submodule — github.com/eduardocenci/netoverview (network overview tool)
 ├── globalnet/                  Submodule — github.com/eduardocenci/globalnet (private; multi-site dashboard)
+├── homes/                      One submodule per home build — construction documentation, not rack sites
+│   └── ara/                    Submodule — github.com/eduardocenci/home-ara (private; House Hangar, Araquari SC)
 └── scripts/
     ├── proxmox/                MiniPC runs Proxmox (hypervisor)
     │   ├── homeassistant/      Home Assistant OS runs as a VM on Proxmox
@@ -88,6 +90,7 @@ Each device has a priority-ordered list of access interfaces — one for LLM use
 - Independent rack components (Raspberry Pi, Remote KVM, Zigbee Gateway) sit at the top level of `scripts/`
 - Keep system architecture representation up-to-date using Excalidraw (`systemarchitecture.excalidraw` at repo root) — use the Excalidraw skill to edit it directly
 - In docs, reference devices by their bare component name (e.g. `proxmox`) when settings are uniform across all regions; list all three region-specific names (e.g. `bnu-proxmox`, `ply-proxmox`, `bg-proxmox`) only when providing per-region context or when settings differ between regions
+- A home build (`homes/<code>`, e.g. `homes/ara`) uses a region code but is **not** a globalnet site until it has a rack — its data lives in its own `home-<code>` repo (single-source `house.yaml` + registries), its cockpit is globalnet `/house/<code>`, and its document intake is the `ingest-home-docs` skill inside the home repo (see `homes/ara/CLAUDE.md`)
 
 ## Image Generation (Nano Banana)
 
