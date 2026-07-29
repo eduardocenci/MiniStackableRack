@@ -22,7 +22,8 @@ Root
     │   │   ├── bnu-win11/
     │   │   ├── ply-win11/
     │   │   └── bg-win11/
-    │   ├── docker/             Docker host VM on Proxmox (optional)
+    │   ├── docker/             Docker host on Proxmox — one folder per deployment, one subfolder per container
+    │   │   └── bnu-docker/     LXC 101: waha, waha-listener, condfy-bridge, netoverview-agent
     │   └── ubuntu/             Ubuntu VM on Proxmox (optional)
     └── raspberry-pi/           Raspberry Pi — independent rack component (not a VM); runs Docker; serves as network monitoring node (device discovery, traffic analysis via ARP spoofing)
         ├── bnu-raspberrypi/
@@ -56,6 +57,29 @@ Sequence on a code change:
 3. No SSH, no `deploy_all.ps1`, no manual intervention required
 
 > `deploy_all.ps1` is for **first-time setup only** (installing Docker and dropping the compose file on a new Pi). Do not use it as a routine update mechanism — the cron handles that.
+
+### New Docker container — registration checklist
+
+Every Docker container is created through Claude, so this checklist **is** the
+gate: creating, renaming, or retiring a container on **any** host is not done
+until, in the same session:
+
+1. **Folder** — compose file + README under the host's folder per the
+   hierarchy rule (e.g. `scripts/proxmox/docker/bnu-docker/<container>/`).
+2. **Register** — declare it as a `kind: docker` child of its host node in
+   `globalnet/architecture.yaml` (`container:` = exact Docker name;
+   `check_url` if it serves HTTP; `doc:` slug).
+3. **Runbook** — `globalnet/docs/runbooks/<name>.md`, added to the toctree in
+   `globalnet/docs/runbooks/index.md`.
+4. **Verify** — `cd globalnet && make docs && make check && make fleet`;
+   `make fleet` diffs every host's live containers against architecture.yaml
+   (both directions) and must exit clean.
+5. **Ship** — push globalnet `main` (deploys dashboard + docs via DockerHub →
+   Pi cron), then bump the globalnet submodule pointer in this repo.
+
+The dashboard renders an unregistered container as a nameless italic row — no
+box, no health LED, no Docs button. Treat that row, or a failing `make fleet`,
+as an unfinished deploy, not cosmetics. (Details: `DOCS_WORKFLOW.md`.)
 
 ## Credentials
 
