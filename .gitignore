@@ -3,11 +3,14 @@
 .env.*
 gitignore/
 
-# Copyparty — real account passwords live here on the NAS, never committed
-copyparty.local.conf
-
 # Python
 __pycache__/
 
+# Runtime data of LXC docker services (SQLite, archives) — lives on the host
+scripts/proxmox/docker/bnu-docker/*/data/
+
 # Claude Code local settings (personal overrides)
 .claude/settings.local.json
+
+# Machine-local MCP config (per-machine MS365 tokens; canonical copy lives in homes/ara/.mcp.json)
+/.mcp.json

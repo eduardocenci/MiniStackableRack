@@ -30,6 +30,15 @@ input_boolean:
     # suprimidos pelo gate de relevância e escalam o cabeçalho (⚠️/🔴).
     # No `initial:` — script defaults to OFF unless explicitly ON.
 
+  frigate_digest_show_presence:
+    name: "Frigate Digest — Contexto de presença (WiFi)"
+    icon: mdi:wifi-check
+    # ON (padrão): inclui um bloco [PRESENÇA] no prompt do LLM com quem está em casa
+    # agora, segundo os rastreadores de rede (device_tracker.jorge/duda/silvana/ivani —
+    # ver PRESENCE_TRACKERS no script). Contexto de fundo apenas — nunca usado para
+    # identificar pessoas nos eventos (ver INSTRUÇÕES do prompt).
+    # No `initial:` — script defaults to ON when the entity is missing/unset.
+
 input_select:
   frigate_alert_mode:
     name: "Frigate Alert Mode"

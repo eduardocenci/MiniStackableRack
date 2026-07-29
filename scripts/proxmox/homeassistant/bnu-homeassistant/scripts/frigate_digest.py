@@ -62,6 +62,18 @@ PROMPT_FILE      = "/config/frigate_digest_prompt.txt"  # user-editable LLM prom
 # carries only the verified form must not be dropped by the relevance filter.
 RELEVANT_OBJECTS = {"person", "person-verified", "car", "dog", "cat", "animal",
                     "bicycle", "motorcycle"}
+# WiFi-presence device trackers (network device_tracker platform, via the household's
+# "Device Tracker" iPhone app): state flips to "home" the instant a device joins the LAN,
+# with a ~300 s (5 min) consider_home hysteresis before flipping to "not_home" — see
+# ivani_presence.yaml. Exposed to the digest LLM as background context (__PRESENCE__),
+# separate from binary_sensor.family_present, which only GATES whether a digest is sent
+# at all (see _muted_by_presence). Entity -> display name shown in the prompt.
+PRESENCE_TRACKERS = {
+    "device_tracker.jorge":   "Jorge",
+    "device_tracker.duda":    "Duda",
+    "device_tracker.silvana": "Silvana",
+    "device_tracker.ivani":   "Ivani",
+}
 SCENE_MAX_CHARS  = 350   # cap for metadata.scene fallback text in event lines
 MAX_LLM_IMAGES   = 12    # image budget to the consolidation LLM (Frigate text is authoritative;
                          # 20+ raw snapshots slow qwen3-vl and feed thinking runaways)
@@ -91,13 +103,6 @@ OLLAMA_MAX_ATTEMPTS = 3
 RECORDING_PAD_S  = 2     # small pad on each run's bounds (segment bounds already align to activity)
 REC_LOOKBACK_S   = 20    # fetch recording segments this far before the first detection…
 REC_LOOKAHEAD_S  = 120   # …and after the last, to catch activity Frigate stopped tracking early
-# A detection's start_time may predate the review by HOURS: a stationary tracked object (e.g.
-# a parked car) keeps the start_time from when it FIRST appeared, and when it finally moves it
-# re-activates inside a brand-new review. Detection starts earlier than this slack before the
-# review are ignored (the review start is used instead), so one re-activated object can't
-# stretch the digest span — and its video — back to mid-morning (seen 2026-07-12: a 13:43
-# digest spanning "10:03–13:36" with a 3.5 h-old clip).
-DET_START_SLACK_S = 300  # tolerate detection starts up to 5 min before their review
 REC_GAP_TOL_S    = 5     # gap between segments above which a new run begins (a recording hole)
 DAY_START        = 6     # 06:00
 DAY_END          = 20    # 20:00
@@ -146,12 +151,46 @@ def get_ha_state(entity_id: str, token: str) -> str:
     return ""
 
 
+def get_ha_state_since(entity_id: str, token: str) -> tuple[str, float | None]:
+    """(state, minutes_since_last_changed) for entity_id. minutes is None when
+    last_changed is missing/unparseable — state is still returned. last_changed is
+    HA's timestamp of the last STATE transition (not attribute-only updates), which is
+    exactly the "x -> y, z minutes ago" moment for a binary device_tracker."""
+    try:
+        r = requests.get(f"{HA_URL}/api/states/{entity_id}",
+                         headers=_ha_headers(token), timeout=10)
+        if r.ok:
+            data = r.json()
+            state = data.get("state", "")
+            last_changed = data.get("last_changed")
+            if last_changed:
+                try:
+                    changed_dt = datetime.datetime.fromisoformat(last_changed.replace("Z", "+00:00"))
+                    now_dt = datetime.datetime.now(datetime.timezone.utc)
+                    return state, max(0.0, (now_dt - changed_dt).total_seconds() / 60)
+                except ValueError:
+                    pass
+            return state, None
+    except requests.RequestException as exc:
+        log.warning("get_ha_state_since(%s) failed: %s", entity_id, exc)
+    return "", None
+
+
 def get_ha_number(entity_id: str, token: str) -> float:
     state = get_ha_state(entity_id, token)
     try:
         return float(state)
     except (ValueError, TypeError):
         return 0.0
+
+
+def fetch_presence(ha_token: str) -> dict[str, tuple[str, float | None]]:
+    """{display_name: (state, minutes_since_last_changed)} for PRESENCE_TRACKERS. state
+    is 'home' / 'not_home' / '' (entity missing, unknown or unavailable — excluded from
+    the prompt by _presence_block). One get_ha_state_since call per tracker; a single
+    failed call (network blip) only drops that person, never raises."""
+    return {name: get_ha_state_since(entity_id, ha_token)
+            for entity_id, name in PRESENCE_TRACKERS.items()}
 
 
 def update_ha_state(entity_id: str, state: str, attributes: dict, token: str) -> None:
@@ -570,7 +609,7 @@ def _ffmpeg_err(exc: Exception) -> str:
 # Falls back to this default — keep the file and this string IDENTICAL when changing either.
 _DEFAULT_PROMPT_TEMPLATE = """\
 Você é um assistente de segurança residencial. Analise os dados e imagens abaixo.
-__CONTEXT____PREVIOUS____IMAGE_NOTE__
+__CONTEXT____PRESENCE____PREVIOUS____IMAGE_NOTE__
 [EVENTOS DETECTADOS — últimos __WINDOW_MIN__ min]
 __EVENTS__
 
@@ -615,6 +654,13 @@ INSTRUÇÕES:
   reconhecimento facial confirmou essa pessoa — use o nome ao descrevê-la (ex.: "Silvana estende
   roupas no varal"). NÃO invente nomes e NÃO identifique ninguém pela imagem: use apenas os
   nomes fornecidos nas linhas de evento.
+- PRESENÇA: o bloco [PRESENÇA], quando presente, mostra a ÚLTIMA mudança de estado de cada
+  rastreador de rede da família (chegou/saiu de casa e há quantos minutos) — é contexto de
+  fundo sobre a propriedade, NÃO uma identificação de quem aparece nos eventos. Pode ajudar a
+  entender o momento (ex.: alguém saiu de casa há poucos minutos pode explicar um carro saindo
+  da garagem agora), mas NUNCA use [PRESENÇA] para nomear ou presumir a identidade de uma
+  pessoa não reconhecida; nomes só valem quando vêm das linhas de evento (ver PESSOAS
+  RECONHECIDAS acima).
 - NARRATIVA ÚNICA: escreva UM relato único e cronológico cobrindo todos os eventos e locais —
   NÃO descreva evento por evento nem repita a mesma ação (ex.: "uma pessoa caminha") várias
   vezes. Agrupe eventos que claramente são a mesma atividade. A MESMA pessoa reconhecida (mesmo
@@ -808,6 +854,31 @@ def _previous_block(prev: dict) -> str:
         return ""
 
 
+# ── Presence context ──────────────────────────────────────────────────────────
+def _presence_block(presence: dict[str, tuple[str, float | None]]) -> str:
+    """Render the [PRESENÇA] prompt block from fetch_presence()'s (state, minutes_since_
+    last_changed) pairs — one line per person: the DIRECTION of their last transition
+    (chegou/saiu) and how long ago. A device_tracker is binary, so the current state
+    alone implies the transition (home <=> just arrived, not_home <=> just left); pairing
+    that with the age lets the LLM correlate a recent arrival/departure with what's in
+    the current events, instead of only a static home/away snapshot.
+
+    Returns "" when there is no usable data (every tracker missing/unknown/unavailable) —
+    the block is omitted entirely rather than asserting a transition on bad data.
+    """
+    lines = []
+    for name, (state, mins) in presence.items():
+        if state not in ("home", "not_home"):
+            continue  # missing/unknown/unavailable — no reliable signal
+        verb = "chegou em casa" if state == "home" else "saiu de casa"
+        when = f"há {int(mins)} min" if mins is not None else "(horário da mudança indisponível)"
+        lines.append(f"- {name}: {verb} {when}")
+    if not lines:
+        return ""
+    return "\n[PRESENÇA] Últimas mudanças de estado dos rastreadores de rede da família:\n" \
+           + "\n".join(lines) + "\n"
+
+
 _ROTINA_BLOCK = (
     "- ROTINA DOMÉSTICA: todos os eventos são de pessoas reconhecidas da família. Faça um\n"
     "  resumo de UMA frase curta (ex.: \"Silvana trabalha no quintal e estende roupas no\n"
@@ -831,12 +902,16 @@ def _burst_all_recognized(events: list[dict]) -> bool:
 def _build_prompt(events: list[dict], context: str, baselines: dict[str, bytes],
                   snapshots: dict[str, bytes | None], window_min: int,
                   prev: dict | None = None, use_names: bool = True,
-                  threat_on: bool = False, soften: bool = False) -> tuple[str, list[bytes]]:
+                  threat_on: bool = False, soften: bool = False,
+                  presence: dict[str, tuple[str, float | None]] | None = None
+                  ) -> tuple[str, list[bytes]]:
     """Returns (text_prompt, ordered_list_of_image_bytes).
 
     Image order: baselines first (one per camera, deduplicated), then the budget-selected
     snapshots in event (chronological) order. `prev` is the continuity memory dict from
-    _read_last_digest(); `soften` adds the one-sentence ROTINA instruction.
+    _read_last_digest(); `soften` adds the one-sentence ROTINA instruction. `presence` is
+    the raw {name: (state, minutes_since_last_changed)} dict from fetch_presence() —
+    background "who last arrived/left, how long ago" context, rendered via _presence_block().
     """
     image_bytes: list[bytes] = []
     seen_baseline_cams: set[str] = set()
@@ -891,6 +966,12 @@ def _build_prompt(events: list[dict], context: str, baselines: dict[str, bytes],
         # Legacy user template without the token: ride on __CONTEXT__ so continuity
         # still reaches the model.
         context_block += prev_block
+    presence_block = _presence_block(presence) if presence else ""
+    if "__PRESENCE__" in template:
+        template = template.replace("__PRESENCE__", presence_block)
+    else:
+        # Legacy user template without the token: ride on __CONTEXT__, same as __PREVIOUS__.
+        context_block += presence_block
     rotina_block = _ROTINA_BLOCK if soften else ""
     has_rotina_token = "__ROTINA__" in template
     if has_rotina_token:
@@ -1589,7 +1670,6 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     # The same per-detection fetch also carries identity: sub_label = face-recognized name
     # (e.g. "Silvana") and the detector label, feeding the names/soften features.
     for event in events:
-        review_start = event["start_ts"]   # review-item start, before detection enrichment
         starts: list[float] = []
         ends: list[float]   = []
         names: list[str]    = []
@@ -1597,16 +1677,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
         for did in event["detections"]:
             m = fetch_event_meta(base, did)
             if m.get("start_time"):
-                # Stationary objects re-activate carrying the start_time of when they FIRST
-                # appeared (hours ago) — trust the review for when THIS activity began:
-                # a detection start beyond DET_START_SLACK_S before the review is treated
-                # as the review start (neutral), so it can't stretch the digest span.
-                st = m["start_time"]
-                if st < review_start - DET_START_SLACK_S:
-                    log.info("Detection %s start %.0f predates review by %.0fs — clamping",
-                             did, st, review_start - st)
-                    st = review_start
-                starts.append(st)
+                starts.append(m["start_time"])
             if m.get("end_time"):
                 ends.append(m["end_time"])
             if m.get("label"):
@@ -1671,9 +1742,10 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
 
     # Policy toggles. Fail-safe defaults when an entity is missing/unavailable:
     # names ON (any state but explicit "off"), soften ON likewise, threat OFF (only "on").
-    use_names = get_ha_state("input_boolean.frigate_digest_use_names",     ha_token) != "off"
-    soften_ok = get_ha_state("input_boolean.frigate_digest_soften_known",  ha_token) != "off"
-    threat_on = get_ha_state("input_boolean.frigate_digest_threat_alerts", ha_token) == "on"
+    use_names     = get_ha_state("input_boolean.frigate_digest_use_names",     ha_token) != "off"
+    soften_ok     = get_ha_state("input_boolean.frigate_digest_soften_known",  ha_token) != "off"
+    threat_on     = get_ha_state("input_boolean.frigate_digest_threat_alerts", ha_token) == "on"
+    show_presence = get_ha_state("input_boolean.frigate_digest_show_presence", ha_token) != "off"
 
     # Burst-level derived facts (threat is final only after _await_review_genai above —
     # Frigate attaches potential_threat_level together with the GenAI text).
@@ -1689,10 +1761,19 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     if prev:
         log.info("Continuity: previous digest at %s referenced in prompt", prev.get("sent_at"))
 
+    # Presence: who's currently home per the WiFi-presence trackers — background context
+    # for the LLM (see PRESENCE_TRACKERS). Independent of _muted_by_presence, which only
+    # gates whether a digest is sent at all; this only informs the ones that DO go out.
+    presence = fetch_presence(ha_token) if show_presence else None
+    if presence:
+        log.info("Presence: %s", ", ".join(
+            f"{n}={s or '?'}({'?' if m is None else f'{int(m)}min'} ago)"
+            for n, (s, m) in presence.items()))
+
     # Build the consolidation prompt once — reused for Ollama/OpenAI and the debug dump.
     prompt, images = _build_prompt(events, context, baselines, snapshots, window_min,
                                    prev=prev, use_names=use_names,
-                                   threat_on=threat_on, soften=soften)
+                                   threat_on=threat_on, soften=soften, presence=presence)
 
     # LLM inference
     llm_mode = get_ha_state("input_select.frigate_digest_llm", ha_token) or "Ollama (local)"
@@ -1701,6 +1782,10 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     # Debug D1: triggered summary + the EXACT prompt and images handed to the LLM (#4).
     if debug_mode:
         n_snaps = sum(1 for s in snapshots.values() if s)
+        presence_debug = ', '.join(
+            f"{n} {'chegou' if s == 'home' else 'saiu'} há {int(m) if m is not None else '?'}min"
+            for n, (s, m) in (presence or {}).items() if s in ("home", "not_home")
+        )
         send_debug_whatsapp(
             f"🔍 *Frigate Digest* · {mode}\n"
             f"⏱ burst {span_start} → {span_end}\n"
@@ -1712,6 +1797,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
             + (f" · ⚠️ ameaça nível {burst_threat}" if burst_threat else "")
             + (f"\n🔁 continuação (digest anterior há "
                f"{max(0, int((time.time() - prev['sent_ts']) / 60))} min)" if prev else "")
+            + (f"\n🏠 presença: {presence_debug}" if presence_debug else "")
             + "\n⏳ Inference starting…",
             secrets,
         )
