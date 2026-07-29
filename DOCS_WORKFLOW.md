@@ -51,6 +51,24 @@ Same pattern: create `docs/runbooks/<topic>.md`, add it to the toctree in
 at it. Write for future-you at 2 a.m.: what it is, where config lives, what
 to check when it breaks.
 
+## Adding a Docker container (its box + docs on the dashboard)
+
+A container running anywhere in the fleet must be **declared** in
+`globalnet/architecture.yaml` — the dashboard shows undeclared ones only as
+nameless italic rows (no box, no health LED, no Docs button). The full
+creation checklist lives in `CLAUDE.md` (§ *New Docker container*); the docs
+side is:
+
+1. Declare the container as a `kind: docker` child of its host node
+   (`container:` = exact Docker name, `check_url` when it serves HTTP,
+   `doc: runbooks/<name>`).
+2. Write `globalnet/docs/runbooks/<name>.md` + toctree entry in
+   `docs/runbooks/index.md` (see `waha-listener.md` or `condfy.md` for shape).
+3. `make docs && make check && make fleet` — `make fleet` (needs tailnet)
+   diffs every host's live containers against architecture.yaml and fails on
+   drift in either direction, so it also catches renames and retired
+   containers whose node lingers.
+
 ## Ingesting documentation (manuals, photos, stickers)
 
 For raw material you don't want to file by hand — device manuals, photos,
