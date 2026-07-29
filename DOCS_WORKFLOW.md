@@ -81,6 +81,38 @@ you review and merge. Two ways to feed it, use either:
 
 Nothing is filed until you merge the digest PR, so you always get a review.
 
+## House construction docs (homes/ara — House Hangar)
+
+Construction documents (receipts, contracts, plans, permits, photos, device
+stickers) do **not** go through the fleet pipeline above — they belong to the
+**`home-ara`** repo (submodule `homes/ara/`), which has its own single source
+of truth (`house.yaml` + `registry/`) and its own ingest skill
+(**`ingest-home-docs`**, in `homes/ara/.claude/skills/`).
+
+| Surface | Where |
+|---|---|
+| Cockpit (zoomable house view, every box → its documents) | globalnet **`/house/ara`** |
+| Contacts (no LLM needed) | `homes/ara/CONTACTS.md` |
+| Money (budget vs actual) | `homes/ara/LEDGER.md` |
+| Live log (docs/nodes/status changes) | `homes/ara/ACTIVITY.md` |
+
+Three ways to feed it:
+
+1. **OneDrive inbox** (default, hands-off): drop files in the OneDrive folder
+   `…/MiniStackableRack/homes/ara/inbox/` (phone app works) with an optional
+   `.txt` note per batch. The daily **cloud routine** sweeps it, files
+   originals into `originals/` (gitignored, OneDrive-synced), transcribes
+   everything into `docs/`, and opens a digest PR for review.
+2. **Google Drive fallback**: folder **`House Hangar Inbox`** — used
+   automatically when OneDrive auth is down in the cloud; the PR flags
+   originals as `gdrive-pending` for you to move.
+3. **Claude chat**: attach files and say what they are; processed immediately.
+
+Originals never enter git — the registry keeps sha256 + a OneDrive share
+link, and every fact is greppable in `homes/ara/docs/`. Merge PRs with merge
+commits (ACTIVITY.md derives from history). The cockpit refreshes within
+5 minutes of a merge, no deploy needed.
+
 ## Rules of thumb
 
 - `architecture.yaml` is the **single source of truth** for devices — hardware
