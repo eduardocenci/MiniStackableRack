@@ -1,0 +1,41 @@
+services:
+  condfy-bridge:
+    build: .
+    container_name: condfy-bridge
+    restart: always
+    environment:
+      # --- Condfy portal (values from /opt/condfy-bridge/.env on the LXC) ---
+      CONDFY_BASE_URL: "${CONDFY_BASE_URL:-https://api.condfy.com.br/api/cwa}"
+      CONDFY_EMAIL: "${CONDFY_EMAIL}"
+      CONDFY_PASSWORD: "${CONDFY_PASSWORD}"
+      CONDFY_LICENSE_ID: "${CONDFY_LICENSE_ID:-9358}"    # 9358 = Céu Azul
+      CONDFY_LOGIN_PATH: "${CONDFY_LOGIN_PATH:-}"        # empty = probe and remember
+      CONDFY_BOOTSTRAP_TOKEN: "${CONDFY_BOOTSTRAP_TOKEN:-}"
+      # --- behaviour ---
+      WATCH_NAMES: "${WATCH_NAMES:-Enio Faqueti,Altair Dalpra}"
+      POLL_SECONDS: "${POLL_SECONDS:-60}"
+      ALERT_COOLDOWN_MIN: "${ALERT_COOLDOWN_MIN:-10}"
+      ALERT_MAX_PER_HOUR: "${ALERT_MAX_PER_HOUR:-8}"
+      MAX_ALERT_AGE_MIN: "${MAX_ALERT_AGE_MIN:-60}"
+      # --- MQTT (Mosquitto add-on on bnu-homeassistant) ---
+      MQTT_HOST: "${MQTT_HOST:-10.1.1.124}"
+      MQTT_PORT: "${MQTT_PORT:-1883}"
+      MQTT_USER: "${MQTT_USER}"
+      MQTT_PASSWORD: "${MQTT_PASSWORD}"
+      MQTT_DISCOVERY_PREFIX: "${MQTT_DISCOVERY_PREFIX:-homeassistant}"
+      # --- WhatsApp (WAHA on the same docker network); empty JID = disabled ---
+      WAHA_BASE_URL: "http://waha:3000"
+      WAHA_API_KEY: "${WAHA_API_KEY}"
+      WAHA_SESSION: "${WAHA_SESSION:-default}"
+      GROUP_JID: "${GROUP_JID:-}"
+      DB_PATH: "/data/condfy.db"
+      TZ: "America/Sao_Paulo"
+    volumes:
+      - ./data:/data
+
+# Only needed to reach WAHA as http://waha:3000. MQTT leaves over the LXC's
+# normal route to 10.1.1.124. Nothing is served, so no ports are published.
+networks:
+  default:
+    name: waha_default
+    external: true
