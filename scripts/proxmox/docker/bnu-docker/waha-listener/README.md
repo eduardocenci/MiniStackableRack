@@ -40,6 +40,14 @@ pct exec 101 -- sh -c 'cd /opt/waha-listener && docker compose up -d --build'
 `BNU_WAHA_LISTENER_TOKEN`) and `FINANCE_NOTIFY_URL` (the PC trigger URL,
 repo `.env`: `ARA_FIN_PC_TRIGGER_URL`).
 
+`FINANCE_NOTIFY_URL` is **`http://10.1.1.127:8799/`** — the finance trigger on
+bnu-win11 (set 2026-07-30, replacing a dead `10.1.1.48` that had been silently
+severing the real-time trigger). It must stay a **LAN IP**: this LXC is not a
+tailnet node, so MagicDNS names do not resolve inside it (`getent hosts
+bnu-win11` fails). Give bnu-win11 a DHCP reservation rather than switching to a
+name. Changing it requires recreating the container (env vars are read at
+start): `docker compose up -d`.
+
 Rule tweaks do **not** need a restart — `rules.yaml` is re-read per event
 (it is bind-mounted, so re-`scp` + nothing else).
 
