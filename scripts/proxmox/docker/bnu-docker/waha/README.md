@@ -43,6 +43,33 @@ drop is what hid this incident. Verified 2026-08-05: fromMe test message
 archived end-to-end. The lid↔phone map of a group lives in
 `GET /api/{session}/groups` → `participants[].id` / `.phoneNumber`.
 
+### 2026-08-05 — LID sender-key decryption break (RESOLVED 2026-08-05)
+
+Third layer of the 02/08 LID flip, found chasing messages the fixed listener
+still wasn't archiving: the NOWEB session's Signal **sender-key state** for
+the fin/obra group stayed keyed under the pre-LID identities, so every
+**incoming** group message failed decryption —
+`MessageCounterError: Key used already or never filled` in `docker logs waha`
+— and was dropped **before any webhook fired** (no `message.any`, not even an
+`ignored chat` line). Outbound API sends and own-device sync still worked, so
+the 13:19 fromMe archive test of the addressing fix passed while contractor
+messages 02–05/08 silently never arrived. WAHA Core ran with no store
+(`config: {}`), so there was no history to re-read, and the listener's
+`/data/media` was empty.
+**Fix:** `PUT /api/sessions/default` with
+`{"config":{"noweb":{"store":{"enabled":true,"fullSync":true}}}}`, then
+`POST /api/sessions/default/logout` + QR re-scan (fresh pairing = fresh
+sender keys). The pairing history-sync then populated the store, recovering
+the blind-window messages **and media**:
+`GET /api/default/chats/<jid>/messages?limit=N&downloadMedia=true` (media
+URLs come back as `http://localhost:3000/api/files/…` — rewrite the host to
+`10.1.1.126:3000` before downloading). Verified 15:02/15:17 phone messages
+archived end-to-end. Session backup taken before surgery:
+`/root/waha-sessions-backup-20260805-preQR.tgz`.
+If `MessageCounterError` returns, re-pair again (logout + QR); the
+structural fix is a WAHA release with LID key migration (only `dev` tags
+existed as of 05/08).
+
 ## Symptom cheat-sheet (session FAILED)
 
 1. `GET /api/sessions?all=true` (header `X-Api-Key: $BNU_WAHA_API_KEY`) —
