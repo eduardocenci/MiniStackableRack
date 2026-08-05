@@ -168,13 +168,28 @@ async def webhook(request: Request, background: BackgroundTasks,
     if not LISTENER_TOKEN or token != LISTENER_TOKEN:
         raise HTTPException(401, "bad or missing ?token=")
     event = await request.json()
-    if event.get("event") != "message":
+    # 2026.7.2 moved fromMe (wake words are fromMe — the session is Eduardo's
+    # own account) off the plain "message" event; the hook now subscribes
+    # message.any, and older "message" events stay accepted.
+    if event.get("event") not in ("message", "message.any"):
         return {"ok": True, "ignored": event.get("event")}
     p = event.get("payload") or {}
     chat = p.get("from") or ""
+    # LID rollout (2026-08-02): lid-addressed chats may arrive with a lid-form
+    # `from`; the raw Baileys key carries the phone-number alias — prefer the
+    # @g.us/@c.us form so rules.yaml keeps matching one canonical id.
+    key = (p.get("_data") or {}).get("key") or {}
+    alt = key.get("remoteJidAlt") or ""
+    if chat.endswith("@lid") and (alt.endswith("@g.us") or alt.endswith("@c.us")
+                                  or alt.endswith("@s.whatsapp.net")):
+        chat = alt.replace("@s.whatsapp.net", "@c.us")
     cfg = load_rules()
     wanted = archived_chats(cfg)
     if wanted is not None and chat not in wanted:
+        # Silent drops hid the 2026-08-02 LID addressing break for 3 days —
+        # always log the rejected chat id and raw routing key (ids, no body).
+        log.info("ignored chat %r key=%s", chat,
+                 json.dumps((p.get("_data") or {}).get("key") or {})[:300])
         return {"ok": True, "ignored": "chat not archived"}
 
     media = p.get("media") or {}
@@ -183,6 +198,7 @@ async def webhook(request: Request, background: BackgroundTasks,
         "ts": float(p.get("timestamp") or time.time()),
         "chat": chat,
         "participant": p.get("participant") or "",
+        "push_name": p.get("pushName") or (p.get("_data") or {}).get("pushName") or "",
         "from_me": bool(p.get("fromMe")),
         "body": p.get("body") or p.get("caption") or "",
         "has_media": bool(p.get("hasMedia")),

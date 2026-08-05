@@ -23,8 +23,18 @@ Deployed dir: `/opt/waha-listener/`.
 
 ```yaml
       WHATSAPP_HOOK_URL: "http://waha-listener:8000/webhook?token=<LISTENER_TOKEN>"
-      WHATSAPP_HOOK_EVENTS: "message"
+      WHATSAPP_HOOK_EVENTS: "message.any"
 ```
+
+**`message.any`, not `message`** (since 2026-08-05 / WAHA 2026.7.2): the plain
+`message` event no longer carries **fromMe** messages, and the finance wake
+word IS fromMe — the session runs Eduardo's own account. `message.any` covers
+incoming + outgoing; subscribe it alone (subscribing both would duplicate
+incoming events). The listener accepts either event name, canonicalizes
+lid-form chat ids to `@g.us`/`@c.us` (LID rollout broke the chat filter
+silently on 2026-08-02 — see ../waha/README.md incident log), records the
+sender's `push_name`, and INFO-logs every rejected chat id so a filter
+mismatch can never be silent again.
 
 ## Deploy / update
 
