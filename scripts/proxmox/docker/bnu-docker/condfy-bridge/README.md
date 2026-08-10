@@ -2,7 +2,9 @@
 
 Bridges gate-access events from the **Condfy** condo portal (Céu Azul, the ARA
 house site in Araquari) into Home Assistant over MQTT, and pings the ARA
-WhatsApp group when a watched person passes a gate.
+WhatsApp group when a watched person passes a gate. Once a week it also renders
+a **presence report** (JPEG timeline) from the stored events and sends it to
+its own WhatsApp group — see [Weekly presence report](#weekly-presence-report).
 
 The portal keeps only a ~4-day rolling window of notifications and shows relative
 times ("há uma hora"), so this service exists to give the events a durable,
@@ -94,8 +96,36 @@ have been sent), and the JID is shape-validated before any send.
 | `MQTT_*` | `BNU_MQTT_*` | Mosquitto add-on on bnu-homeassistant |
 | `WAHA_API_KEY` / `WAHA_SESSION` | `BNU_WAHA_API_KEY` / `BNU_WAHA_SESSION` | shared gateway |
 | `GROUP_JID` | `ARA_WHATSAPP_GROUP_JID` | ARA house group; empty = WhatsApp off |
+| `REPORT_GROUP_JID` | `ARA_CONDFY_REPORT_GROUP_JID` | weekly report target; empty = report off |
+| `REPORT_PERSON` / `REPORT_PERSON_DISPLAY` | `ARA_CONDFY_REPORT_PERSON` / `_DISPLAY` | feed name matched / name shown |
+| `REPORT_DOW` / `REPORT_HOUR_LOCAL` | `ARA_CONDFY_REPORT_DOW` / `_HOUR_LOCAL` | fire slot, default `sun` / `8` |
 
 Config-only changes need no rebuild: edit `.env`, then `docker compose up -d`.
+
+## Weekly presence report
+
+Every `REPORT_DOW` at `REPORT_HOUR_LOCAL` (default Sunday 08:00
+America/Sao_Paulo) the bridge renders the **previous Sun–Sat week** of
+`REPORT_PERSON`'s gate passages as a JPEG timeline — day columns, one block per
+presence interval labelled start/end/duration, metric cards with the weekly
+total — and sends it with a pt-BR caption to `REPORT_GROUP_JID` via WAHA
+(`sendImage` works on this Core build).
+
+Access events are **undirected** ("passou por portão …"), so presence is
+inferred with the house rule: the person does not sleep at the condo, therefore
+each day's passages alternate entrada → saída starting with an entrada. A
+trailing unpaired passage is an entrada whose saída was never recorded: it is
+drawn as an outline block, flagged in the caption and **excluded from the
+total**.
+
+Delivery is exactly-once per slot (`report_last_fire_utc` in the state table);
+a bridge that was down on Sunday sends the report as soon as it is back, and a
+failed attempt retries every 30 min rather than every poll. Manual runs:
+
+```
+docker compose run --rm condfy-bridge python app.py --report-dry   # render to /data, no send
+docker compose run --rm condfy-bridge python app.py --report-test <jid>   # send once to <jid>
+```
 
 ## MQTT topics
 
@@ -147,8 +177,8 @@ docker compose run --rm condfy-bridge python app.py --selftest   # one canned Wh
 Run both before deploying a change — they need only `requests` and take a second:
 
 ```
-python3 test_bridge.py          # 41 offline end-to-end checks, exits non-zero on failure
-python3 -m doctest condfy.py    # parsing, normalisation and timestamp helpers
+python3 test_bridge.py                    # offline end-to-end checks, exits non-zero on failure
+python3 -m doctest condfy.py report.py    # parsing, timestamps, pairing and scheduling helpers
 ```
 
 `test_bridge.py` stubs paho and WAHA and points the service at a throwaway SQLite

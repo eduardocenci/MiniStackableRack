@@ -429,6 +429,16 @@ def cmd_test(target):
 
 
 def main():
+    # Remote output is UTF-8 (pt-BR accents, emoji in WhatsApp captions) while a
+    # Windows console defaults to cp1252 — printing it verbatim raised
+    # UnicodeEncodeError and threw away the whole result. Substitute what the
+    # console cannot draw rather than failing the command.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
     args = sys.argv[1:]
     if not args or args[0] in ("-h", "--help", "help"):
         print(__doc__)

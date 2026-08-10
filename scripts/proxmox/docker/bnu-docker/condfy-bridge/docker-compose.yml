@@ -28,6 +28,12 @@ services:
       WAHA_API_KEY: "${WAHA_API_KEY}"
       WAHA_SESSION: "${WAHA_SESSION:-default}"
       GROUP_JID: "${GROUP_JID:-}"
+      # --- weekly presence report (empty REPORT_GROUP_JID = disabled) ---
+      REPORT_GROUP_JID: "${REPORT_GROUP_JID:-}"
+      REPORT_PERSON: "${REPORT_PERSON:-Enio Faqueti}"
+      REPORT_PERSON_DISPLAY: "${REPORT_PERSON_DISPLAY:-Ênio Faqueti}"
+      REPORT_DOW: "${REPORT_DOW:-sun}"
+      REPORT_HOUR_LOCAL: "${REPORT_HOUR_LOCAL:-8}"
       DB_PATH: "/data/condfy.db"
       TZ: "America/Sao_Paulo"
     volumes:

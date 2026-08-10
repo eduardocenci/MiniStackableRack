@@ -12,7 +12,10 @@ app's own unread state is untouched.
   python app.py             daemon (default)
   python app.py --once      a single poll, verbose, never alerts
   python app.py --selftest  one canned WhatsApp message, then exit
+  python app.py --report-dry            build last week's presence report, save only
+  python app.py --report-test [chatId]  build it and send to chatId (default REPORT_GROUP_JID)
 """
+import base64
 import json
 import logging
 import os
@@ -30,9 +33,10 @@ import requests
 from condfy import (ACCESS_TYPE, TZ, CondfyClient, LoginError, matches_watch,
                     parse_event_date, parse_message, slug)
 from mqtt_bridge import T_LAST_EVENT, MqttBridge
+from report import last_fire, parse_dow, render_image, report_caption, week_bounds, week_data
 from waha import WahaClient
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 log = logging.getLogger("condfy-bridge")
 
 PAGE_SIZE = 15
@@ -74,6 +78,11 @@ CFG = {
     "waha_url": env("WAHA_BASE_URL", "http://waha:3000"),
     "waha_key": os.environ.get("WAHA_API_KEY", ""),
     "waha_session": env("WAHA_SESSION", "default"),
+    "report_jid": env("REPORT_GROUP_JID"),
+    "report_person": env("REPORT_PERSON", "Enio Faqueti"),
+    "report_display": env("REPORT_PERSON_DISPLAY", "Ênio Faqueti"),
+    "report_dow": parse_dow(env("REPORT_DOW", "sun")),
+    "report_hour": env_int("REPORT_HOUR_LOCAL", 8),
 }
 
 SCHEMA = """
@@ -405,6 +414,60 @@ def health_alert(ctx, text, key, min_interval_s):
 
 
 # --------------------------------------------------------------------------- #
+# weekly presence report
+# --------------------------------------------------------------------------- #
+REPORT_RETRY_S = 1800
+
+
+def build_report(ctx, fire_local):
+    """Render last week's presence image; returns (data, jpeg_path)."""
+    start, end = week_bounds(fire_local)
+    data = week_data(ctx.db, slug(CFG["report_person"]), start, end)
+    path = f"/data/report-{start.isoformat()}.jpg"
+    render_image(data, CFG["report_display"], path)
+    return data, path
+
+
+def send_report(ctx, data, path, jid):
+    with open(path, "rb") as fh:
+        payload = base64.b64encode(fh.read()).decode()
+    ok, detail = ctx.waha.send_image_b64(
+        jid, payload, os.path.basename(path),
+        caption=report_caption(data, CFG["report_display"]))
+    log.info("weekly report → %s: %s (%s)", jid, "ok" if ok else "FAILED", detail)
+    return ok
+
+
+def maybe_send_report(ctx):
+    """Fire the weekly report once per schedule slot; late starts catch up.
+
+    The state gate makes the send exactly-once per fire time even across
+    restarts; a failed attempt retries every REPORT_RETRY_S rather than every
+    poll, so a broken WAHA session does not turn into a 60-second error loop.
+    """
+    jid = CFG["report_jid"]
+    if not jid:
+        return
+    if not JID_RE.match(jid):
+        log.error("REPORT_GROUP_JID %r is not a valid JID — weekly report off", jid)
+        return
+    fire = last_fire(datetime.now(TZ), CFG["report_dow"], CFG["report_hour"])
+    fire_utc = int(fire.timestamp())
+    if int(get_state(ctx.db, "report_last_fire_utc", 0) or 0) >= fire_utc:
+        return
+    last_try = int(get_state(ctx.db, "report_last_attempt_utc", 0) or 0)
+    if now() - last_try < REPORT_RETRY_S:
+        return
+    set_state(ctx.db, "report_last_attempt_utc", now())
+    try:
+        data, path = build_report(ctx, fire)
+        if send_report(ctx, data, path, jid):
+            set_state(ctx.db, "report_last_fire_utc", fire_utc)
+    except Exception:
+        log.exception("weekly report failed — retrying in %ds", REPORT_RETRY_S)
+
+
+# --------------------------------------------------------------------------- #
 # one poll cycle
 # --------------------------------------------------------------------------- #
 def poll(ctx, allow_alerts=True):
@@ -520,10 +583,25 @@ def main():
         level=logging.INFO, stream=sys.stdout,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    args = set(sys.argv[1:])
+    args = sys.argv[1:]
 
     if "--selftest" in args:
         return selftest(build_ctx(with_mqtt=False))
+
+    if "--report-dry" in args or "--report-test" in args:
+        ctx = build_ctx(with_mqtt=False)
+        fire = last_fire(datetime.now(TZ), CFG["report_dow"], CFG["report_hour"])
+        data, path = build_report(ctx, fire)
+        print(report_caption(data, CFG["report_display"]))
+        print(f"image: {path}")
+        if "--report-dry" in args:
+            return 0
+        i = args.index("--report-test")
+        jid = args[i + 1] if i + 1 < len(args) else CFG["report_jid"]
+        if not jid or not JID_RE.match(jid):
+            log.error("--report-test needs a valid chat JID (arg or REPORT_GROUP_JID)")
+            return 1
+        return 0 if send_report(ctx, data, path, jid) else 1
 
     once = "--once" in args
     ctx = build_ctx(with_mqtt=True)
@@ -577,6 +655,8 @@ def main():
             ctx.failures += 1
             delay = BACKOFF[min(ctx.failures - 1, len(BACKOFF) - 1)]
             log.exception("unexpected poll failure (%d)", ctx.failures)
+
+        maybe_send_report(ctx)
 
         slept = 0.0
         step = delay + random.uniform(0, 0.2 * CFG["poll_seconds"])
