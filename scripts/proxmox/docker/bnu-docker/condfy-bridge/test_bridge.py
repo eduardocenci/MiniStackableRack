@@ -15,12 +15,14 @@ Stubs paho and WAHA, points the service at a throwaway SQLite file, and drives
   9. an unparseable sentence is still stored and still matches the watchlist
  10. a non-access notification routes to the notice topic
  11. while MQTT is down, events are held rather than marked published
+ 12. the weekly presence report pairs passages, fires exactly once per slot,
+     and backs off after a failure instead of retrying every poll
 
 No pytest, no network, nothing touched outside a temp directory — matching the
 waha-listener convention of plain scripts plus doctests. Run it after changing
-anything in app.py, and pair it with `python -m doctest condfy.py`:
+anything in app.py, and pair it with the doctests:
 
-    python3 test_bridge.py && python3 -m doctest condfy.py
+    python3 test_bridge.py && python3 -m doctest condfy.py report.py
 
 Exits non-zero if any check fails.
 """
@@ -270,6 +272,91 @@ ctx.mqtt.connected = True                                     # broker comes bac
 app.poll(ctx)
 row = ctx.db.execute("SELECT * FROM events WHERE id=735300007").fetchone()
 check("held event publishes once the broker returns", row["published"] == 1)
+
+# --- 12. weekly presence report --------------------------------------------- #
+import report  # noqa: E402
+from datetime import date  # noqa: E402
+
+
+def presence_row(eid, ts_local, person, type_name="CONTROLE_ACESSOS"):
+    ts = datetime.fromisoformat(ts_local)
+    ctx.db.execute(
+        "INSERT INTO events (id,type_name,title,message,raw_date,ts_local,ts_utc,"
+        "person,person_key,gate,gate_key,method,parsed,watched,first_seen_utc,"
+        "published,alerted,raw_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,1,1,?,1,1,'{}')",
+        (eid, type_name, "Céu Azul", f"{person} passou por portão grande utilizando tag",
+         ts_local[:16], ts_local, int(ts.timestamp()), person,
+         app.slug(person), "portão grande", "portao_grande", "tag", int(ts.timestamp())))
+
+
+# A person the other sections never touch: their fixtures are timestamped
+# relative to *now* and would otherwise bleed into this fixed week.
+WEEK = [  # Sun 2026-08-02 … Sat 2026-08-08
+    (900001, "2026-08-04T07:26:00-03:00", "Reporte Teste"),
+    (900002, "2026-08-04T07:29:00-03:00", "Reporte Teste"),
+    (900003, "2026-08-04T07:37:00-03:00", "Reporte Teste"),
+    (900004, "2026-08-04T11:08:00-03:00", "Reporte Teste"),
+    (900005, "2026-08-06T09:00:00-03:00", "Reporte Teste"),
+    (900006, "2026-08-06T10:30:00-03:00", "Reporte Teste"),
+    (900007, "2026-08-06T12:00:00-03:00", "Reporte Teste"),   # entrada sem saída
+    (900008, "2026-08-04T08:00:00-03:00", "Altair Dalpra"),   # outra pessoa
+    (900009, "2026-08-01T09:00:00-03:00", "Reporte Teste"),   # fora da semana
+]
+for eid, ts_local, person in WEEK:
+    presence_row(eid, ts_local, person)
+presence_row(900010, "2026-08-05T09:00:00-03:00", "Reporte Teste", type_name="AVISO")
+ctx.db.commit()
+
+wd = report.week_data(ctx.db, "reporte_teste", date(2026, 8, 2), date(2026, 8, 8))
+check("report: passages counted", wd["passages"] == 7)
+check("report: days present", wd["days_present"] == 2)
+check("report: tuesday pairs into two blocks", len(wd["days"][2]["blocks"]) == 2)
+check("report: tuesday minutes 3+211", int(wd["days"][2]["minutes"]) == 214)
+check("report: thursday keeps the open entrada",
+      wd["days"][4]["open_entry"] is not None and len(wd["days"][4]["blocks"]) == 1)
+check("report: open entrada excluded from the total", int(wd["total_min"]) == 304)
+check("report: other person and out-of-week rows ignored",
+      all(e["ts"].date() >= date(2026, 8, 2) for d in wd["days"] for e in d["events"]))
+cap = report.report_caption(wd, "Ênio Faqueti")
+check("report caption carries the total", "5 h 4 min" in cap)
+check("report caption flags the missing saída", "sem saída" in cap)
+
+_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+try:
+    from PIL import Image  # noqa: F401
+    HAVE_RENDER = os.path.exists(_FONT)
+except ImportError:
+    HAVE_RENDER = False
+if HAVE_RENDER:
+    out_jpg = report.render_image(wd, "Ênio Faqueti",
+                                  os.path.join(tempfile.mkdtemp(), "report.jpg"))
+    check("report image renders non-trivially", os.path.getsize(out_jpg) > 20000)
+else:
+    print("  skip render_image (Pillow or DejaVu fonts not available here)")
+
+REPORT_SENT = []
+orig_build, orig_send = app.build_report, app.send_report
+app.build_report = lambda ctx, fire: (wd, "/tmp/fake.jpg")
+app.send_report = lambda ctx, data, path, jid: (REPORT_SENT.append(jid), True)[1]
+app.CFG["report_jid"] = TEST_JID
+app.set_state(ctx.db, "report_last_fire_utc", 0)
+app.set_state(ctx.db, "report_last_attempt_utc", 0)
+app.maybe_send_report(ctx)
+check("report fires once its slot is due", REPORT_SENT == [TEST_JID])
+app.maybe_send_report(ctx)
+check("report does not fire twice for the same slot", len(REPORT_SENT) == 1)
+
+FAILS = []
+app.set_state(ctx.db, "report_last_fire_utc", 0)
+app.set_state(ctx.db, "report_last_attempt_utc", 0)
+app.build_report = lambda ctx, fire: FAILS.append(1) or (_ for _ in ()).throw(RuntimeError("boom"))
+app.maybe_send_report(ctx)
+check("failed report leaves the slot unsent",
+      int(app.get_state(ctx.db, "report_last_fire_utc")) == 0 and len(FAILS) == 1)
+app.maybe_send_report(ctx)
+check("failed report backs off instead of retrying next poll", len(FAILS) == 1)
+app.build_report, app.send_report = orig_build, orig_send
+app.CFG["report_jid"] = ""
 
 total = ctx.db.execute("SELECT COUNT(*) FROM events").fetchone()[0]
 print(f"\nevents stored: {total} | whatsapp sent: {len(SENT)}")

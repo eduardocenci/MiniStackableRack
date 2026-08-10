@@ -109,6 +109,16 @@ list. Never open a browser unless every CLI/API option is exhausted.
   the only way to do non-interactive password auth. `devtool.py` handles both.
 - Git Bash mangles remote paths starting with `/` — prefix with
   `MSYS_NO_PATHCONV=1` when passing them to a remote command.
+- `push` (paramiko SFTP) can stall or drop mid-batch on a loaded host — seen
+  2026-08-09 on bnu-proxmox at load ~22, where three files landed and the
+  fourth hung until timeout. Reliable fallback for text files: base64 the
+  content into a `run` command (`echo <b64> | base64 -d > /path`), which goes
+  over the already-open exec channel instead of opening an SFTP subsystem.
+- Non-ASCII in remote output (accents, emoji) used to crash `devtool.py` on
+  this machine's cp1252 stdout. Fixed 2026-08-09: `main()` reconfigures
+  stdout/stderr to UTF-8 with `errors="replace"`, so no `PYTHONIOENCODING`
+  prefix is needed. Undrawable glyphs render as `?` instead of losing the
+  command's whole output.
 
 ## 4. Guests: VMs, LXCs and containers
 
