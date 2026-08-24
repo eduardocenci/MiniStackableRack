@@ -10,7 +10,7 @@ Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=WAYLAND_DISPLAY=wayland-0
 ExecStart=/usr/bin/mpv --fullscreen --force-window=yes --no-osc \
   --no-input-default-bindings --no-audio --rtsp-transport=tcp \
-  --profile=low-latency --hwdec=auto-safe --keep-open=no \
+  --profile=low-latency --hwdec=auto-copy --keep-open=no \
   --stop-screensaver=yes --network-timeout=10 \
   rtsp://ara-raspberrypi:8554/canteiro
 Restart=always
