@@ -14,11 +14,24 @@ rtsp://ara-raspberrypi:8554/canteiro ──tailnet──▶ go2rtc on bnu-raspbe
 | `http://10.1.1.123:1984/api/stream.mp4?src=canteiro_h264` | H.264 hardware transcode (fallback for HEVC-rejecting renderers) |
 | `http://10.1.1.123:1984/` | go2rtc web UI (diagnostics) |
 
-Consumed by the **bnu HA script `script.canteiro_na_tv_60`** ("Canteiro na
-TV 60\""), which wakes the Samsung AU8000 60" (`samsungtv` entity, WoL) and
-pushes the MP4 URL to its DLNA renderer (`media_player.samsung_au8000_60_tv`).
-The 55" Neo QLED is a Google Cast target instead (`media_player.qn85f1443`)
-— it can cast the same URL once "Power On with Mobile" is enabled on it.
+Consumed by the **bnu HA script `script.canteiro_na_tv`** ("Canteiro na
+TV"), which casts the **HEVC passthrough** URL to the 55" Neo QLED
+(`media_player.qn85f1443`, Samsung's 2026 native Google Cast receiver).
+
+Findings from the 2026-08-24 test session (what works and what doesn't):
+- **55" Neo QLED via Google Cast + progressive MP4: WORKS** — including
+  native HEVC decode (2304×1296 passthrough, no transcode). This is the
+  production path.
+- 55" via Cast + go2rtc **HLS**: the Default Media Receiver launches but
+  never fetches segments (CORS headers were present; the receiver just
+  rejects this HLS flavor). Use `stream.mp4`, not `stream.m3u8`.
+- 60" AU8000 via **DLNA** (`media_player.samsung_au8000_60_tv`): accepts
+  the push, flashes "playing", then drops to idle without fetching video —
+  for both MP4 and HLS. Samsung's DMR does not play endless live streams;
+  the 60" is a dead end for this feed (its script was removed).
+- Cold power-on of the 55" over the network requires the TV setting
+  **"Power On with Mobile"** — in deep standby the Cast entity is
+  `unavailable` and `media_player.turn_on` has nothing to talk to.
 
 The API is unauthenticated by design — LAN + tailnet exposure only, same
 trust level as the relay. `10.1.1.123` is a DHCP lease; pin a reservation on
