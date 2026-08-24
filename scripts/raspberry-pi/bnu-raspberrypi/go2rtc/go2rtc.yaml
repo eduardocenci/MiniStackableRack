@@ -1,0 +1,34 @@
+# go2rtc — LAN-facing restream of the ARA canteiro camera (bnu-raspberrypi)
+#
+# Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/go2rtc/go2rtc.yaml
+# Live copy:          bnu-raspberrypi:/etc/go2rtc/go2rtc.yaml
+#
+# Purpose: devices on the bnu house LAN (e.g. the Samsung AU8000 60" TV via
+# DLNA) cannot reach the tailnet-only relay on ara-raspberrypi. This instance
+# pulls the relay over the tailnet and re-serves it on the LAN as
+# progressive fMP4 over HTTP — the most DLNA-friendly live container:
+#
+#   http://10.1.1.123:1984/api/stream.mp4?src=canteiro         (HEVC, copy)
+#   http://10.1.1.123:1984/api/stream.mp4?src=canteiro_h264    (H.264 transcode,
+#                                     fallback for renderers that reject HEVC)
+#
+# 10.1.1.123 is the Pi's DHCP lease — pin a reservation on the EdgeRouter if
+# it ever drifts (the HA script hardcodes it; Cast/DLNA devices cannot
+# resolve names).
+
+api:
+  listen: ":1984"
+
+# The ffmpeg transcode pipeline returns via go2rtc's internal RTSP server —
+# it must stay enabled, but localhost-only (disabling it breaks ffmpeg:
+# sources with "exec: rtsp module disabled").
+rtsp:
+  listen: "127.0.0.1:8554"
+webrtc:
+  listen: ""
+
+streams:
+  canteiro: rtsp://ara-raspberrypi:8554/canteiro
+  # H.264 fallback: hardware encode (h264_v4l2m2m) on the Pi via ffmpeg,
+  # downscaled to 1920 wide (the Pi 4 hw encoder cannot take 2304×1296).
+  canteiro_h264: ffmpeg:canteiro#video=h264#hardware#width=1920

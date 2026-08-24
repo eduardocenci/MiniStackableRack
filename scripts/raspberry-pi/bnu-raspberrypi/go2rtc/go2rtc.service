@@ -1,0 +1,20 @@
+[Unit]
+Description=go2rtc - LAN restream of the ARA canteiro camera
+After=network-online.target tailscaled.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+User=go2rtc
+Group=go2rtc
+SupplementaryGroups=video
+ExecStart=/usr/local/bin/go2rtc -config /etc/go2rtc/go2rtc.yaml
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
