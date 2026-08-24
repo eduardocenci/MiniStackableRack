@@ -1,0 +1,47 @@
+###############################################################################
+# MediaMTX — RTSP relay of the ARA canteiro camera onto the tailnet
+#
+# Authoritative copy: scripts/raspberry-pi/ara-raspberrypi/mediamtx/mediamtx.yml
+# Live copy:          ara-raspberrypi:/etc/mediamtx/mediamtx.yml
+#                     (640 root:mediamtx — the live copy carries the real
+#                     access key in place of __ARA_CANTEIRO_CAM_KEY__, value
+#                     from repo-root .env ARA_CANTEIRO_CAM_KEY; URL-encode it
+#                     if it contains symbols)
+#
+# Camera: Intelbras iM9+ Full Color (Mibo) "iM9 M Full Color-9411" at
+#         192.168.1.56 on the ara house LAN. RTSP is factory-enabled on :554
+#         (Digest auth): user admin, password = the camera's "chave de acesso"
+#         (printed on the sticker on the camera base; the factory key keeps
+#         working for RTSP even if the app key is later changed).
+# Consumer: bnu-raspberrypi screen (canteiro-screen.service) via
+#           rtsp://ara-raspberrypi:8554/canteiro
+###############################################################################
+
+logLevel: info
+
+rtsp: yes
+rtspAddress: :8554
+rtspTransports: [tcp]   # no UDP listeners; the tailnet consumer uses TCP
+rtmp: no
+hls: no
+webrtc: no
+srt: no
+moq: no                 # default-on in v1.20+; would open :8892/:8893
+api: no
+metrics: no
+pprof: no
+
+paths:
+  # channel=1 / channel=2 select the two lenses (fixed pátio/rua vs PT
+  # interior); which number is which lens is only observable after an
+  # authenticated connect — if the screen shows the wrong lens, swap the
+  # channel numbers here and `systemctl restart mediamtx`.
+  # subtype=0 = main stream (H.265 3MP), subtype=1 = substream (H.264 640x480).
+  canteiro:
+    source: rtsp://admin:__ARA_CANTEIRO_CAM_KEY__@192.168.1.56:554/cam/realmonitor?channel=1&subtype=0
+    rtspTransport: tcp
+    sourceOnDemand: no      # keep pulling 24/7 — instant attach for the wall screen
+  canteiro-alt:
+    source: rtsp://admin:__ARA_CANTEIRO_CAM_KEY__@192.168.1.56:554/cam/realmonitor?channel=2&subtype=0
+    rtspTransport: tcp
+    sourceOnDemand: yes     # second lens, pulled only when someone watches it

@@ -1,0 +1,20 @@
+[Unit]
+Description=ARA canteiro live camera on the attached screen (mpv)
+After=graphical.target network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+User=eduardocenci
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=WAYLAND_DISPLAY=wayland-0
+ExecStart=/usr/bin/mpv --fullscreen --force-window=yes --no-osc \
+  --no-input-default-bindings --no-audio --rtsp-transport=tcp \
+  --profile=low-latency --hwdec=auto-safe --keep-open=no \
+  --stop-screensaver=yes --network-timeout=10 \
+  rtsp://ara-raspberrypi:8554/canteiro
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=graphical.target

@@ -79,6 +79,19 @@ resolves only on tailnet nodes, so inside LXC 101 `getent hosts bnu-win11`
 fails. When configuring one LAN-only service to call another host, use the LAN
 IP and add a DHCP reservation — do not "improve" it to a tailnet name.
 
+### ARA (home build — not a rack site, not in devtool.py)
+
+`ara-raspberrypi` is a tailnet node (the "computadorzinho" in the canteiro
+shed): reach it with plain `ssh eduardocenci@ara-raspberrypi` (key auth since
+2026-08-24; COMMON `RASPBERRYPI_LOGIN/PW` is the password fallback via
+paramiko). `devtool.py` does **not** know ara — `devtool.py lan` cannot hop
+here; hop manually through the Pi for the ara LAN-only devices:
+
+| ARA LAN-only device | Address | What it is |
+|---|---|---|
+| Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by `mediamtx` on the Pi (`rtsp://ara-raspberrypi:8554/canteiro`) |
+| Starlink router | `192.168.1.1` | house LAN gateway (DHCP for the whole `192.168.1.0/24`) |
+
 ### Re-authentication
 Key expiry is disabled on every node, and every Windows node runs Tailscale in
 **unattended mode** so the tunnel survives reboot without a desktop login
@@ -167,9 +180,10 @@ structure with placeholders and must be kept in sync.
 
 **Credential mirrors** (drift points — the root `.env` is authoritative, but
 these hold live copies): `bnu-raspberrypi:~/globalnet/.env`, HA `secrets.yaml`,
-the NAS compose `.env` + `copyparty.local.conf`, and on LXC 101
+the NAS compose `.env` + `copyparty.local.conf`, on LXC 101
 `/opt/waha/docker-compose.yml` (hardcoded), `/opt/waha-listener/.env`,
-`/opt/condfy-bridge/.env`.
+`/opt/condfy-bridge/.env`, and `ara-raspberrypi:/etc/mediamtx/mediamtx.yml`
+(camera `ARA_CANTEIRO_CAM_KEY` embedded in the source URLs).
 
 ## 6. Tailscale: preventing re-authentication
 
