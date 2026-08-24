@@ -107,6 +107,10 @@ list. Never open a browser unless every CLI/API option is exhausted.
 - `plink` and `sshpass` are **not installed** — do not use them.
 - OpenSSH (`ssh`, via Git Bash) works for key auth; **paramiko** (installed) is
   the only way to do non-interactive password auth. `devtool.py` handles both.
+- Plain `ssh`/`scp` fail with "Host key verification failed" for hosts not yet
+  in Git Bash's `known_hosts` (seen 2026-08-24 with `bnu-proxmox`); `devtool.py`
+  is immune (paramiko `AutoAddPolicy`). Use `devtool.py pull`, not `scp`, to
+  copy files off a device.
 - Git Bash mangles remote paths starting with `/` — prefix with
   `MSYS_NO_PATHCONV=1` when passing them to a remote command.
 - `push` (paramiko SFTP) can stall or drop mid-batch on a loaded host — seen

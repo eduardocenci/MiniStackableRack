@@ -318,8 +318,10 @@ check("report: open entrada excluded from the total", int(wd["total_min"]) == 30
 check("report: other person and out-of-week rows ignored",
       all(e["ts"].date() >= date(2026, 8, 2) for d in wd["days"] for e in d["events"]))
 cap = report.report_caption(wd, "Ênio Faqueti")
-check("report caption carries the total", "5 h 4 min" in cap)
+check("report caption carries the total", "5h 4m" in cap)
 check("report caption flags the missing saída", "sem saída" in cap)
+check("report caption has no pernoita/pairing disclaimer",
+      "pernoita" not in cap and "pareadas" not in cap)
 
 _FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 try:

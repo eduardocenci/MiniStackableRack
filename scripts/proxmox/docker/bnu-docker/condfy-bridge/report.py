@@ -11,11 +11,11 @@ Pure stdlib except render_image(), which imports Pillow lazily so the offline
 test suite runs without it.
 
 >>> fmt_minutes(214)
-'3 h 34 min'
+'3h 34m'
 >>> fmt_minutes(45)
-'45 min'
+'45m'
 >>> fmt_minutes(0)
-'0 min'
+'0m'
 """
 from datetime import date, datetime, timedelta
 
@@ -34,14 +34,14 @@ CARD = (244, 243, 238)
 
 
 def fmt_minutes(total_min):
-    """Whole minutes → 'H h MM min' / 'M min'."""
+    """Whole minutes → 'Xh Ym' / 'Xh' / 'Ym'."""
     total_min = int(round(total_min))
     h, m = divmod(total_min, 60)
     if h and m:
-        return f"{h} h {m} min"
+        return f"{h}h {m}m"
     if h:
-        return f"{h} h"
-    return f"{m} min"
+        return f"{h}h"
+    return f"{m}m"
 
 
 def parse_dow(text, default=6):
@@ -142,7 +142,6 @@ def report_caption(data, display_name):
     ]
     if any(d["open_entry"] for d in data["days"]):
         lines.append("⚠️ Há entrada sem saída registrada — fora do total.")
-    lines.append("_Entradas/saídas pareadas por passagem de tag (não pernoita)._")
     return "\n".join(lines)
 
 
@@ -194,7 +193,7 @@ def render_image(data, display_name, out_path):
     gutter = 96
     grid_top = 322
     grid_h = (hi - lo) * pph
-    foot_h = 120
+    foot_h = 88
     height = grid_top + 44 + grid_h + foot_h
     col_w = (width - margin * 2 - gutter) / 7
 
@@ -243,6 +242,15 @@ def render_image(data, display_name, out_path):
     def y_of(ts):
         return grid_top + (ts.hour + ts.minute / 60 + ts.second / 3600 - lo) * pph
 
+    def hits(rect, rects):
+        ax0, ay0, ax1, ay1 = rect
+        return any(ax0 < bx1 and bx0 < ax1 and ay0 < by1 and by0 < ay1
+                   for bx0, by0, bx1, by1 in rects)
+
+    grid_bot = grid_top + grid_h
+    obstacles = []   # drawn block rects + placed floating labels (labels bleed sideways)
+    floating = []    # labels of blocks too short to hold text: (y0, y1, xm, text, fnt, fill)
+
     for offset, day in enumerate(data["days"]):
         x0 = grid_left + offset * col_w + 7
         x1 = grid_left + (offset + 1) * col_w - 7
@@ -255,35 +263,54 @@ def render_image(data, display_name, out_path):
             y0, y1 = y_of(t_in), max(y_of(t_out), y_of(t_in) + 7)
             d.rounded_rectangle([x0, y0, x1, y1], radius=7,
                                 fill=TEAL_FILL, outline=TEAL_EDGE, width=2)
+            obstacles.append((x0, y0, x1, y1))
             mins = (t_out - t_in).total_seconds() / 60
             label_in = t_in.strftime("%H:%M")
             label_out = t_out.strftime("%H:%M")
-            if y1 - y0 >= 108:
-                for text, ty, bold in [
-                        (label_in, y0 + 8, False),
-                        (fmt_minutes(mins), (y0 + y1) / 2 - 14, True),
-                        (label_out, y1 - 30, False)]:
-                    w = d.textlength(text, font=font(21, bold))
-                    d.text((xm - w / 2, ty), text, font=font(21, bold), fill=TEAL_TEXT)
+            if y1 - y0 >= 104:
+                rows = [(label_in, y0 + 8, 21, False),
+                        (fmt_minutes(mins), (y0 + y1) / 2 - 14, 21, True),
+                        (label_out, y1 - 30, 21, False)]
+            elif y1 - y0 >= 72:
+                rows = [(label_in, y0 + 4, 17, False),
+                        (fmt_minutes(mins), (y0 + y1) / 2 - 10, 17, True),
+                        (label_out, y1 - 24, 17, False)]
             else:
-                text = f"{label_in}–{label_out} · {fmt_minutes(mins)}"
-                w = d.textlength(text, font=font(18))
-                ty = y0 - 26 if y0 - 26 > grid_top else y1 + 6
-                d.text((xm - w / 2, ty), text, font=font(18), fill=TEAL_TEXT)
+                floating.append((y0, y1, xm,
+                                 f"{label_in}–{label_out} · {fmt_minutes(mins)}",
+                                 font(18), TEAL_TEXT))
+                rows = []
+            for text, ty, size, bold in rows:
+                w = d.textlength(text, font=font(size, bold))
+                d.text((xm - w / 2, ty), text, font=font(size, bold), fill=TEAL_TEXT)
         if day["open_entry"]:
             entry = day["open_entry"]
             y0 = y_of(entry)
             d.rounded_rectangle([x0, y0, x1, y0 + 26], radius=7, outline=TEAL_EDGE, width=2)
-            text = f"{entry.strftime('%H:%M')} · saída não registrada"
-            w = d.textlength(text, font=font(17))
-            d.text((xm - w / 2, y0 + 32), text, font=font(17), fill=INK_SOFT)
+            obstacles.append((x0, y0, x1, y0 + 26))
+            floating.append((y0, y0 + 26, xm,
+                             f"{entry.strftime('%H:%M')} · saída não registrada",
+                             font(17), INK_SOFT))
+
+    # Floating labels dodge everything already drawn: preferred spot is just
+    # above the block, then just below, then pushed further until free.
+    lh = 24
+    for y0, y1, xm, text, fnt, fill in sorted(floating, key=lambda f: f[0]):
+        w = d.textlength(text, font=fnt)
+        lx = min(max(xm - w / 2, margin), width - margin - w)
+        spots = ([y0 - lh - 2, y1 + 4]
+                 + [y1 + 4 + k * lh for k in range(1, 8)]
+                 + [y0 - lh - 2 - k * lh for k in range(1, 8)])
+        ty = next((t for t in spots
+                   if grid_top + 2 <= t and t + lh <= grid_bot
+                   and not hits((lx - 4, t, lx + w + 4, t + lh), obstacles)),
+                  y1 + 4)
+        d.text((lx, ty + 2), text, font=fnt, fill=fill)
+        obstacles.append((lx - 4, ty, lx + w + 4, ty + lh))
 
     foot_y = grid_top + grid_h + 34
     d.text((margin, foot_y),
-           "Fonte: registros de acesso Condfy (tag) · entradas/saídas pareadas por dia",
-           font=font(19), fill=INK_MUTED)
-    d.text((margin, foot_y + 30),
-           "— assume-se que não pernoita no condomínio. Dias sem barra: sem passagem de tag.",
+           "Fonte: registros de acesso Condfy (tag) · dias sem barra: sem passagem de tag",
            font=font(19), fill=INK_MUTED)
 
     img.save(out_path, "JPEG", quality=92)
