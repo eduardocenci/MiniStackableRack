@@ -18,6 +18,15 @@ Consumed by the **bnu HA script `script.canteiro_na_tv`** ("Canteiro na
 TV"), which casts the **HEVC passthrough** URL to the 55" Neo QLED
 (`media_player.qn85f1443`, Samsung's 2026 native Google Cast receiver).
 
+**One-click control (browser bookmarks).** Two HA webhook automations on
+bnu-homeassistant expose start/stop as plain-GET URLs (no login — the long
+random id is the credential; tailnet/LAN reachable only):
+`automation.webhook_canteiro_na_tv_ligar` → `script.canteiro_na_tv`, and
+`automation.webhook_canteiro_na_tv_parar` → `media_player.media_stop` on the
+TV. The live bookmark URLs (with the secret ids) are in the repo-root `.env`
+as `ARA_TV_WEBHOOK_ON` / `ARA_TV_WEBHOOK_OFF`. Clicking either returns a
+blank HTTP 200 — that is normal for an HA webhook.
+
 Findings from the 2026-08-24 test session (what works and what doesn't):
 - **55" Neo QLED via Google Cast + progressive MP4: WORKS** — including
   native HEVC decode (2304×1296 passthrough, no transcode). This is the
