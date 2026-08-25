@@ -55,3 +55,8 @@ credential mirror (listed in `REMOTE_ACCESS.md` §5).
   payload when image encryption is on).
 - Camera IP drifted → it is a DHCP lease on the Starlink router; update
   `192.168.1.56` here or pin a reservation in the Starlink app.
+- After replacing `/etc/mediamtx/mediamtx.yml`, always
+  `sudo systemctl restart mediamtx` — do NOT trust the hot-reload: it can
+  catch the file mid-write, fall back to an all-defaults config (extra
+  listeners on :1935/:8888/:8889/:8890/:8892, "path 'canteiro' is not
+  configured") and never recover (seen 2026-08-24).

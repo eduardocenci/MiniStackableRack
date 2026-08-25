@@ -32,10 +32,10 @@ metrics: no
 pprof: no
 
 paths:
-  # channel=1 / channel=2 select the two lenses (fixed pátio/rua vs PT
-  # interior); which number is which lens is only observable after an
-  # authenticated connect — if the screen shows the wrong lens, swap the
-  # channel numbers here and `systemctl restart mediamtx`.
+  # Lens mapping (verified 2026-08-24 by moving the PT lens and watching the
+  # streams): channel=1 = PT lens (motorized, auto-tracking; ONVIF
+  # Profile000) — this is what the bnu screen/TV shows; channel=2 = fixed
+  # lens. Aim the PT lens with `canteiro-ptz` (see ../ptz/).
   # subtype=0 = main stream (H.265 3MP), subtype=1 = substream (H.264 640x480).
   canteiro:
     source: rtsp://admin:__ARA_CANTEIRO_CAM_KEY__@192.168.1.56:554/cam/realmonitor?channel=1&subtype=0

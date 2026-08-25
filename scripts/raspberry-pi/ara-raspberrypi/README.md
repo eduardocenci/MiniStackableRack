@@ -18,7 +18,7 @@ services here are plain systemd units.
 
 | Device | Address | Notes |
 |---|---|---|
-| Intelbras iM9+ Full Color ("iM9 M Full Color-9411") | `192.168.1.56` | Dual-lens site camera (fixed = pátio/rua, PT = inside the shed). RTSP always on at `:554` (Digest, user `admin`, password = the camera's **chave de acesso**, `.env` `ARA_CANTEIRO_CAM_KEY`). ONVIF on `:80`. DHCP lease — pin a reservation in the Starlink app if it drifts. |
+| Intelbras iM9+ Full Color ("iM9 M Full Color-9411", model iM9-M) | `192.168.1.56` | Dual-lens site camera: RTSP channel 1 = **PT lens** (motorized, auto-tracking — aim it with [`ptz/`](ptz/)), channel 2 = fixed lens. RTSP always on at `:554` (Digest, user `admin`, password = the **Device Password** set in the Mibo app, `.env` `ARA_CANTEIRO_CAM_KEY`). ONVIF on `:80`. DHCP lease — pin a reservation in the Starlink app if it drifts. |
 | Starlink router | `192.168.1.1` | House LAN gateway |
 
 ## Services
