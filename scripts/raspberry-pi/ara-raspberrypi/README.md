@@ -40,6 +40,18 @@ prune — see [`../README.md`](../README.md)).
   (`rtsp://192.168.1.56:554/cam/realmonitor?channel=<1|2>&subtype=1`) —
   cheap detect feed. Channel 1's is relayed as `canteiro-sub` and feeds the
   bnu Frigate object detection (person/vehicle) — see [`mediamtx/`](mediamtx/).
+- **OSD/watermark**: the media service reports `OSD="true"` but exposes only
+  ONE OSD object — `OSDTIME`, the bottom-left date/time text stamp (this one
+  IS removable/movable via `SetOSD`/`DeleteOSD` — **don't**: it is the
+  burned-in ground-truth stamp the timelapse relies on). `GetOSDOptions`
+  says `Image="0"`, text-only — so the top-left **"intelbras" logo is not an
+  OSD object and cannot be removed via ONVIF**, and the Dahua CGI that would
+  do it (`VideoWidget[n].PictureTitle`) is the locked 401 endpoint. If the
+  logo is removable at all it is a Mibo-app camera setting ("Marca d'água",
+  standard on the Imou family — cloud-mediated like presets/tracking) or,
+  failing that, S.I.M. Next over the [`dvrip-bridge/`](dvrip-bridge/);
+  locally the only alternative is pixel-level `delogo`/crop on the
+  timelapse frames (the live relay is copy-only — no re-encode on this Pi).
 
 ## Services
 
