@@ -30,9 +30,12 @@ a report missed while the Pi was off goes out at the next boot.
 ## Test without pinging the family
 
 ```
-/usr/local/bin/canteiro-presenca.py --test            # → TEST_JID (SmokeTests)
-/usr/local/bin/canteiro-presenca.py --test <chatId>   # → any chat
+sudo bash -c 'set -a; . /etc/canteiro-presenca.env; set +a; canteiro-presenca.py --test'            # → TEST_JID (SmokeTests)
+sudo bash -c 'set -a; . /etc/canteiro-presenca.env; set +a; canteiro-presenca.py --test <chatId>'   # → any chat
 ```
+
+(`sudo` because `/etc/canteiro-presenca.env` is mode 600 root — systemd
+reads it itself for the timer runs; verified 2026-08-26, HTTP 201.)
 
 The message is the real report prefixed with `[TESTE]`.
 
