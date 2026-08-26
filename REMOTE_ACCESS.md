@@ -97,7 +97,7 @@ ms365 MCP are NOT available on every machine — a run without them files
 sheet+local archive and leaves Drive uploads/share links as checklist items
 (see the finance-hangar/ingest skills' degraded modes).
 
-### ARA (home build — not a rack site, not in devtool.py)
+### ARA (home build — dashboard site `home: true`, still not in devtool.py)
 
 `ara-raspberrypi` is a tailnet node (the "computadorzinho" in the canteiro
 shed): reach it with plain `ssh eduardocenci@ara-raspberrypi` (key auth since
@@ -105,7 +105,12 @@ shed): reach it with plain `ssh eduardocenci@ara-raspberrypi` (key auth since
 paramiko). `devtool.py` does **not** know ara — `devtool.py lan` cannot hop
 here; hop manually through the Pi for the ara LAN-only devices. The Pi runs
 the standard netoverview container (since 2026-08-26): what is on the house
-LAN is visible at `http://ara-raspberrypi:5000` without SSH:
+LAN is visible at `http://ara-raspberrypi:5000` without SSH. Same day, ara
+became a **dashboard site** in `globalnet/architecture.yaml` (`home: true` —
+nodes `ara_rpi`/`ara_nto`, camera + Starlink router via `netoverview_probe`;
+audited by `make fleet`), and the ara netoverview's `/api/presence` feeds
+the daily 20:00 obra-presence WhatsApp report (`canteiro-presenca` timer on
+bnu-raspberrypi):
 
 | ARA LAN-only device | Address | What it is |
 |---|---|---|

@@ -3,8 +3,10 @@
 The "computadorzinho" installed in the site shed (barracão) at the ARA build,
 powered up together with the Starlink kit and the Intelbras camera on
 2026-08-18 (home-ara DOC-2026-197/200). **ara is a home build, not a rack
-site** — this Pi is not in `globalnet/architecture.yaml` and `make fleet`
-does not audit it. Services here are plain systemd units, plus Docker
+site**, but since 2026-08-26 it IS a dashboard site: registered in
+`globalnet/architecture.yaml` as `home: true` (nodes `ara_rpi`/`ara_nto` +
+camera/router probes; `make fleet` audits this Pi like the rack ones —
+decisão Eduardo). Services here are plain systemd units, plus Docker
 running the standard **netoverview** container (deployed 2026-08-26, same
 shape as the rack Pis: compose at `~/netoverview` + 5-min pull cron with
 prune — see [`../README.md`](../README.md)).
@@ -58,5 +60,5 @@ prune — see [`../README.md`](../README.md)).
 | Service | What it does |
 |---|---|
 | [`mediamtx/`](mediamtx/) | RTSP relay: pulls the iM9 camera streams and re-serves them on the tailnet at `rtsp://ara-raspberrypi:8554/canteiro` (+ `canteiro-alt`, `canteiro-sub`). Sole tailnet consumer: go2rtc on bnu-raspberrypi, which fans out to the wall screen, the TV and the bnu Frigate NVR (recording + person/vehicle detection of the obra since 2026-08-26) |
-| netoverview (Docker) | LAN discovery/ARP monitor of the house LAN `192.168.1.0/24` · web UI `http://ara-raspberrypi:5000` · standard fleet compose (`netoverview/netoverview_docker/docker-compose.yml` → `~/netoverview/`), self-updates via the 5-min pull cron |
+| netoverview (Docker) | LAN discovery/ARP monitor of the house LAN `192.168.1.0/24` · web UI `http://ara-raspberrypi:5000` · standard fleet compose (`netoverview/netoverview_docker/docker-compose.yml` → `~/netoverview/`), self-updates via the 5-min pull cron · its `/api/presence` feeds the daily 20:00 obra-presence WhatsApp report ([`../bnu-raspberrypi/canteiro-presenca/`](../bnu-raspberrypi/canteiro-presenca/)) |
 | [`timelapse/`](timelapse/) | Daily construction-timelapse frames off the local relay: 5 sunset windows (T−20…T+20, PT lens + fixed-lens twin, NOAA sunset per day) + worker-presence frames every 25 min 07:00–17:50 → nightly 20:00 `rclone move` to Google Drive `CeuAzul/Timelapse/` (AI ground-truth for build progress; see home-ara CLAUDE.md) |

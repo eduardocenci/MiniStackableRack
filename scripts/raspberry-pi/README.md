@@ -3,8 +3,9 @@
 One Pi per rack site (`<site>-raspberrypi`), each a 29 GB-SD Raspberry Pi 4
 running the netoverview container (bnu additionally runs globalnet). The ara
 Pi (`ara-raspberrypi/`) is a home-build device — systemd services plus the
-netoverview container since 2026-08-26 (58 GB SD); it stays out of
-`globalnet/architecture.yaml` because ara is not a rack site.
+netoverview container since 2026-08-26 (58 GB SD); registered the same day
+in `globalnet/architecture.yaml` as a `home: true` site (decisão Eduardo),
+so `make fleet` audits it like the rack Pis.
 
 ## Docker auto-update MUST include a prune
 

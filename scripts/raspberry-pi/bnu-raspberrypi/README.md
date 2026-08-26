@@ -18,6 +18,8 @@ Network monitoring node of the bnu rack; also drives the canteiro screen
 | netoverview | LAN discovery container (`cenci/netoverview:latest`, host networking; compose lives on the Pi at `~/netoverview/`, sourced from the netoverview repo) |
 | [`go2rtc/`](go2rtc/) | Restream hub of the ARA canteiro camera — single Starlink pull fanned out to the wall screen, TV cast, browser live view and the bnu Frigate NVR (LXC 105) |
 | [`canteiro-screen/`](canteiro-screen/) | systemd unit: mpv fullscreen of the ARA site camera (reads the local go2rtc) |
+| [`canteiro-watchdog/`](canteiro-watchdog/) | systemd timer (60 s): WhatsApp alert with the last frame when the ARA canteiro relay drops, recovery message when it returns |
+| [`canteiro-presenca/`](canteiro-presenca/) | systemd timer (daily 20:00 America/Sao_Paulo): WhatsApp report of how many people were at the ARA obra today, from the ara netoverview `/api/presence` |
 | wayvnc | VNC access to the desktop session |
 
 ## Docker auto-update cron (and disk-space guard)
