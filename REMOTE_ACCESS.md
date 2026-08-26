@@ -79,6 +79,24 @@ resolves only on tailnet nodes, so inside LXC 101 `getent hosts bnu-win11`
 fails. When configuring one LAN-only service to call another host, use the LAN
 IP and add a DHCP reservation — do not "improve" it to a tailnet name.
 
+**Reaching LXC 101's HTTP services off-LAN (finance-hangar wa-sweep off-site).**
+`devtool.py lan` is one-shot; a client that makes MANY HTTP calls
+(`finance.listener_client` pulling a WhatsApp archive + media) needs a real
+port-forward through `bnu-proxmox`. Plain `ssh -L` may fail (key auth — see
+Tooling constraints), so use a **paramiko forwarder** (SSHClient with
+`PROXMOX_PW` fallback + `transport.open_channel("direct-tcpip", …)` behind a
+ThreadingTCPServer) forwarding BOTH ports — `18788 → 10.1.1.126:8788`
+(waha-listener) **and** `13000 → 10.1.1.126:3000` (WAHA gateway: media-rescue
+fallback AND `waha_send` group replies both hit it) — then run the pipeline
+with `BNU_WAHA_LISTENER_URL=http://127.0.0.1:18788
+BNU_WAHA_API_URL=http://127.0.0.1:13000` (`finance.config.cfg` lets env vars
+override `.env`). Forwarding only 8788 makes every media fetch hang ~2 min in
+the WAHA fallback before failing (seen 2026-08-26 from ply-desktop). Google
+Sheets/Drive APIs need no tunnel. Note the Drive-for-Desktop mount and the
+ms365 MCP are NOT available on every machine — a run without them files
+sheet+local archive and leaves Drive uploads/share links as checklist items
+(see the finance-hangar/ingest skills' degraded modes).
+
 ### ARA (home build — not a rack site, not in devtool.py)
 
 `ara-raspberrypi` is a tailnet node (the "computadorzinho" in the canteiro
@@ -109,7 +127,7 @@ so plain `ssh` works non-interactively.
 | Proxmox | `<region>-proxmox` | SSH → web `https://<host>:8006` | `root` | **key**, else `PROXMOX_PW` | SFTP OK. Gateway to all guests (§4) |
 | Home Assistant | `<region>-homeassistant` | **REST API** → SSH add-on → web `:8123` | `hassio` | REST: `<REGION>_HA_TOKEN`; SSH: `HA_SSH_PW` **password only** | Add-on SSH has **no key auth** and **no SFTP**; `/config` needs `sudo` → `push` uses `base64 -d \| sudo tee` |
 | Windows 11 VM | `<region>-win11` | SSH → guest agent (§4) → RDP | `eduardocenci` | **key** | Default shell is **PowerShell**. No SFTP — `push`/`pull` go through base64 |
-| Raspberry Pi | `<region>-raspberrypi` | SSH | `eduardocenci` | **key**, else `RASPBERRYPI_PW` | SFTP OK |
+| Raspberry Pi | `<region>-raspberrypi` | SSH | `eduardocenci` | **key**, else `RASPBERRYPI_PW` | SFTP OK. `sudo` is passwordless on bnu/bg but **asks a password on fln** (seen 2026-08-26) — plain `docker` works everywhere (user in `docker` group); for root-only cmds on fln pipe the password: `devtool.ssh_run(dev, "sudo -S <cmd>", input_bytes=(ENV["RASPBERRYPI_PW"]+"\n").encode())` |
 | GL-KVM | `<region>-glkvm` | SSH → web `http://<host>` | `root` | **key**, else `GLKVM_PW` | Runs **dropbear**: keys live in `/etc/dropbear/authorized_keys`, not just `~/.ssh`. SFTP may fail → devtool falls back to base64 |
 | Synology NAS | `ply-nas-ds918plus` (alias `ply-nas`) | SSH → DSM web `:5000` | `PLY_NAS_SSH_LOGIN` | **key**, else `PLY_NAS_SSH_PW` | Only at ply. Docker still needs root: `echo $PW \| sudo -S docker …`; compose is v1 at `/usr/local/bin/docker-compose` |
 
@@ -120,6 +138,16 @@ list. Never open a browser unless every CLI/API option is exhausted.
 - `plink` and `sshpass` are **not installed** — do not use them.
 - OpenSSH (`ssh`, via Git Bash) works for key auth; **paramiko** (installed) is
   the only way to do non-interactive password auth. `devtool.py` handles both.
+- **Key auth to `bnu-proxmox` FAILS from ply-desktop** (2026-08-26: plain
+  `ssh root@bnu-proxmox` → "Permission denied (publickey,password)" — the
+  pubkey is not in its authorized_keys). `devtool.py` still reports OK because
+  paramiko silently falls back to `PROXMOX_PW`. Re-authorize the key or keep
+  using the password path; `ssh -L` tunnels need the paramiko forwarder (§2).
+- Finance-pipeline Python deps (`gspread`, `google-api-python-client`, `msal`,
+  `faster-whisper`) installed on ply-desktop 2026-08-26 — local finance/ingest
+  runs work here, but this machine has NO Drive-for-Desktop mount (no `G:`)
+  and no ms365 MCP: Drive uploads and OneDrive share links defer to a
+  mounted/Graph-capable run.
 - Plain `ssh`/`scp` fail with "Host key verification failed" for hosts not yet
   in Git Bash's `known_hosts` (seen 2026-08-24 with `bnu-proxmox`); `devtool.py`
   is immune (paramiko `AutoAddPolicy`). Use `devtool.py pull`, not `scp`, to
