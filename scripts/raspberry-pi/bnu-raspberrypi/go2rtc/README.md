@@ -22,11 +22,21 @@ exists only as a compatibility fallback for other devices, used sparingly.
 If the TV ever needs H.264 permanently, restream the camera's native
 substream (channel=1&subtype=1, H.264 640×480 — zero transcode) instead.
 
-| URL (LAN) | Content |
+| URL (LAN `10.1.1.123` / tailnet `bnu-raspberrypi` = `100.91.64.62`) | Content |
 |---|---|
-| `http://10.1.1.123:1984/api/stream.mp4?src=canteiro` | HEVC passthrough (2304×1296) |
-| `http://10.1.1.123:1984/api/stream.mp4?src=canteiro_h264` | H.264 hardware transcode (fallback for HEVC-rejecting renderers) |
-| `http://10.1.1.123:1984/` | go2rtc web UI (diagnostics) |
+| `…:1984/api/stream.mp4?src=canteiro` | HEVC passthrough (2304×1296) — the TV cast |
+| `…:1984/stream.html?src=canteiro&mode=mse` | **browser live view** (phone/PC bookmark; HEVC via MSE — verified in-browser 2026-08-26) |
+| `…:1984/stream.html?src=canteiro_h264` | browser fallback if a device can't decode HEVC (starts the on-demand transcode — occasional use only) |
+| `…:1984/` | go2rtc web UI (diagnostics) |
+
+Every viewer above consumes the **shared local producer** — N phones/PCs
+load bnu's network only; ara's Starlink always carries exactly one copy.
+Away from home the links work over the tailnet (Tailscale app on the
+device). **Bookmark the full MagicDNS FQDN**
+(`bnu-raspberrypi.woodpecker-shark.ts.net`) — it also resolves for users
+who got the node as a *shared* device from another tailnet, where the short
+name does not. Live-view bookmarks are recorded in the repo-root `.env`
+(`ARA_LIVE_VIEW_URL*`).
 
 Consumed by the **bnu HA script `script.canteiro_na_tv`** ("Canteiro na
 TV"), which casts the **HEVC passthrough** URL to the 55" Neo QLED

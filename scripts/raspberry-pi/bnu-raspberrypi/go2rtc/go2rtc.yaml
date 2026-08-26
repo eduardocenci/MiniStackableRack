@@ -29,6 +29,10 @@ webrtc:
 
 streams:
   canteiro: rtsp://ara-raspberrypi:8554/canteiro
-  # H.264 fallback: hardware encode (h264_v4l2m2m) on the Pi via ffmpeg,
+  # H.264 transcode fallback: hardware encode (h264_v4l2m2m) via ffmpeg,
   # downscaled to 1920 wide (the Pi 4 hw encoder cannot take 2304×1296).
+  # It consumes the SHARED local canteiro producer (no extra pull from ara),
+  # but the software HEVC decode costs real CPU — fine for occasional
+  # browser viewing, NEVER as a continuous consumer (Pi hit load ~6 when the
+  # TV cast used it on 2026-08-26).
   canteiro_h264: ffmpeg:canteiro#video=h264#hardware#width=1920
