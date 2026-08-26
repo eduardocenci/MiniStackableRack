@@ -41,7 +41,12 @@ The message is the real report prefixed with `[TESTE]`.
 
 ## Giving devices real names
 
-Unnamed phones render as `aparelho …7a:14:8c`. Phones use per-SSID random
-but **stable** MACs, so a nickname set once in the ara netoverview UI
-(`http://ara-raspberrypi:5000`, MAC-keyed) sticks — e.g. rename the mestre
-de obra's phone after matching the MAC in the Starlink app's device list.
+Names are now **automatic**: `starlink-names` on the ara Pi
+([`../../ara-raspberrypi/starlink-names/`](../../ara-raspberrypi/starlink-names/))
+syncs the Starlink router's client names into netoverview nicknames every
+5 min, so a phone shows up as "Galaxy-A54-5G"/"A23-de-Edy" minutes after
+it first joins the Wi-Fi. Phones use per-SSID random but **stable** MACs,
+so the name sticks. Manual renames in the ara netoverview UI
+(`http://ara-raspberrypi:5000`, MAC-keyed) always win — the sync never
+overwrites them. A nicknamed non-fixed device is also what the bnu HA
+Frigate gate counts as a "known phone" (see `frigate_whatsapp.py`).

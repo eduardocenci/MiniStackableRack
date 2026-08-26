@@ -115,7 +115,7 @@ bnu-raspberrypi):
 | ARA LAN-only device | Address | What it is |
 |---|---|---|
 | Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by `mediamtx` on the Pi (`rtsp://ara-raspberrypi:8554/canteiro`). Each lens also has a 640×480 H264 substream (`subtype=1`; channel 1's is relayed as `canteiro-sub` — the bnu Frigate detect feed since 2026-08-26). ONVIF **events work** (PullPoint, probed 2026-08-26): topics are motion/tamper/scene-change only — **no person/vehicle classification locally** (that stays in the Imou cloud/Mibo app; CGI remains 401) |
-| Starlink router | `192.168.1.1` | house LAN gateway (DHCP for the whole `192.168.1.0/24`) |
+| Starlink router | `192.168.1.1` | house LAN gateway (DHCP for the whole `192.168.1.0/24`). **Local gRPC API works** (`192.168.1.1:9000`, reflection on): `grpcurl -plaintext -d '{"wifi_get_clients":{}}' 192.168.1.1:9000 SpaceX.API.Device.Device/Handle` → associated clients with **name+MAC+IP** (what the app shows; `wifi_set_client_given_name` also exists). No local roster of DISCONNECTED clients (that list lives in the Starlink cloud — probed 2026-08-26). `grpcurl` v1.9.1 installed at `/usr/local/bin` on the Pi; `starlink-names.timer` syncs these names into netoverview nicknames every 5 min |
 
 ### Re-authentication
 Key expiry is disabled on every node, and every Windows node runs Tailscale in
@@ -132,7 +132,7 @@ so plain `ssh` works non-interactively.
 | Device | Host name | LLM interface (in priority order) | User | Auth | Notes |
 |---|---|---|---|---|---|
 | Proxmox | `<region>-proxmox` | SSH → web `https://<host>:8006` | `root` | **key**, else `PROXMOX_PW` | SFTP OK. Gateway to all guests (§4) |
-| Home Assistant | `<region>-homeassistant` | **REST API** → SSH add-on → web `:8123` | `hassio` | REST: `<REGION>_HA_TOKEN`; SSH: `HA_SSH_PW` **password only** | Add-on SSH has **no key auth** and **no SFTP**; `/config` needs `sudo` → `push` uses `base64 -d \| sudo tee` |
+| Home Assistant | `<region>-homeassistant` | **REST API** → SSH add-on → web `:8123` | `hassio` | REST: `<REGION>_HA_TOKEN`; SSH: `HA_SSH_PW` **password only** | Add-on SSH has **no key auth** and **no SFTP**; `/config` needs `sudo` → `push` uses `base64 -d \| sudo tee`. **MagicDNS names do NOT resolve inside HA containers** (add-on shell and core alike, seen 2026-08-26: `ara-raspberrypi` → HTTP 000 while `100.66.255.82` → 200) — scripts under `/config` must use tailnet `100.x` IPs. The add-on shell also lacks `requests`; the core container (where `shell_command` runs) has it — test scripts via `shell_command` + `?return_response`, not the SSH shell |
 | Windows 11 VM | `<region>-win11` | SSH → guest agent (§4) → RDP | `eduardocenci` | **key** | Default shell is **PowerShell**. No SFTP — `push`/`pull` go through base64 |
 | Raspberry Pi | `<region>-raspberrypi` | SSH | `eduardocenci` | **key**, else `RASPBERRYPI_PW` | SFTP OK. `sudo` is passwordless on bnu/bg but **asks a password on fln** (seen 2026-08-26) — plain `docker` works everywhere (user in `docker` group); for root-only cmds on fln pipe the password: `devtool.ssh_run(dev, "sudo -S <cmd>", input_bytes=(ENV["RASPBERRYPI_PW"]+"\n").encode())` |
 | GL-KVM | `<region>-glkvm` | SSH → web `http://<host>` | `root` | **key**, else `GLKVM_PW` | Runs **dropbear**: keys live in `/etc/dropbear/authorized_keys`, not just `~/.ssh`. SFTP may fail → devtool falls back to base64 |

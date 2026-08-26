@@ -6,12 +6,24 @@ Deploy to: /config/scripts/frigate_whatsapp.py
 Usage: python3 frigate_whatsapp.py <review_id>
 
 SECURITY CONSTRAINTS (enforced in code):
-  - Sends to exactly ONE destination: secrets["whatsapp_group_jid"] (Casa Blumenau)
+  - Destinations limited to the TWO group JIDs from secrets.yaml:
+    whatsapp_group_jid (Casa Blumenau, default) and
+    whatsapp_group_jid_ceuazul (Casa Céu Azul — obra cameras). Each review
+    is sent to exactly ONE of them, chosen by the review's camera.
   - Makes ZERO read calls to the WhatsApp API (no fetchMessages, fetchChats, etc.)
-  - Outbound API calls: sendText (guaranteed) + sendMedia GIF attempt, both to ALLOWED_JID
+  - Outbound API calls: sendText (guaranteed) + sendMedia GIF attempt, both
+    to the single chosen JID
+
+ARA presence gate (decisão Eduardo 26/08/2026): reviews of the obra cameras
+(CEUAZUL_CAMERAS) are sent ONLY when no known phone is online on the
+canteiro LAN — "known" = a device the ara netoverview shows online WITH a
+nickname (auto-synced from the Starlink router by starlink-names on the ara
+Pi), fixed gear excluded. netoverview unreachable → fail open (send).
 
 Reads config from /config/secrets.yaml. Reuses the GIF already downloaded by
 frigate_email.py if present; otherwise downloads it itself.
+Debug: `frigate_whatsapp.py --presence-test` prints the gate + routing
+state without sending anything.
 """
 
 import base64
@@ -44,6 +56,33 @@ logging.basicConfig(level=logging.INFO, handlers=[_handler])
 log = logging.getLogger(__name__)
 
 _SEVERITY_EMOJI = {"alert": "🟡", "detection": "🔵"}
+
+# ── ARA (obra) routing + presence gate ────────────────────────────────────────
+CEUAZUL_CAMERAS = {"canteiro", "canteiro_sub"}
+# Tailnet IP of ara-raspberrypi — MagicDNS names may not resolve inside the
+# HA container (same reason canteiro-watchdog defaults to the IP)
+ARA_NTO_DEVICES = "http://100.66.255.82:5000/api/devices"
+ARA_FIXED_MACS  = {"74:24:9f:c5:b2:5f", "54:ba:d9:bd:34:e3"}  # Starlink router, iM9 camera
+ARA_FIXED_HOSTS = ("ara-raspberrypi",)
+
+
+def known_phone_online() -> tuple[bool, str]:
+    """(True, nickname) when a known (nicknamed) non-fixed device is online at ARA."""
+    try:
+        r = requests.get(ARA_NTO_DEVICES, timeout=10)
+        r.raise_for_status()
+        for d in r.json().get("devices", []):
+            if not d.get("online") or not d.get("nickname"):
+                continue
+            mac  = (d.get("mac") or "").lower()
+            host = (d.get("hostname") or "").lower()
+            if mac in ARA_FIXED_MACS or any(h in host for h in ARA_FIXED_HOSTS):
+                continue
+            return True, d["nickname"]
+        return False, ""
+    except Exception as exc:  # fail open: a flaky Starlink must not swallow alerts
+        log.warning("ARA presence check failed (%s) — failing open", exc)
+        return False, ""
 
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
@@ -188,17 +227,27 @@ def main() -> None:
         log.error("Usage: frigate_whatsapp.py <review_id>")
         sys.exit(1)
 
+    if sys.argv[1] == "--presence-test":
+        secrets = load_secrets()
+        present, who = known_phone_online()
+        print(f"known_phone_online={present} ({who or '-'}) | "
+              f"canteiro→{secrets.get('whatsapp_group_jid_ceuazul', 'MISSING')} | "
+              f"default→{secrets.get('whatsapp_group_jid')}")
+        return
+
     review_id = sys.argv[1].strip()
     gif_path  = os.path.join(GIF_DIR, f"frigate_{review_id}.gif")
 
     secrets = load_secrets()
     client  = WahaClient(secrets)
 
-    # SECURITY: enforce single allowed destination — no other JID may be used
-    ALLOWED_JID = secrets["whatsapp_group_jid"]
-    if not ALLOWED_JID or "@g.us" not in ALLOWED_JID:
-        log.error("whatsapp_group_jid in secrets.yaml is missing or not a group JID (@g.us). Aborting.")
-        sys.exit(1)
+    # SECURITY: destinations limited to the two group JIDs from secrets.yaml
+    DEFAULT_JID = secrets["whatsapp_group_jid"]                           # Casa Blumenau
+    CEUAZUL_JID = secrets.get("whatsapp_group_jid_ceuazul") or DEFAULT_JID  # Casa Céu Azul
+    for jid in (DEFAULT_JID, CEUAZUL_JID):
+        if not jid or "@g.us" not in jid:
+            log.error("whatsapp group JID missing or not a group JID (@g.us) in secrets.yaml. Aborting.")
+            sys.exit(1)
 
     base = frigate_base(secrets["frigate_host"], secrets["frigate_port"])
 
@@ -224,6 +273,18 @@ def main() -> None:
 
     if not has_genai(review):
         log.warning("GenAI not available after polling — sending without it")
+
+    # Per-camera destination + ARA presence gate
+    camera = review.get("camera", "")
+    if camera in CEUAZUL_CAMERAS:
+        ALLOWED_JID = CEUAZUL_JID
+        present, who = known_phone_online()
+        if present:
+            log.info("Suppressed — known phone online at the obra (%s); review %s (camera %s) not sent",
+                     who, review_id, camera)
+            return
+    else:
+        ALLOWED_JID = DEFAULT_JID
 
     # Get GIF: reuse if already downloaded by frigate_email.py, else fetch
     if os.path.exists(gif_path):
