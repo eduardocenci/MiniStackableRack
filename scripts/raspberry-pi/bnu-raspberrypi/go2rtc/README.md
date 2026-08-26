@@ -38,6 +38,17 @@ who got the node as a *shared* device from another tailnet, where the short
 name does not. Live-view bookmarks are recorded in the repo-root `.env`
 (`ARA_LIVE_VIEW_URL*`).
 
+**Browser links MUST be HTTPS via `tailscale serve`** (configured on the Pi
+2026-08-27, persists across reboots: `tailscale serve --bg
+http://127.0.0.1:1984` → `https://bnu-raspberrypi.woodpecker-shark.ts.net/`
+with an auto-renewed Let's Encrypt cert; `sudo tailscale serve status` to
+inspect, `sudo tailscale serve --https=443 off` to remove). Reason: `ts.net`
+is on the browsers' **HSTS preload list**, so phones/PCs force `https://` on
+that domain and plain `http://…:1984` dies with ERR_SSL_PROTOCOL_ERROR.
+WebSocket (the player's transport) proxies through serve fine (verified 101
+upgrade). The `:1984` HTTP endpoints remain for LAN/IP consumers (the TV
+cast uses `http://10.1.1.123:1984/...` — IPs are not HSTS'd).
+
 Consumed by the **bnu HA script `script.canteiro_na_tv`** ("Canteiro na
 TV"), which casts the **HEVC passthrough** URL to the 55" Neo QLED
 (`media_player.qn85f1443`, Samsung's 2026 native Google Cast receiver).
