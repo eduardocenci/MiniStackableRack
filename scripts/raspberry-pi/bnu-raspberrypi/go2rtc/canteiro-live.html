@@ -3,12 +3,12 @@
      Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/go2rtc/canteiro-live.html
      Live copy: bnu-raspberrypi:/usr/local/share/canteiro-live/index.html,
      served at https://bnu-raspberrypi.woodpecker-shark.ts.net/live via
-     `tailscale serve` (path /live). Video comes from the same origin:
+     `tailscale serve` (path /live). Video: same-origin
      /api/stream.m3u8?src=canteiro&mp4 (go2rtc, fMP4/HEVC HLS).
-     Why this page exists: desktop Chrome has no native HLS (go2rtc's
-     stream.html mode=hls only works on Safari/iOS) — hls.js fills the gap
-     with a configurable buffer that absorbs Starlink jitter (~10 s behind
-     live); on iOS it falls back to the native HLS player. -->
+     - hls.js with ~10 s buffer (absorbs Starlink jitter); native HLS on iOS.
+     - Offline screen: after ~15 s without recovery shows "CANTEIRO FORA DO
+       AR" with an offline timer, over the last good frame (canvas-captured
+       every 30 s while playing), retrying every 5 s forever. -->
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
@@ -19,27 +19,95 @@
   video { width: 100vw; height: 100vh; object-fit: contain; background: #000; }
   #msg { position: fixed; top: 12px; left: 12px; color: #9a9a9a;
          font: 14px system-ui, sans-serif; z-index: 2; }
+  #offline { position: fixed; inset: 0; display: none; z-index: 3;
+             background: #000; color: #eee; font-family: system-ui, sans-serif;
+             align-items: center; justify-content: center; text-align: center; }
+  #offline.show { display: flex; }
+  #lastframe { position: absolute; inset: 0; width: 100%; height: 100%;
+               object-fit: contain; opacity: 0.22; filter: grayscale(60%); }
+  #offbox { position: relative; z-index: 1; padding: 24px; }
+  #offbox .icon { font-size: 64px; }
+  #offbox h1 { margin: 12px 0 6px; font-size: 28px; letter-spacing: 1px; }
+  #offbox p { margin: 4px 0; color: #b5b5b5; font-size: 15px; }
+  #offbox .timer { color: #e0a030; font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
 <div id="msg">carregando…</div>
+<div id="offline">
+  <img id="lastframe" alt="" style="display:none">
+  <div id="offbox">
+    <div class="icon">📡</div>
+    <h1>CANTEIRO FORA DO AR</h1>
+    <p>Sem conexão com a obra — Starlink ou energia do barracão.</p>
+    <p class="timer">offline há <span id="offsecs">0:00</span></p>
+    <p>Reconexão automática ativa — a imagem volta sozinha.</p>
+  </div>
+</div>
 <video id="v" muted autoplay playsinline controls></video>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
   const SRC = '/api/stream.m3u8?src=canteiro&mp4';
+  const OFFLINE_AFTER_MS = 15000;   // tolera rebuffer curto antes de declarar queda
+  const RETRY_MS = 5000;
   const v = document.getElementById('v');
   const msg = document.getElementById('msg');
-  let hls = null, retryTimer = null;
+  const offline = document.getElementById('offline');
+  const offsecs = document.getElementById('offsecs');
+  const lastframe = document.getElementById('lastframe');
+  let hls = null, retryTimer = null, downSince = null, offTicker = null;
+  let lastFrameURL = null;
 
   function setMsg(t) { msg.textContent = t; msg.style.display = t ? 'block' : 'none'; }
+
+  // Guarda um quadro a cada 30 s enquanto toca — vira o fundo da tela offline.
+  setInterval(() => {
+    if (v.readyState >= 2 && !v.paused && v.videoWidth) {
+      try {
+        const c = document.createElement('canvas');
+        c.width = v.videoWidth / 2; c.height = v.videoHeight / 2;
+        c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+        lastFrameURL = c.toDataURL('image/jpeg', 0.7);
+      } catch (e) {}
+    }
+  }, 30000);
+
+  function fmt(ms) {
+    const s = Math.floor(ms / 1000), m = Math.floor(s / 60);
+    if (m >= 60) return Math.floor(m / 60) + 'h' + String(m % 60).padStart(2, '0');
+    return m + ':' + String(s % 60).padStart(2, '0');
+  }
+
+  function markDown() {
+    if (!downSince) downSince = Date.now();
+    if (Date.now() - downSince > OFFLINE_AFTER_MS && !offline.classList.contains('show')) {
+      if (lastFrameURL) { lastframe.src = lastFrameURL; lastframe.style.display = 'block'; }
+      offline.classList.add('show');
+      setMsg('');
+      offTicker = setInterval(() => { offsecs.textContent = fmt(Date.now() - downSince); }, 1000);
+    }
+  }
+
+  function markUp() {
+    downSince = null;
+    clearInterval(offTicker);
+    offline.classList.remove('show');
+    setMsg('');
+  }
+
+  function scheduleRetry() {
+    markDown();
+    if (!offline.classList.contains('show')) setMsg('reconectando…');
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(start, RETRY_MS);
+  }
 
   function start() {
     clearTimeout(retryTimer);
     if (window.Hls && Hls.isSupported()) {
       if (hls) { hls.destroy(); hls = null; }
       hls = new Hls({
-        // ~10 s atrás do ao vivo: buffer que absorve o jitter da Starlink.
-        liveSyncDuration: 10,
+        liveSyncDuration: 10,        // ~10 s atrás do ao vivo (absorve jitter)
         liveMaxLatencyDuration: 25,
         maxBufferLength: 30,
         backBufferLength: 10,
@@ -47,23 +115,23 @@
       });
       hls.loadSource(SRC);
       hls.attachMedia(v);
-      hls.on(Hls.Events.MANIFEST_PARSED, () => { setMsg(''); v.play().catch(() => {}); });
-      hls.on(Hls.Events.ERROR, (_e, data) => {
-        if (data.fatal) { setMsg('reconectando…'); retryTimer = setTimeout(start, 3000); }
-      });
+      hls.on(Hls.Events.FRAG_BUFFERED, () => { markUp(); v.play().catch(() => {}); });
+      hls.on(Hls.Events.ERROR, (_e, data) => { if (data.fatal) scheduleRetry(); });
     } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
-      // iOS/Safari: player HLS nativo (bufferiza sozinho).
-      v.src = SRC;
-      v.addEventListener('loadedmetadata', () => setMsg(''), { once: true });
+      v.src = SRC + '&_=' + Date.now();   // evita cache do player nativo iOS
       v.play().catch(() => {});
     } else {
       setMsg('navegador sem suporte a HLS');
     }
   }
 
-  v.addEventListener('error', () => { setMsg('reconectando…'); retryTimer = setTimeout(start, 3000); });
+  // Caminho nativo (iOS) + geral: 'playing' = up; erro/estagnação = down.
+  v.addEventListener('playing', markUp);
+  v.addEventListener('error', scheduleRetry);
+  v.addEventListener('stalled', markDown);
+  v.addEventListener('waiting', markDown);
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && v.paused) start();
+    if (!document.hidden && (v.paused || v.readyState < 3)) start();
   });
   start();
 </script>
