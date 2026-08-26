@@ -103,11 +103,13 @@ sheet+local archive and leaves Drive uploads/share links as checklist items
 shed): reach it with plain `ssh eduardocenci@ara-raspberrypi` (key auth since
 2026-08-24; COMMON `RASPBERRYPI_LOGIN/PW` is the password fallback via
 paramiko). `devtool.py` does **not** know ara — `devtool.py lan` cannot hop
-here; hop manually through the Pi for the ara LAN-only devices:
+here; hop manually through the Pi for the ara LAN-only devices. The Pi runs
+the standard netoverview container (since 2026-08-26): what is on the house
+LAN is visible at `http://ara-raspberrypi:5000` without SSH:
 
 | ARA LAN-only device | Address | What it is |
 |---|---|---|
-| Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by `mediamtx` on the Pi (`rtsp://ara-raspberrypi:8554/canteiro`) |
+| Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by `mediamtx` on the Pi (`rtsp://ara-raspberrypi:8554/canteiro`). Each lens also has a 640×480 substream (`subtype=1`, not relayed yet). ONVIF **events work** (PullPoint, probed 2026-08-26): topics are motion/tamper/scene-change only — **no person/vehicle classification locally** (that stays in the Imou cloud/Mibo app; CGI remains 401) |
 | Starlink router | `192.168.1.1` | house LAN gateway (DHCP for the whole `192.168.1.0/24`) |
 
 ### Re-authentication
