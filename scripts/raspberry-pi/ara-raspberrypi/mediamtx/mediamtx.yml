@@ -13,8 +13,11 @@
 #         (Digest auth): user admin, password = the camera's "chave de acesso"
 #         (printed on the sticker on the camera base; the factory key keeps
 #         working for RTSP even if the app key is later changed).
-# Consumer: bnu-raspberrypi screen (canteiro-screen.service) via
-#           rtsp://ara-raspberrypi:8554/canteiro
+# Consumers: go2rtc on bnu-raspberrypi pulls `canteiro` ONCE over the tailnet
+#            and fans it out on the bnu LAN (wall screen, TV cast, and the
+#            bnu Frigate LXC 105 record feed); Frigate's detect feed pulls
+#            `canteiro-sub`. Keep it this way — Starlink upload cannot
+#            sustain two parallel main-stream pulls (stall seen 2026-08-26).
 ###############################################################################
 
 logLevel: info
@@ -45,3 +48,7 @@ paths:
     source: rtsp://admin:__ARA_CANTEIRO_CAM_KEY__@192.168.1.56:554/cam/realmonitor?channel=2&subtype=0
     rtspTransport: tcp
     sourceOnDemand: yes     # second lens, pulled only when someone watches it
+  canteiro-sub:
+    source: rtsp://admin:__ARA_CANTEIRO_CAM_KEY__@192.168.1.56:554/cam/realmonitor?channel=1&subtype=1
+    rtspTransport: tcp
+    sourceOnDemand: yes     # PT-lens 640x480 H264 substream — bnu Frigate detect feed

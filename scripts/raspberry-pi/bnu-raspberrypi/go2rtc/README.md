@@ -1,14 +1,20 @@
 # go2rtc — canteiro restream for LAN devices (bnu-raspberrypi)
 
 Bridges the tailnet-only ARA camera relay onto the bnu house LAN, and is the
-**single upstream consumer**: everything at bnu (the wall screen AND the TV
-cast) reads from this go2rtc, which pulls the canteiro from ara exactly once:
+**single upstream consumer**: everything at bnu (the wall screen, the TV
+cast AND the bnu Frigate NVR) reads from this go2rtc, which pulls each
+canteiro stream from ara exactly once:
 
 ```
-rtsp://ara-raspberrypi:8554/canteiro ──tailnet (1 copy)──▶ go2rtc on bnu-raspberrypi
-                                                             ├─ rtsp://127.0.0.1:8554/canteiro → canteiro-screen (mpv)
-                                                             └─ /api/stream.mp4?src=canteiro → 55" TV (Cast)
+rtsp://ara-raspberrypi:8554/canteiro ──tailnet (1 copy each)──▶ go2rtc on bnu-raspberrypi
+                     + /canteiro-sub                             ├─ rtsp://127.0.0.1:8554/canteiro → canteiro-screen (mpv)
+                                                                 ├─ rtsp://10.1.1.123:8554/canteiro + canteiro_sub → bnu Frigate LXC 105 (record + person/vehicle detect, 2026-08-26)
+                                                                 └─ /api/stream.mp4?src=canteiro → 55" TV (Cast)
 ```
+
+The RTSP listener is LAN-exposed (`:8554`, was localhost-only until
+2026-08-26) so the Frigate LXC can attach as another reader of the shared
+producer — no reader auth, same LAN+tailnet trust as the `:1984` API.
 
 **Why single-pull (2026-08-26 incident):** with the wall screen reading ara
 directly *and* go2rtc pulling for the TV, daytime bitrate × 2 streams
@@ -29,6 +35,7 @@ substream (channel=1&subtype=1, H.264 640×480 — zero transcode) instead.
 | `…:1984/stream.html?src=canteiro&mode=hls` | go2rtc's own HLS page — **Safari/iOS only** (desktop Chrome has no native HLS and shows a black player) |
 | `…:1984/stream.html?src=canteiro&mode=mse` | low-latency view (~1 s behind live, but stutters on every network hiccup — HEVC via MSE) |
 | `…:1984/stream.html?src=canteiro_h264` | browser fallback if a device can't decode HEVC (starts the on-demand transcode — occasional use only) |
+| `…:8554/canteiro` · `…:8554/canteiro_sub` | RTSP (TCP) — Frigate's record feed (HEVC main) and detect feed (H.264 640×480 substream); also what the wall screen reads on localhost |
 | `…:1984/` | go2rtc web UI (diagnostics) |
 
 Every viewer above consumes the **shared local producer** — N phones/PCs
@@ -100,5 +107,8 @@ python scripts/devtool.py run bnu-raspberrypi "curl -s http://127.0.0.1:1984/api
 ```
 
 Streams are pulled from the relay **on demand** (go2rtc connects upstream
-only while a client is reading), so this adds Starlink upload at the
-canteiro only while a TV is actually playing.
+only while a client is reading). Since 2026-08-26 the bnu Frigate holds
+`canteiro` + `canteiro_sub` open 24/7 (record + detect), so the Starlink
+upload carries those two continuously (~main + substream bitrate) — that is
+the budgeted baseline, and it is still one copy of each; TV/browser viewers
+keep adding zero upstream load.

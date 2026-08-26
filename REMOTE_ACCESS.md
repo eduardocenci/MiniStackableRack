@@ -109,7 +109,7 @@ LAN is visible at `http://ara-raspberrypi:5000` without SSH:
 
 | ARA LAN-only device | Address | What it is |
 |---|---|---|
-| Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by `mediamtx` on the Pi (`rtsp://ara-raspberrypi:8554/canteiro`). Each lens also has a 640×480 substream (`subtype=1`, not relayed yet). ONVIF **events work** (PullPoint, probed 2026-08-26): topics are motion/tamper/scene-change only — **no person/vehicle classification locally** (that stays in the Imou cloud/Mibo app; CGI remains 401) |
+| Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by `mediamtx` on the Pi (`rtsp://ara-raspberrypi:8554/canteiro`). Each lens also has a 640×480 H264 substream (`subtype=1`; channel 1's is relayed as `canteiro-sub` — the bnu Frigate detect feed since 2026-08-26). ONVIF **events work** (PullPoint, probed 2026-08-26): topics are motion/tamper/scene-change only — **no person/vehicle classification locally** (that stays in the Imou cloud/Mibo app; CGI remains 401) |
 | Starlink router | `192.168.1.1` | house LAN gateway (DHCP for the whole `192.168.1.0/24`) |
 
 ### Re-authentication
@@ -140,11 +140,12 @@ list. Never open a browser unless every CLI/API option is exhausted.
 - `plink` and `sshpass` are **not installed** — do not use them.
 - OpenSSH (`ssh`, via Git Bash) works for key auth; **paramiko** (installed) is
   the only way to do non-interactive password auth. `devtool.py` handles both.
-- **Key auth to `bnu-proxmox` FAILS from ply-desktop** (2026-08-26: plain
-  `ssh root@bnu-proxmox` → "Permission denied (publickey,password)" — the
-  pubkey is not in its authorized_keys). `devtool.py` still reports OK because
-  paramiko silently falls back to `PROXMOX_PW`. Re-authorize the key or keep
-  using the password path; `ssh -L` tunnels need the paramiko forwarder (§2).
+- **Key auth to `bnu-proxmox` AND `bnu-raspberrypi` FAILS from ply-desktop**
+  (2026-08-26: plain `ssh` → "Permission denied (publickey,password)" — the
+  pubkey is not in their authorized_keys; `ara-raspberrypi` accepts it).
+  `devtool.py` still reports OK because paramiko silently falls back to
+  `PROXMOX_PW`/`RASPBERRYPI_PW`. Re-authorize the key or keep using the
+  password path; `ssh -L` tunnels need the paramiko forwarder (§2).
 - Finance-pipeline Python deps (`gspread`, `google-api-python-client`, `msal`,
   `faster-whisper`) installed on ply-desktop 2026-08-26 — local finance/ingest
   runs work here, but this machine has NO Drive-for-Desktop mount (no `G:`)
@@ -183,6 +184,11 @@ python scripts/devtool.py guest bnu 103 "Get-Process"    # VM   -> QEMU guest ag
   guest` picks PowerShell for Windows guests and `/bin/sh` for Linux ones, and
   polls `qm guest exec-status` for commands that outlive `qm`'s wait window.
 - LXCs do **not** use the QEMU agent — Proxmox talks to containers directly.
+- **Files in/out of an LXC**: stage through the Proxmox host —
+  `devtool.py run bnu-proxmox "pct pull 105 /config/config.yml /tmp/f.yml"`
+  then `devtool.py pull bnu-proxmox /tmp/f.yml ./f.yml` (reverse: `devtool.py
+  push` + `pct push`). Used for the bnu Frigate config — see
+  `scripts/proxmox/frigate/bnu-frigate/README.md`.
 - Docker containers live inside LXC 101 on bnu (`waha`, `waha-listener`,
   `condfy-bridge`, `netoverview-agent`) and on each Raspberry Pi.
 

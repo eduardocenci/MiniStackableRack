@@ -5,14 +5,16 @@ LAN-only) onto the tailnet so any fleet node can watch the obra without
 touching the camera or the house LAN:
 
 ```
-iM9 camera ──RTSP 554 (LAN)──▶ mediamtx on ara-raspberrypi ──RTSP 8554 (tailnet)──▶ viewers
-                                                                └─ bnu-raspberrypi screen
+iM9 camera ──RTSP 554 (LAN)──▶ mediamtx on ara-raspberrypi ──RTSP 8554 (tailnet)──▶ go2rtc on bnu-raspberrypi
+                                                                (single consumer)     ├─ wall screen + TV cast
+                                                                                      └─ bnu Frigate (record + detect)
 ```
 
 | Path | What it is |
 |---|---|
-| `rtsp://ara-raspberrypi:8554/canteiro` | lens on `channel=1`, main stream — pulled 24/7 (`sourceOnDemand: no`) |
+| `rtsp://ara-raspberrypi:8554/canteiro` | lens on `channel=1`, main stream (HEVC 2304×1296) — pulled 24/7 (`sourceOnDemand: no`) |
 | `rtsp://ara-raspberrypi:8554/canteiro-alt` | lens on `channel=2`, main stream — pulled on demand |
+| `rtsp://ara-raspberrypi:8554/canteiro-sub` | lens on `channel=1`, substream (H264 640×480) — on demand; bnu Frigate's detect feed (held open 24/7 while Frigate is up, added 2026-08-26) |
 
 The relay has no reader auth: it is reachable only from the tailnet and the
 house LAN, and the camera credential stays on this Pi.

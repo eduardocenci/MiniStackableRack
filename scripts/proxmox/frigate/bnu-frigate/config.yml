@@ -28,6 +28,8 @@ go2rtc: #
       - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/101
     frente_campainha:
       - ffmpeg:rtsp://admin:<BNU_CAMERA_PASSWORD>@10.1.1.65:554/Streaming/Channels/101#video=copy#audio=copy   # Before: rtsp://admin:<BNU_CAMERA_PASSWORD>@10.1.1.65:554/Streaming/Channels/101
+    canteiro: rtsp://10.1.1.123:8554/canteiro
+    canteiro_sub: rtsp://10.1.1.123:8554/canteiro_sub
   # http://10.1.1.160:1984/stream.html?src=frente_campainha&src=frente_garagem&src=frente_overview&src=frente_pedestres&src=frente_principal&src=fundos_overview&src=lateral_direita&src=lateral_esquerda&mode=webrtc,mse,hls,mjpeg
 
 ffmpeg:
@@ -453,6 +455,40 @@ cameras:
         coordinates: 0.002,0.573,0.819,0.622,0.821,0.297,-0.001,0.304
         loitering_time: 0
         friendly_name: Rua Pública
+  canteiro:
+    enabled: true
+    friendly_name: Canteiro ARA
+    # ARA site camera (Intelbras iM9+ PT lens) relayed ara-raspberrypi ->
+    # go2rtc on bnu-raspberrypi (10.1.1.123, shared single Starlink pull) ->
+    # here. Record = HEVC main stream; detect = 640x480 H264 substream.
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/canteiro
+          input_args: preset-rtsp-restream
+          roles:
+            - record
+        - path: rtsp://127.0.0.1:8554/canteiro_sub
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+    detect:
+      width: 640
+      height: 480
+    objects:
+      track:
+        - person
+        - car
+        - bus
+        - motorcycle
+        - bicycle
+    live:
+      streams:
+        Stream 1: canteiro
+        Stream 2: canteiro_sub
+    review:
+      genai:
+        enabled: true
+        activity_context_prompt: Analise estas imagens da câmera do canteiro de obras da casa em construção em Araquari (obra House Hangar). A câmera fica no barracão do canteiro e tem lente móvel com auto-tracking - o enquadramento pode mudar sozinho ao longo do vídeo. Canteiro ativo - em horário de obra são esperados trabalhadores, entregas de material, caminhões (betoneira, munck, caçamba) e máquinas. Descreva o que as pessoas e os veículos estão fazendo, por exemplo descarregando material, concretagem, escavação ou visita à obra. Fora do horário de obra, dê atenção especial a pessoas no canteiro. Se apenas veículos ou máquinas parados aparecem sem mudança ao longo de todo o vídeo, mencione isso (pode ser um falso positivo).
 objects:
   track:
     - person

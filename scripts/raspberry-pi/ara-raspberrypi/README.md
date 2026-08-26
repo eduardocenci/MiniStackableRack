@@ -22,6 +22,7 @@ prune — see [`../README.md`](../README.md)).
 | Device | Address | Notes |
 |---|---|---|
 | Intelbras iM9+ Full Color ("iM9 M Full Color-9411", model iM9-M) | `192.168.1.56` | Dual-lens site camera: RTSP channel 1 = **PT lens** (motorized, auto-tracking — aim it with [`ptz/`](ptz/)), channel 2 = fixed lens. RTSP always on at `:554` (Digest, user `admin`, password = the **Device Password** set in the Mibo app, `.env` `ARA_CANTEIRO_CAM_KEY`). ONVIF on `:80`. DHCP lease — pin a reservation in the Starlink app if it drifts. |
+| Starlink router | `192.168.1.1` | House LAN gateway |
 
 ### iM9 ONVIF event/stream facts (probed live 2026-08-26, fw 2.800.00IB00N.0.R)
 
@@ -37,12 +38,12 @@ prune — see [`../README.md`](../README.md)).
   on our side (e.g. bnu Frigate) from the relayed stream.
 - Every lens has a **640×480 H264 substream**: `subtype=1` in the RTSP path
   (`rtsp://192.168.1.56:554/cam/realmonitor?channel=<1|2>&subtype=1`) —
-  cheap detect/preview feed; not in the mediamtx relay yet.
-| Starlink router | `192.168.1.1` | House LAN gateway |
+  cheap detect feed. Channel 1's is relayed as `canteiro-sub` and feeds the
+  bnu Frigate object detection (person/vehicle) — see [`mediamtx/`](mediamtx/).
 
 ## Services
 
 | Service | What it does |
 |---|---|
-| [`mediamtx/`](mediamtx/) | RTSP relay: pulls the iM9 camera streams and re-serves them on the tailnet at `rtsp://ara-raspberrypi:8554/canteiro` (consumed by the bnu-raspberrypi screen) |
+| [`mediamtx/`](mediamtx/) | RTSP relay: pulls the iM9 camera streams and re-serves them on the tailnet at `rtsp://ara-raspberrypi:8554/canteiro` (+ `canteiro-alt`, `canteiro-sub`). Sole tailnet consumer: go2rtc on bnu-raspberrypi, which fans out to the wall screen, the TV and the bnu Frigate NVR (recording + person/vehicle detection of the obra since 2026-08-26) |
 | netoverview (Docker) | LAN discovery/ARP monitor of the house LAN `192.168.1.0/24` · web UI `http://ara-raspberrypi:5000` · standard fleet compose (`netoverview/netoverview_docker/docker-compose.yml` → `~/netoverview/`), self-updates via the 5-min pull cron |

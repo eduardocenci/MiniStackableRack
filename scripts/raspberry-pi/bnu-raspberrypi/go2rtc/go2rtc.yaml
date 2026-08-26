@@ -3,32 +3,39 @@
 # Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/go2rtc/go2rtc.yaml
 # Live copy:          bnu-raspberrypi:/etc/go2rtc/go2rtc.yaml
 #
-# Purpose: devices on the bnu house LAN (e.g. the Samsung AU8000 60" TV via
-# DLNA) cannot reach the tailnet-only relay on ara-raspberrypi. This instance
-# pulls the relay over the tailnet and re-serves it on the LAN as
-# progressive fMP4 over HTTP — the most DLNA-friendly live container:
-#
-#   http://10.1.1.123:1984/api/stream.mp4?src=canteiro         (HEVC, copy)
-#   http://10.1.1.123:1984/api/stream.mp4?src=canteiro_h264    (H.264 transcode,
-#                                     fallback for renderers that reject HEVC)
+# Purpose: pulls the tailnet-only relay on ara-raspberrypi ONCE per stream and
+# fans it out on the bnu house LAN, so ara's Starlink upload always carries a
+# single copy of each stream (two parallel main-stream readers stalled it —
+# 2026-08-26). Consumers:
+#   - wall screen: canteiro-screen.service (mpv, rtsp://127.0.0.1:8554/canteiro)
+#   - Samsung AU8000 60" TV via DLNA — progressive fMP4 over HTTP:
+#       http://10.1.1.123:1984/api/stream.mp4?src=canteiro         (HEVC, copy)
+#       http://10.1.1.123:1984/api/stream.mp4?src=canteiro_h264    (H.264 transcode,
+#                                         fallback for renderers that reject HEVC)
+#   - bnu Frigate (LXC 105, 10.1.1.160): record feed rtsp://10.1.1.123:8554/canteiro,
+#     detect feed rtsp://10.1.1.123:8554/canteiro_sub
 #
 # 10.1.1.123 is the Pi's DHCP lease — pin a reservation on the EdgeRouter if
-# it ever drifts (the HA script hardcodes it; Cast/DLNA devices cannot
-# resolve names).
+# it ever drifts (the HA script and the bnu Frigate config hardcode it;
+# Cast/DLNA devices cannot resolve names).
 
 api:
   listen: ":1984"
 
-# The ffmpeg transcode pipeline returns via go2rtc's internal RTSP server —
-# it must stay enabled, but localhost-only (disabling it breaks ffmpeg:
-# sources with "exec: rtsp module disabled").
+# RTSP serves BOTH the internal ffmpeg-transcode return path AND the LAN
+# consumers (wall screen on localhost, Frigate LXC on 10.1.1.160) — it must
+# listen on all interfaces, not 127.0.0.1. No reader auth: reachable from the
+# house LAN and tailnet only, same trust level as the :1984 HTTP API.
 rtsp:
-  listen: "127.0.0.1:8554"
+  listen: ":8554"
 webrtc:
   listen: ""
 
 streams:
   canteiro: rtsp://ara-raspberrypi:8554/canteiro
+  # PT-lens 640x480 H264 substream — bnu Frigate's detect feed (cheap decode,
+  # light on the Starlink upload).
+  canteiro_sub: rtsp://ara-raspberrypi:8554/canteiro-sub
   # H.264 transcode fallback: hardware encode (h264_v4l2m2m) via ffmpeg,
   # downscaled to 1920 wide (the Pi 4 hw encoder cannot take 2304×1296).
   # It consumes the SHARED local canteiro producer (no extra pull from ara),
