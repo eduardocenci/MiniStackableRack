@@ -42,18 +42,34 @@ prune — see [`../README.md`](../README.md)).
   (`rtsp://192.168.1.56:554/cam/realmonitor?channel=<1|2>&subtype=1`) —
   cheap detect feed. Channel 1's is relayed as `canteiro-sub` and feeds the
   bnu Frigate object detection (person/vehicle) — see [`mediamtx/`](mediamtx/).
-- **OSD/watermark**: the media service reports `OSD="true"` but exposes only
-  ONE OSD object — `OSDTIME`, the bottom-left date/time text stamp (this one
-  IS removable/movable via `SetOSD`/`DeleteOSD` — **don't**: it is the
-  burned-in ground-truth stamp the timelapse relies on). `GetOSDOptions`
-  says `Image="0"`, text-only — so the top-left **"intelbras" logo is not an
-  OSD object and cannot be removed via ONVIF**, and the Dahua CGI that would
-  do it (`VideoWidget[n].PictureTitle`) is the locked 401 endpoint. If the
-  logo is removable at all it is a Mibo-app camera setting ("Marca d'água",
-  standard on the Imou family — cloud-mediated like presets/tracking) or,
-  failing that, S.I.M. Next over the [`dvrip-bridge/`](dvrip-bridge/);
-  locally the only alternative is pixel-level `delogo`/crop on the
-  timelapse frames (the live relay is copy-only — no re-encode on this Pi).
+- **OSD/watermark** — the top-left **"intelbras" corner logo is NOT removable
+  at the camera on any interface** (fully probed 2026-08-26):
+  - ONVIF media service reports `OSD="true"` but exposes only ONE OSD object,
+    `OSDTIME` (bottom-left date/time; movable/removable via `SetOSD`/`DeleteOSD`
+    — **don't**, it is the ground-truth stamp the timelapse relies on).
+    `GetOSDOptions` is `Image="0"`, text-only.
+  - **RPC2 authenticates where the HTTP CGI is 401-locked** — the reusable win
+    here. `configManager.cgi` returns 401, but the Dahua/Intelbras **RPC2** JSON
+    API works with the device password (`admin` + `ARA_CANTEIRO_CAM_KEY`):
+    `POST http://192.168.1.56/RPC2_Login` `global.login` → challenge/response
+    (`h1=MD5(user:realm:pass)`, `h2=MD5(user:random:h1)`, both UPPER) → then
+    `configManager.getConfig`/`setConfig` on `http://192.168.1.56/RPC2`. This is
+    the S.I.M. Next / DMSS backend, scriptable — **use it for any future
+    camera-config change** (auth pattern mirrors [`ptz/canteiro-ptz.py`](ptz/canteiro-ptz.py)).
+  - Even over RPC2 the **logo is not a config object**: `VideoWidget` (both
+    channels) carries only `TimeTitle` (on) + `ChannelTitle`/`CustomTitle`/
+    `Covers` (all `EncodeBlend=false`/empty); every candidate name (`Logo`,
+    `Watermark`, `VideoWatermark`, `ChannelLogo`, …) returns `result:false`.
+    It is firmware-burned branding (`magicBox`: Vendor=IntelBras, type iM9-M,
+    fw 2.800.00IB00N.0.R). The Mibo app has no watermark toggle either
+    (confirmed by Eduardo 2026-08-26).
+  - **Only real removal path = pixel-level on our own frames.** The timelapse
+    capture already re-encodes to JPEG, so `-vf delogo=x=8:y=38:w=350:h=82`
+    drops the logo (leaves a small blur smudge over the roof corner). The live
+    relay is copy-only (no re-encode on this Pi) → live TV + bnu Frigate
+    recordings keep the logo unless the whole stream is re-encoded. A privacy
+    `Cover` written via RPC2 `setConfig` would blank the corner everywhere, but
+    as a black box over real scene pixels.
 
 ## Services
 
