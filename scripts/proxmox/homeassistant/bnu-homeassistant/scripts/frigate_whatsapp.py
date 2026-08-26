@@ -6,24 +6,27 @@ Deploy to: /config/scripts/frigate_whatsapp.py
 Usage: python3 frigate_whatsapp.py <review_id>
 
 SECURITY CONSTRAINTS (enforced in code):
-  - Destinations limited to the TWO group JIDs from secrets.yaml:
-    whatsapp_group_jid (Casa Blumenau, default) and
-    whatsapp_group_jid_ceuazul (Casa Céu Azul — obra cameras). Each review
-    is sent to exactly ONE of them, chosen by the review's camera.
+  - Destinations limited to the THREE group JIDs from secrets.yaml:
+    whatsapp_group_jid (Casa Blumenau, default), whatsapp_group_jid_ceuazul
+    (Casa Céu Azul — obra cameras) and whatsapp_smoketest_jid (--test mode
+    only). Each run sends to exactly ONE of them.
   - Makes ZERO read calls to the WhatsApp API (no fetchMessages, fetchChats, etc.)
   - Outbound API calls: sendText (guaranteed) + sendMedia GIF attempt, both
     to the single chosen JID
 
 ARA presence gate (decisão Eduardo 26/08/2026): reviews of the obra cameras
-(CEUAZUL_CAMERAS) are sent ONLY when no known phone is online on the
-canteiro LAN — "known" = a device the ara netoverview shows online WITH a
-nickname (auto-synced from the Starlink router by starlink-names on the ara
-Pi), fixed gear excluded. netoverview unreachable → fail open (send).
+(CEUAZUL_CAMERAS) are sent ONLY when the canteiro LAN has NO phone online
+at all — ANY non-fixed device counts, nicknamed or not: whoever has the
+Wi-Fi credentials is assumed allowed to be there (nicknames remain
+display-only, for the daily presence report). Fixed gear (router, camera,
+the Pi) is excluded. netoverview unreachable → fail open (send).
 
 Reads config from /config/secrets.yaml. Reuses the GIF already downloaded by
 frigate_email.py if present; otherwise downloads it itself.
 Debug: `frigate_whatsapp.py --presence-test` prints the gate + routing
-state without sending anything.
+state without sending anything. `frigate_whatsapp.py --test [review_id]`
+sends a full "[TESTE]" alert (latest canteiro review by default) to the
+SmokeTests group, with the real routing + gate verdict in the footer.
 """
 
 import base64
@@ -66,23 +69,55 @@ ARA_FIXED_MACS  = {"74:24:9f:c5:b2:5f", "54:ba:d9:bd:34:e3"}  # Starlink router,
 ARA_FIXED_HOSTS = ("ara-raspberrypi",)
 
 
-def known_phone_online() -> tuple[bool, str]:
-    """(True, nickname) when a known (nicknamed) non-fixed device is online at ARA."""
+def phone_online() -> tuple[bool, str]:
+    """(True, label) when ANY non-fixed device is online on the canteiro LAN.
+
+    Nicknamed or not — anyone with the Wi-Fi credentials is assumed allowed
+    to be at the obra (decisão Eduardo 26/08/2026). Only the fixed gear
+    (router/camera by MAC, the Pi by hostname) is ignored.
+    """
     try:
         r = requests.get(ARA_NTO_DEVICES, timeout=10)
         r.raise_for_status()
         for d in r.json().get("devices", []):
-            if not d.get("online") or not d.get("nickname"):
+            if not d.get("online"):
                 continue
             mac  = (d.get("mac") or "").lower()
             host = (d.get("hostname") or "").lower()
             if mac in ARA_FIXED_MACS or any(h in host for h in ARA_FIXED_HOSTS):
                 continue
-            return True, d["nickname"]
+            return True, d.get("nickname") or d.get("display_name") or mac or d.get("ip") or "?"
         return False, ""
     except Exception as exc:  # fail open: a flaky Starlink must not swallow alerts
         log.warning("ARA presence check failed (%s) — failing open", exc)
         return False, ""
+
+
+def latest_review_id(base: str) -> str:
+    """Newest review whose GenAI is already done, preferring canteiro (test helper).
+
+    Avoids the 30 s GenAI polling loop in --test mode — HA's shell_command
+    kills anything past 60 s.
+    """
+    def genai_ready(r: dict) -> bool:
+        data = r.get("data") or {}
+        meta = data.get("metadata") or {}
+        return bool(data.get("description") or meta.get("title") or meta.get("shortSummary"))
+
+    fallback = ""
+    for params in ({"cameras": "canteiro", "limit": 10}, {"limit": 10}):
+        try:
+            resp = requests.get(f"{base}/api/review", params=params, timeout=15)
+            resp.raise_for_status()
+            items = resp.json() or []
+            for r in items:
+                if genai_ready(r):
+                    return r["id"]
+            if items and not fallback:
+                fallback = items[0]["id"]
+        except requests.RequestException as exc:
+            log.warning("latest_review_id(%s) failed: %s", params, exc)
+    return fallback
 
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
@@ -229,34 +264,48 @@ def main() -> None:
 
     if sys.argv[1] == "--presence-test":
         secrets = load_secrets()
-        present, who = known_phone_online()
-        print(f"known_phone_online={present} ({who or '-'}) | "
+        present, who = phone_online()
+        print(f"phone_online={present} ({who or '-'}) | "
               f"canteiro→{secrets.get('whatsapp_group_jid_ceuazul', 'MISSING')} | "
-              f"default→{secrets.get('whatsapp_group_jid')}")
+              f"default→{secrets.get('whatsapp_group_jid')} | "
+              f"test→{secrets.get('whatsapp_smoketest_jid', 'MISSING')}")
         return
 
-    review_id = sys.argv[1].strip()
-    gif_path  = os.path.join(GIF_DIR, f"frigate_{review_id}.gif")
+    test_mode = sys.argv[1] == "--test"
 
     secrets = load_secrets()
     client  = WahaClient(secrets)
 
-    # SECURITY: destinations limited to the two group JIDs from secrets.yaml
-    DEFAULT_JID = secrets["whatsapp_group_jid"]                           # Casa Blumenau
-    CEUAZUL_JID = secrets.get("whatsapp_group_jid_ceuazul") or DEFAULT_JID  # Casa Céu Azul
-    for jid in (DEFAULT_JID, CEUAZUL_JID):
+    # SECURITY: destinations limited to the group JIDs from secrets.yaml
+    DEFAULT_JID   = secrets["whatsapp_group_jid"]                           # Casa Blumenau
+    CEUAZUL_JID   = secrets.get("whatsapp_group_jid_ceuazul") or DEFAULT_JID  # Casa Céu Azul
+    SMOKETEST_JID = secrets.get("whatsapp_smoketest_jid") or ""
+    jids = [DEFAULT_JID, CEUAZUL_JID] + ([SMOKETEST_JID] if test_mode else [])
+    for jid in jids:
         if not jid or "@g.us" not in jid:
             log.error("whatsapp group JID missing or not a group JID (@g.us) in secrets.yaml. Aborting.")
             sys.exit(1)
 
     base = frigate_base(secrets["frigate_host"], secrets["frigate_port"])
 
+    if test_mode:
+        review_id = sys.argv[2].strip() if len(sys.argv) > 2 else latest_review_id(base)
+        if not review_id:
+            log.error("--test: no review found in Frigate to use")
+            print("--test: no review found in Frigate to use")
+            sys.exit(1)
+        print(f"--test using review {review_id} -> {SMOKETEST_JID}")
+    else:
+        review_id = sys.argv[1].strip()
+    gif_path = os.path.join(GIF_DIR, f"frigate_{review_id}.gif")
+
     log.info("Fetching review %s ...", review_id)
     review = {}
     title = summary = scene = ""
     threat_level = 0
     other_concerns = None
-    for attempt in range(1, POLL_ATTEMPTS + 1):
+    poll_attempts = 1 if test_mode else POLL_ATTEMPTS  # no long waits under HA's 60 s cap
+    for attempt in range(1, poll_attempts + 1):
         try:
             review = fetch_review(base, review_id)
             title, summary, scene, threat_level, other_concerns = extract_genai(review)
@@ -266,25 +315,33 @@ def main() -> None:
         except requests.RequestException as exc:
             log.warning("Attempt %d — Frigate API error: %s", attempt, exc)
 
-        if attempt < POLL_ATTEMPTS:
+        if attempt < poll_attempts:
             log.info("No GenAI content yet — waiting %ds (attempt %d/%d)",
-                     POLL_INTERVAL, attempt, POLL_ATTEMPTS)
+                     POLL_INTERVAL, attempt, poll_attempts)
             time.sleep(POLL_INTERVAL)
 
     if not has_genai(review):
         log.warning("GenAI not available after polling — sending without it")
 
     # Per-camera destination + ARA presence gate
-    camera = review.get("camera", "")
+    camera    = review.get("camera", "")
+    test_note = ""
     if camera in CEUAZUL_CAMERAS:
         ALLOWED_JID = CEUAZUL_JID
-        present, who = known_phone_online()
-        if present:
-            log.info("Suppressed — known phone online at the obra (%s); review %s (camera %s) not sent",
+        present, who = phone_online()
+        if present and not test_mode:
+            log.info("Suppressed — phone online at the obra (%s); review %s (camera %s) not sent",
                      who, review_id, camera)
             return
+        if test_mode:
+            gate = f"suprimiria ({who} online)" if present else "enviaria (rede do canteiro vazia)"
+            test_note = f"destino real: Casa Céu Azul · gate agora: {gate}"
     else:
         ALLOWED_JID = DEFAULT_JID
+        if test_mode:
+            test_note = "destino real: Casa Blumenau (câmera fora da obra, sem gate)"
+    if test_mode:
+        ALLOWED_JID = SMOKETEST_JID
 
     # Get GIF: reuse if already downloaded by frigate_email.py, else fetch
     if os.path.exists(gif_path):
@@ -309,6 +366,8 @@ def main() -> None:
         log.info("GIF saved to %s (%d bytes)", gif_path, len(gif_data))
 
     message = build_message(review, title, summary, threat_level, other_concerns)
+    if test_mode:
+        message = f"[TESTE] {message}\n\n_{test_note}_"
     log.info("Sending to %s (%d chars)", ALLOWED_JID, len(message))
 
     ok, detail = send_text(client, ALLOWED_JID, message)

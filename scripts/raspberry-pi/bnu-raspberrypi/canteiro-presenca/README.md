@@ -48,5 +48,6 @@ syncs the Starlink router's client names into netoverview nicknames every
 it first joins the Wi-Fi. Phones use per-SSID random but **stable** MACs,
 so the name sticks. Manual renames in the ara netoverview UI
 (`http://ara-raspberrypi:5000`, MAC-keyed) always win — the sync never
-overwrites them. A nicknamed non-fixed device is also what the bnu HA
-Frigate gate counts as a "known phone" (see `frigate_whatsapp.py`).
+overwrites them. (Names are display-only: the bnu HA Frigate gate
+suppresses on ANY non-fixed device online, nicknamed or not — see
+`frigate_whatsapp.py`.)

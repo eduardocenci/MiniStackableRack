@@ -9,10 +9,12 @@ the netoverview UI are never overwritten.
 Why: phones on the canteiro LAN use randomized (per-SSID-stable) MACs and
 answer no reverse DNS/mDNS, so netoverview shows them as bare IPs. The
 router knows their DHCP hostnames ("Galaxy-A54-5G", "A23-de-Edy"…). With
-this sync, a phone gets its name minutes after it first connects — and
-"has a nickname" is exactly what the daily presence report
-(`bnu-raspberrypi/canteiro-presenca/`) and the Frigate WhatsApp presence
-gate (bnu HA `frigate_whatsapp.py`) treat as a **known device**.
+this sync, a phone gets its name minutes after it first connects, and the
+daily presence report (`bnu-raspberrypi/canteiro-presenca/`) shows real
+names instead of MAC stubs. Names are display-only: the Frigate WhatsApp
+gate (bnu HA `frigate_whatsapp.py`) suppresses on ANY non-fixed device
+online, nicknamed or not — whoever has the Wi-Fi credentials is assumed
+allowed at the obra (decisão Eduardo 26/08/2026).
 
 Notes:
 - `wifi_get_clients` lists only currently-associated clients (the app's
