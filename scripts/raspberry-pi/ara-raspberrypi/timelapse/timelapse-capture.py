@@ -21,9 +21,10 @@ Subcommands
              between windows (start the service before T-20; timer at 16:40
              covers the earliest T-20 of the year, 17:09 in June)
 
-Every frame is written to outbox/ (drained to Google Drive by
-timelapse-upload at 20:00, rclone move) and hardlinked into archive/
-(30-day local safety copy, pruned by the upload unit).
+Every frame is written to outbox/ only; timelapse-upload (20:00) drains it
+with `rclone move`, which deletes each file from the Pi as soon as the
+transfer to Drive is confirmed — no local copy is kept (decisão Eduardo
+26/08/2026). Files stay in outbox only while unsent (e.g. Starlink down).
 """
 import math
 import os
@@ -34,7 +35,6 @@ from datetime import date, datetime
 
 BASE = "/var/lib/timelapse"
 OUTBOX = os.path.join(BASE, "outbox")
-ARCHIVE = os.path.join(BASE, "archive")
 RELAY_PT = "rtsp://127.0.0.1:8554/canteiro"
 RELAY_FIXA = "rtsp://127.0.0.1:8554/canteiro-alt"
 
@@ -101,12 +101,6 @@ def grab(url, rel_dest, tries=3):
             # gray/garbage frames come out tiny; a real 3MP frame is >100 KB
             if r.returncode == 0 and os.path.exists(tmp) and os.path.getsize(tmp) > 50_000:
                 os.replace(tmp, dest)
-                apath = os.path.join(ARCHIVE, rel_dest)
-                os.makedirs(os.path.dirname(apath), exist_ok=True)
-                try:
-                    os.link(dest, apath)
-                except FileExistsError:
-                    pass
                 print(f"ok {rel_dest}")
                 return True
         except subprocess.TimeoutExpired:

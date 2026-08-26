@@ -1,9 +1,9 @@
 # Live copy: /etc/systemd/system/timelapse-upload.service
 # Drena o outbox para o Google Drive (remote `ceuazul` = pasta CeuAzul,
-# root_folder_id no rclone.conf de ~eduardocenci) e poda o archive local
-# (cópia de segurança de 30 dias). Starlink fora do ar às 20:00 → os frames
-# ficam no outbox e sobem no dia seguinte (rclone move só remove após
-# transferência confirmada).
+# root_folder_id no rclone.conf de ~eduardocenci). `rclone move` apaga cada
+# imagem do Pi assim que a transferência é confirmada — nenhuma cópia local
+# é mantida (decisão Eduardo 26/08/2026). Starlink fora do ar às 20:00 → os
+# frames ficam no outbox e sobem no dia seguinte.
 [Unit]
 Description=Timelapse ARA — upload diário do outbox p/ Drive CeuAzul/Timelapse
 Wants=network-online.target
@@ -13,5 +13,4 @@ After=network-online.target
 Type=oneshot
 User=eduardocenci
 ExecStart=/usr/bin/rclone move /var/lib/timelapse/outbox ceuazul:Timelapse --min-age 1m --log-level INFO
-ExecStart=/bin/sh -c 'find /var/lib/timelapse/archive -type f -mtime +30 -delete'
 TimeoutStartSec=2h

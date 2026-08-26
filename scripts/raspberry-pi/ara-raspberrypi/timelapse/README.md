@@ -39,12 +39,13 @@ compartilhada** no Drive (uso interno de gestão da obra).
 |---|---|---|
 | `timelapse-trabalho.timer` | 07:00–17:50, exatos 25 min (27×/dia) | 1 frame PT → `outbox/Trabalho/` |
 | `timelapse-sunset.timer` | 16:40 (cobre o T−20 mais cedo do ano, 17:09 jun) | dorme até cada janela; PT + fixa ×5 |
-| `timelapse-upload.timer` | 20:00 diário, `Persistent=true` | `rclone move outbox → ceuazul:Timelapse` + poda `archive/` >30 d |
+| `timelapse-upload.timer` | 20:00 diário, `Persistent=true` | `rclone move outbox → ceuazul:Timelapse` |
 
-Fluxo local: cada frame vai a `/var/lib/timelapse/outbox/` e ganha hardlink
-em `/var/lib/timelapse/archive/` (cópia de segurança local, 30 dias, custo
-zero de espaço até o move). Starlink fora do ar → outbox acumula (SD de
-58 GB ≈ anos) e o próximo upload drena.
+Fluxo local: cada frame vai a `/var/lib/timelapse/outbox/` e o `rclone move`
+das 20:00 **apaga do Pi assim que a transferência é confirmada** — nenhuma
+cópia local é mantida (decisão Eduardo 26/08/2026; o Drive é o único
+arquivo). Starlink fora do ar → outbox acumula (SD de 58 GB ≈ anos) e o
+próximo upload drena.
 
 | Arquivo | Cópia viva |
 |---|---|
