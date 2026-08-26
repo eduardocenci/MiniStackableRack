@@ -25,8 +25,9 @@ substream (channel=1&subtype=1, H.264 640×480 — zero transcode) instead.
 | URL (LAN `10.1.1.123` / tailnet `bnu-raspberrypi` = `100.91.64.62`) | Content |
 |---|---|
 | `…:1984/api/stream.mp4?src=canteiro` | HEVC passthrough (2304×1296) — the TV cast |
-| `…:1984/stream.html?src=canteiro&mode=hls` | **browser live view — default bookmark** (HLS: a few seconds of buffer absorbs Starlink jitter; ~6–15 s behind live; native player on iOS) |
-| `…:1984/stream.html?src=canteiro&mode=mse` | browser live view, low-latency (~1 s behind live, but stutters on every network hiccup — HEVC via MSE, verified 2026-08-26) |
+| `https://bnu-raspberrypi.woodpecker-shark.ts.net/live` | **browser live view — THE bookmark** ([`canteiro-live.html`](canteiro-live.html), hls.js + ~10 s buffer absorbing Starlink jitter; works in every browser incl. desktop Chrome, native HLS fallback on iOS; served by `tailscale serve --set-path=/live`) |
+| `…:1984/stream.html?src=canteiro&mode=hls` | go2rtc's own HLS page — **Safari/iOS only** (desktop Chrome has no native HLS and shows a black player) |
+| `…:1984/stream.html?src=canteiro&mode=mse` | low-latency view (~1 s behind live, but stutters on every network hiccup — HEVC via MSE) |
 | `…:1984/stream.html?src=canteiro_h264` | browser fallback if a device can't decode HEVC (starts the on-demand transcode — occasional use only) |
 | `…:1984/` | go2rtc web UI (diagnostics) |
 

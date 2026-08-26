@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<!-- Canteiro ao vivo — player HLS universal (House Hangar, ARA)
+     Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/go2rtc/canteiro-live.html
+     Live copy: bnu-raspberrypi:/usr/local/share/canteiro-live/index.html,
+     served at https://bnu-raspberrypi.woodpecker-shark.ts.net/live via
+     `tailscale serve` (path /live). Video comes from the same origin:
+     /api/stream.m3u8?src=canteiro&mp4 (go2rtc, fMP4/HEVC HLS).
+     Why this page exists: desktop Chrome has no native HLS (go2rtc's
+     stream.html mode=hls only works on Safari/iOS) — hls.js fills the gap
+     with a configurable buffer that absorbs Starlink jitter (~10 s behind
+     live); on iOS it falls back to the native HLS player. -->
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canteiro ao vivo — House Hangar</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; }
+  video { width: 100vw; height: 100vh; object-fit: contain; background: #000; }
+  #msg { position: fixed; top: 12px; left: 12px; color: #9a9a9a;
+         font: 14px system-ui, sans-serif; z-index: 2; }
+</style>
+</head>
+<body>
+<div id="msg">carregando…</div>
+<video id="v" muted autoplay playsinline controls></video>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
+<script>
+  const SRC = '/api/stream.m3u8?src=canteiro&mp4';
+  const v = document.getElementById('v');
+  const msg = document.getElementById('msg');
+  let hls = null, retryTimer = null;
+
+  function setMsg(t) { msg.textContent = t; msg.style.display = t ? 'block' : 'none'; }
+
+  function start() {
+    clearTimeout(retryTimer);
+    if (window.Hls && Hls.isSupported()) {
+      if (hls) { hls.destroy(); hls = null; }
+      hls = new Hls({
+        // ~10 s atrás do ao vivo: buffer que absorve o jitter da Starlink.
+        liveSyncDuration: 10,
+        liveMaxLatencyDuration: 25,
+        maxBufferLength: 30,
+        backBufferLength: 10,
+        lowLatencyMode: false,
+      });
+      hls.loadSource(SRC);
+      hls.attachMedia(v);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => { setMsg(''); v.play().catch(() => {}); });
+      hls.on(Hls.Events.ERROR, (_e, data) => {
+        if (data.fatal) { setMsg('reconectando…'); retryTimer = setTimeout(start, 3000); }
+      });
+    } else if (v.canPlayType('application/vnd.apple.mpegurl')) {
+      // iOS/Safari: player HLS nativo (bufferiza sozinho).
+      v.src = SRC;
+      v.addEventListener('loadedmetadata', () => setMsg(''), { once: true });
+      v.play().catch(() => {});
+    } else {
+      setMsg('navegador sem suporte a HLS');
+    }
+  }
+
+  v.addEventListener('error', () => { setMsg('reconectando…'); retryTimer = setTimeout(start, 3000); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && v.paused) start();
+  });
+  start();
+</script>
+</body>
+</html>
