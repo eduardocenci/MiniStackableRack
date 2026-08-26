@@ -1,0 +1,13 @@
+# Live copy: /etc/systemd/system/timelapse-sunrise.service
+# Fica dormindo entre as janelas solares (T … T+20 do nascer do sol); no
+# pior caso do ano roda das 05:00 às ~07:35 — por isso o timeout infinito.
+[Unit]
+Description=Timelapse ARA — 3 janelas solares do nascer do sol (PT + lente fixa)
+After=mediamtx.service
+Wants=mediamtx.service
+
+[Service]
+Type=oneshot
+User=eduardocenci
+ExecStart=/usr/local/bin/timelapse-capture sunrise
+TimeoutStartSec=infinity

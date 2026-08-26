@@ -13,13 +13,16 @@ relay produce gray garbage (see ../ptz/README.md, 2026-08-24).
 
 Subcommands
   trabalho   one PT frame -> outbox/Trabalho/YYYY-MM/   (worker-presence log;
-             timer fires every 25 min 07:00-17:50)
+             timer fires every 15 min 07:00-18:00)
   sunset     computes today's sunset (NOAA, coords of Lote 56 / Céu Azul
              aerodrome: 26°33'41"S 48°41'46"W, UTC-3 fixed) and shoots the
              five solar windows T-20 T-10 T T+10 T+20 — PT lens into one
              folder per window + fixed-lens twin into fixa/ — sleeping
              between windows (start the service before T-20; timer at 16:40
              covers the earliest T-20 of the year, 17:09 in June)
+  sunrise    same, for the three windows T T+10 T+20 of today's sunrise
+             (timer at 05:00 covers the earliest sunrise of the year,
+             ~05:15 in December)
 
 Every frame is written to outbox/ only; timelapse-upload (20:00) drains it
 with `rclone move`, which deletes each file from the Pi as soon as the
@@ -43,18 +46,23 @@ LAT = -(26 + 33 / 60 + 41 / 3600)
 LON = -(48 + 41 / 60 + 46 / 3600)
 TZ_H = -3.0  # America/Sao_Paulo, no DST
 
-# offset (min from sunset), Drive folder, tag used in fixa/ twin filenames
-WINDOWS = [
+# offset (min from the solar event), Drive folder, tag in fixa/ twin filenames
+SUNSET_WINDOWS = [
     (-20, "por-do-sol-menos-20min", "m20"),
     (-10, "por-do-sol-menos-10min", "m10"),
     (0, "por-do-sol", "pds"),
     (10, "por-do-sol-mais-10min", "p10"),
     (20, "por-do-sol-mais-20min", "p20"),
 ]
+SUNRISE_WINDOWS = [
+    (0, "nascer-do-sol", "nds"),
+    (10, "nascer-do-sol-mais-10min", "nds10"),
+    (20, "nascer-do-sol-mais-20min", "nds20"),
+]
 
 
-def sunset_minutes(d):
-    """Local-clock sunset in minutes after midnight (NOAA solar equations)."""
+def _solar(d):
+    """(solar noon, half-arc) in local-clock minutes (NOAA solar equations)."""
     a = (14 - d.month) // 12
     y = d.year + 4800 - a
     m = d.month + 12 * a - 3
@@ -83,7 +91,17 @@ def sunset_minutes(d):
     cosH = (math.cos(math.radians(90.833)) / (math.cos(latr) * math.cos(decl))
             - math.tan(latr) * math.tan(decl))
     H = math.degrees(math.acos(max(-1.0, min(1.0, cosH))))
-    return 720 - 4 * LON - eqtime + TZ_H * 60 + 4 * H
+    return 720 - 4 * LON - eqtime + TZ_H * 60, 4 * H
+
+
+def sunset_minutes(d):
+    noon, half_arc = _solar(d)
+    return noon + half_arc
+
+
+def sunrise_minutes(d):
+    noon, half_arc = _solar(d)
+    return noon - half_arc
 
 
 def grab(url, rel_dest, tries=3):
@@ -124,11 +142,10 @@ def cmd_trabalho():
     return 0 if ok else 1
 
 
-def cmd_sunset():
-    T = sunset_minutes(date.today())
-    print(f"sunset today: {int(T // 60):02d}:{int(T % 60):02d}")
+def run_windows(T, windows, label):
+    print(f"{label} today: {int(T // 60):02d}:{int(T % 60):02d}")
     failures = 0
-    for off, folder, tag in WINDOWS:
+    for off, folder, tag in windows:
         target = (T + off) * 60  # seconds after midnight
         now = datetime.now()
         now_s = now.hour * 3600 + now.minute * 60 + now.second
@@ -150,7 +167,9 @@ def main():
     if cmd == "trabalho":
         return cmd_trabalho()
     if cmd == "sunset":
-        return cmd_sunset()
+        return run_windows(sunset_minutes(date.today()), SUNSET_WINDOWS, "sunset")
+    if cmd == "sunrise":
+        return run_windows(sunrise_minutes(date.today()), SUNRISE_WINDOWS, "sunrise")
     print(__doc__)
     return 2
 
