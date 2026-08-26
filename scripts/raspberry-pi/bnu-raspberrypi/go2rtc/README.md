@@ -1,12 +1,26 @@
 # go2rtc — canteiro restream for LAN devices (bnu-raspberrypi)
 
-Bridges the tailnet-only ARA camera relay onto the bnu house LAN so dumb
-renderers (Samsung DLNA TVs, anything that can fetch an HTTP video URL) can
-play the obra live:
+Bridges the tailnet-only ARA camera relay onto the bnu house LAN, and is the
+**single upstream consumer**: everything at bnu (the wall screen AND the TV
+cast) reads from this go2rtc, which pulls the canteiro from ara exactly once:
 
 ```
-rtsp://ara-raspberrypi:8554/canteiro ──tailnet──▶ go2rtc on bnu-raspberrypi ──HTTP fMP4 on LAN──▶ TV
+rtsp://ara-raspberrypi:8554/canteiro ──tailnet (1 copy)──▶ go2rtc on bnu-raspberrypi
+                                                             ├─ rtsp://127.0.0.1:8554/canteiro → canteiro-screen (mpv)
+                                                             └─ /api/stream.mp4?src=canteiro → 55" TV (Cast)
 ```
+
+**Why single-pull (2026-08-26 incident):** with the wall screen reading ara
+directly *and* go2rtc pulling for the TV, daytime bitrate × 2 streams
+saturated the canteiro's Starlink upload — the relay logged "reader is too
+slow, discarding frames" and the TV froze. One upstream copy fixed it.
+
+**Do not cast the `canteiro_h264` transcode:** ffmpeg software-decoding the
+3MP HEVC pushes the Pi 4 to load ~6 and starves everything on it (seen
+2026-08-26). The TV plays the HEVC passthrough natively; the transcode path
+exists only as a compatibility fallback for other devices, used sparingly.
+If the TV ever needs H.264 permanently, restream the camera's native
+substream (channel=1&subtype=1, H.264 640×480 — zero transcode) instead.
 
 | URL (LAN) | Content |
 |---|---|
