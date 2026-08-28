@@ -4,12 +4,13 @@ Toda **segunda–sexta às 20:10 America/Sao_Paulo** (dias de trabalho —
 decisão Eduardo 27/08/2026; o script ainda pula sáb/dom se o `Persistent`
 recuperar um disparo em fim de semana) este systemd timer no
 bnu-raspberrypi baixa do Google Drive as fotos de
-`CeuAzul/Timelapse/posicao1/por-do-sol/` de ontem e de hoje (produzidas
+`CeuAzul/Timelapse/posicao1/por-do-sol/` do último dia útil (**segunda
+compara com sexta**; demais dias, com ontem) e de hoje (produzidas
 pelo timelapse do ara Pi, upload às 20:00 — ver
 [`../../ara-raspberrypi/timelapse/`](../../ara-raspberrypi/timelapse/)),
 empilha verticalmente — **ontem no topo, hoje embaixo**, largura 1600 px,
 ffmpeg `vstack` — e manda no grupo WhatsApp via WAHA `sendImage` com a
-legenda `🌇 Obra ARA — Dia de Trabalho (DD/MM)`
+legenda `🌇 Dia de Trabalho (DD/MM)`
 (funciona neste Core build; mesmo padrão do
 [`../canteiro-watchdog/`](../canteiro-watchdog/)). A câmera queima
 data/hora em cada frame, então a montagem dispensa legenda por imagem.
@@ -26,6 +27,13 @@ Pedido Eduardo 27/08/2026. Roda em bnu (e não no ara Pi) porque o WAHA
   script tenta de novo a cada 3 min por até ~25 min; se faltar foto,
   manda aviso de falha no mesmo chat em vez de silêncio.
 - Última montagem enviada fica em `/tmp/ultima-comparacao.jpg` (inspeção).
+- Cada montagem também é **arquivada no Drive** em
+  `posicao1/DiaDeTrabalho/YYYY-MM-DD.jpg` (série diária pronta para
+  consulta/IA, além do envio no WhatsApp).
+- **Destino em staging**: `GROUP_JID` aponta para o Casa SmokeTests até o
+  Eduardo mandar ativar; o JID do grupo final (Cenci Céu Azul Casa-Hangar,
+  `120363402090094156@g.us`) já está comentado no env — ativar = trocar a
+  linha e pronto.
 
 ## Install (as deployed 2026-08-27)
 

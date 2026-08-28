@@ -73,10 +73,11 @@ próximo upload drena.
 | `timelapse-{sunrise,trabalho,sunset,upload}.{service,timer}` | `/etc/systemd/system/` |
 | remote rclone `ceuazul` | `~eduardocenci/.config/rclone/rclone.conf` (600) — OAuth Google de eduardocenci@gmail.com, `root_folder_id` apontando para a pasta **CeuAzul**; backup do conf em `gitignore/ara-rclone.conf` no repo raiz |
 
-Consumidor downstream: o timer das 20:10 no bnu-raspberrypi
+Consumidor downstream: o timer seg–sex das 20:10 no bnu-raspberrypi
 ([`../../bnu-raspberrypi/canteiro-sunset-compare/`](../../bnu-raspberrypi/canteiro-sunset-compare/))
-compara o `posicao1/por-do-sol` de ontem vs hoje no WhatsApp — mudanças na
-estrutura do Drive precisam acompanhar lá.
+compara o `posicao1/por-do-sol` do último dia útil vs hoje no WhatsApp e
+arquiva cada montagem em `posicao1/DiaDeTrabalho/YYYY-MM-DD.jpg` —
+mudanças na estrutura do Drive precisam acompanhar lá.
 
 ## Operação
 

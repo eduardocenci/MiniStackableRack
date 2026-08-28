@@ -4,10 +4,12 @@
 Toda segunda–sexta às 20:10 America/Sao_Paulo (systemd timer no bnu-raspberrypi — o
 relógio deste Pi é Europe/London, então o fuso vem do OnCalendar e o "dia"
 é calculado aqui com ZoneInfo, nunca com a hora local) baixa do Google
-Drive as fotos de `posicao1/por-do-sol/` de ONTEM e de HOJE (timelapse do
+Drive as fotos de `posicao1/por-do-sol/` do ÚLTIMO DIA ÚTIL (segunda
+compara com sexta; demais dias, com ontem) e de HOJE (timelapse do
 ara Pi, upload às 20:00 — daí a folga de 10 min + retries), empilha
 verticalmente com ffmpeg vstack (ontem no TOPO, hoje EMBAIXO, largura
-1600 px) e manda no WhatsApp via WAHA `sendImage` (base64 — funciona neste
+1600 px), arquiva a montagem em `posicao1/DiaDeTrabalho/YYYY-MM-DD.jpg`
+no Drive e manda no WhatsApp via WAHA `sendImage` (base64 — funciona neste
 Core build, mesmo padrão do canteiro-watchdog).
 
 A câmera grava data/hora dentro de cada frame, então a própria montagem
@@ -108,7 +110,8 @@ def main():
         print("fim de semana, sem comparacao")
         return 0
     today = now.date()
-    yesterday = today - timedelta(days=1)
+    # segunda compara com o último dia útil (sexta); demais dias, com ontem
+    yesterday = today - timedelta(days=3 if now.weekday() == 0 else 1)
 
     with tempfile.TemporaryDirectory(prefix="sunset-compare-") as tmp:
         f_yest = rclone_fetch(yesterday, tmp)
@@ -130,7 +133,15 @@ def main():
             shutil.copyfile(out, "/tmp/ultima-comparacao.jpg")
         except OSError:
             pass
-        caption = prefix + f"🌇 *Obra ARA — Dia de Trabalho ({today:%d/%m})*"
+        # arquivo permanente da montagem no Drive (posicao1/DiaDeTrabalho/)
+        r = subprocess.run(
+            ["rclone", "copyto", out,
+             f"{REMOTE}/posicao1/DiaDeTrabalho/{today:%Y-%m-%d}.jpg"],
+            capture_output=True, timeout=180)
+        if r.returncode != 0:
+            print("rclone copyto DiaDeTrabalho falhou: "
+                  + r.stderr.decode(errors="replace")[-200:], file=sys.stderr)
+        caption = prefix + f"🌇 *Dia de Trabalho ({today:%d/%m})*"
         st = send_image(chat, out, caption)
         print(f"comparacao {yesterday:%d/%m} vs {today:%d/%m} enviada, HTTP {st} -> {chat}")
     return 0
