@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """canteiro-sunset-compare — comparação diária do pôr do sol da obra ARA.
 
-Todo dia às 20:10 America/Sao_Paulo (systemd timer no bnu-raspberrypi — o
+Toda segunda–sexta às 20:10 America/Sao_Paulo (systemd timer no bnu-raspberrypi — o
 relógio deste Pi é Europe/London, então o fuso vem do OnCalendar e o "dia"
 é calculado aqui com ZoneInfo, nunca com a hora local) baixa do Google
 Drive as fotos de `posicao1/por-do-sol/` de ONTEM e de HOJE (timelapse do
@@ -103,7 +103,11 @@ def main():
     test = len(sys.argv) > 1 and sys.argv[1] == "--test"
     chat = (sys.argv[2] if len(sys.argv) > 2 else TEST_JID) if test else GROUP_JID
     prefix = "[TESTE] " if test else ""
-    today = datetime.now(TZ).date()
+    now = datetime.now(TZ)
+    if not test and now.weekday() >= 5:  # Persistent pode recuperar no fim de semana
+        print("fim de semana, sem comparacao")
+        return 0
+    today = now.date()
     yesterday = today - timedelta(days=1)
 
     with tempfile.TemporaryDirectory(prefix="sunset-compare-") as tmp:
@@ -126,9 +130,7 @@ def main():
             shutil.copyfile(out, "/tmp/ultima-comparacao.jpg")
         except OSError:
             pass
-        caption = (prefix + "🌇 *Obra ARA — pôr do sol, posição 1*\n"
-                   f"{yesterday:%d/%m} (topo) vs {today:%d/%m} (embaixo)\n"
-                   "_Comparação automática diária das 20:10_")
+        caption = prefix + f"🌇 *Obra ARA — Dia de Trabalho ({today:%d/%m})*"
         st = send_image(chat, out, caption)
         print(f"comparacao {yesterday:%d/%m} vs {today:%d/%m} enviada, HTTP {st} -> {chat}")
     return 0

@@ -1,12 +1,15 @@
 # canteiro-sunset-compare — pôr do sol de ontem vs hoje (WhatsApp)
 
-Todo dia às **20:10 America/Sao_Paulo** este systemd timer no
+Toda **segunda–sexta às 20:10 America/Sao_Paulo** (dias de trabalho —
+decisão Eduardo 27/08/2026; o script ainda pula sáb/dom se o `Persistent`
+recuperar um disparo em fim de semana) este systemd timer no
 bnu-raspberrypi baixa do Google Drive as fotos de
 `CeuAzul/Timelapse/posicao1/por-do-sol/` de ontem e de hoje (produzidas
 pelo timelapse do ara Pi, upload às 20:00 — ver
 [`../../ara-raspberrypi/timelapse/`](../../ara-raspberrypi/timelapse/)),
 empilha verticalmente — **ontem no topo, hoje embaixo**, largura 1600 px,
-ffmpeg `vstack` — e manda no grupo WhatsApp via WAHA `sendImage`
+ffmpeg `vstack` — e manda no grupo WhatsApp via WAHA `sendImage` com a
+legenda `🌇 Obra ARA — Dia de Trabalho (DD/MM)`
 (funciona neste Core build; mesmo padrão do
 [`../canteiro-watchdog/`](../canteiro-watchdog/)). A câmera queima
 data/hora em cada frame, então a montagem dispensa legenda por imagem.
