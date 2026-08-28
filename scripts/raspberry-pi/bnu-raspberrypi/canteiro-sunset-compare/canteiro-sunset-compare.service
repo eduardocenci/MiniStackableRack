@@ -1,0 +1,12 @@
+# Live copy: /etc/systemd/system/canteiro-sunset-compare.service
+[Unit]
+Description=Canteiro sunset compare - ontem vs hoje do por do sol da obra ARA (WhatsApp)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=eduardocenci
+EnvironmentFile=/etc/canteiro-sunset-compare.env
+ExecStart=/usr/bin/python3 /usr/local/bin/canteiro-sunset-compare.py
+TimeoutStartSec=45min

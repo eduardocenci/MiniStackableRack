@@ -1,0 +1,14 @@
+# Live copy: /etc/systemd/system/canteiro-sunset-compare.timer
+# 20:10 America/Sao_Paulo (o relogio deste Pi e Europe/London — o fuso vem
+# daqui e o script recalcula o dia com ZoneInfo), 10 min depois do upload
+# das 20:00 do ara Pi.
+[Unit]
+Description=Daily 20:10 (America/Sao_Paulo) canteiro sunset comparison
+
+[Timer]
+OnCalendar=*-*-* 20:10:00 America/Sao_Paulo
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
