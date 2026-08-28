@@ -30,10 +30,9 @@ Pedido Eduardo 27/08/2026. Roda em bnu (e não no ara Pi) porque o WAHA
 - Cada montagem também é **arquivada no Drive** em
   `posicao1/DiaDeTrabalho/YYYY-MM-DD.jpg` (série diária pronta para
   consulta/IA, além do envio no WhatsApp).
-- **Destino em staging**: `GROUP_JID` aponta para o Casa SmokeTests até o
-  Eduardo mandar ativar; o JID do grupo final (Cenci Céu Azul Casa-Hangar,
-  `120363402090094156@g.us`) já está comentado no env — ativar = trocar a
-  linha e pronto.
+- **Destino de produção ATIVO desde 27/08/2026** (comando do Eduardo):
+  grupo **Cenci Céu Azul Casa-Hangar** (`120363402090094156@g.us`). O JID
+  do Casa SmokeTests fica comentado no env como rollback/staging.
 
 ## Install (as deployed 2026-08-27)
 
