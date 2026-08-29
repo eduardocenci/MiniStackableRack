@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
 """canteiro-watchdog — avisa no WhatsApp quando o canteiro (ARA) cai/volta.
 
-Roda no bnu-raspberrypi por systemd timer (a cada 60 s):
-  1. Cacheia um frame da câmera (go2rtc local, produtor já ativo pela tela
-     de parede) em STATE_DIR/lastframe.jpg — vira a "última imagem antes da
-     queda".
+Roda no bnu-raspberrypi no container canteiro-watchdog — loop de 60 s, ver
+docker/canteiro-jobs/ (até 2026-08-29 era um systemd timer):
+  1. Cacheia um frame da câmera (go2rtc local, produtor mantido ativo pelo
+     Frigate e pelo canteiro-hls) em STATE_DIR/lastframe.jpg — vira a
+     "última imagem antes da queda".
   2. Testa o relay do canteiro (TCP ara-raspberrypi:8554 pela tailnet).
   3. Máquina de estados com debounce: FAILS_TO_ALERT falhas seguidas
      (~3 min) → alerta de QUEDA no grupo WhatsApp (via WAHA, imagem com o
      último frame + caption); primeira volta → mensagem de RECUPERAÇÃO com
      a duração da queda.
 
-Config: /etc/canteiro-watchdog.env (EnvironmentFile do systemd) —
+Config: ~/canteiro-jobs/env/canteiro-watchdog.env (env_file do compose) —
 WAHA_URL, WAHA_KEY, WAHA_SESSION, GROUP_JID, ARA_HOST, ARA_PORT.
 Teste manual: canteiro-watchdog.py --test-alert [chatId]  (envia um alerta
 de exemplo ao chatId — por padrão o grupo configurado; use o grupo

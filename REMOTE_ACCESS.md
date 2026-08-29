@@ -109,8 +109,8 @@ LAN is visible at `http://ara-raspberrypi:5000` without SSH. Same day, ara
 became a **dashboard site** in `globalnet/architecture.yaml` (`home: true` —
 nodes `ara_rpi`/`ara_nto`, camera + Starlink router via `netoverview_probe`;
 audited by `make fleet`), and the ara netoverview's `/api/presence` feeds
-the daily 20:00 obra-presence WhatsApp report (`canteiro-presenca` timer on
-bnu-raspberrypi):
+the daily 20:00 obra-presence WhatsApp report (`canteiro-presenca` container
+on bnu-raspberrypi):
 
 | ARA LAN-only device | Address | What it is |
 |---|---|---|
@@ -194,6 +194,14 @@ list. Never open a browser unless every CLI/API option is exhausted.
   fourth hung until timeout. Reliable fallback for text files: base64 the
   content into a `run` command (`echo <b64> | base64 -d > /path`), which goes
   over the already-open exec channel instead of opening an SFTP subsystem.
+- `devtool.py run` has a hardcoded **120 s timeout**, and when it fires the
+  REMOTE command is killed mid-flight too (channel close → SIGHUP) — a
+  `docker compose up` interrupted this way left the go2rtc container
+  **Created but never Started** while the systemd unit was already stopped
+  (2026-08-29: ~4 min camera-stack outage). For anything long (image builds,
+  pulls): `nohup cmd > /tmp/x.log 2>&1 &` in one short call, poll the log in
+  later calls. For service cutovers: pre-stage everything, keep the
+  stop→start call short, and ALWAYS re-check state after a timed-out call.
 - `devtool.py ha` has a hardcoded **15 s timeout** — too short for HA
   config-flow steps that validate a stream (generic camera flow probes RTSP
   server-side). Pattern that works: import `devtool` for `ENV` and do the
@@ -299,8 +307,11 @@ structure with placeholders and must be kept in sync.
 these hold live copies): `bnu-raspberrypi:~/globalnet/.env`, HA `secrets.yaml`,
 the NAS compose `.env` + `copyparty.local.conf`, on LXC 101
 `/opt/waha/docker-compose.yml` (hardcoded), `/opt/waha-listener/.env`,
-`/opt/condfy-bridge/.env`, `/opt/psvis-tracker/.env`, and
-`ara-raspberrypi:/etc/mediamtx/mediamtx.yml`
+`/opt/condfy-bridge/.env`, `/opt/psvis-tracker/.env`,
+`bnu-raspberrypi:~/canteiro-jobs/env/canteiro-{watchdog,presenca,sunset-compare}.env`
+(WAHA creds + group JIDs for the canteiro job containers — moved from
+`/etc/canteiro-*.env` on 2026-08-29; the `/etc` copies linger only as
+rollback for one wave), and `ara-raspberrypi:/etc/mediamtx/mediamtx.yml`
 (camera `ARA_CANTEIRO_CAM_KEY` embedded in the source URLs).
 
 ## 6. Tailscale: preventing re-authentication

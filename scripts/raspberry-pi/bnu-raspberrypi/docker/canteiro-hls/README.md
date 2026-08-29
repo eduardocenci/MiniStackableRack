@@ -4,9 +4,11 @@ Packages the canteiro stream into **proper HLS** for browsers, because
 go2rtc's built-in HLS is unusable over a jittery path. It reads the shared
 go2rtc producer on localhost — ara's Starlink still carries exactly one
 copy of the stream (single-pull rule, [`../go2rtc/`](../go2rtc/)).
+Docker container since 2026-08-29 (was a systemd unit + hand-downloaded
+binary), image pinned to the same mediamtx version.
 
 ```
-go2rtc rtsp://127.0.0.1:8554/canteiro ──▶ mediamtx (canteiro-hls.service)
+go2rtc rtsp://127.0.0.1:8554/canteiro ──▶ mediamtx (canteiro-hls container)
                                            └─ :8888/canteiro/index.m3u8 (fMP4/HEVC HLS,
                                               4 s segments, 7-segment ≈ 35 s window)
                                               └─ tailscale serve /hls → the /live page
@@ -42,9 +44,10 @@ diagnostics.
   front skips the redirect entirely (200 straight away); variant playlists
   and segments are never redirected. The param trips no mainstream
   adblock list (EasyPrivacy/uBlock checked 2026-08-29).
-- **`moq: no` is required** under the hardened unit: mediamtx v1.20 enables
-  a MoQ server by default and tries to write a self-signed cert to the CWD,
-  which `ProtectSystem=strict` denies (harmless warnings, useless ports).
+- **`moq: no` stays**: mediamtx v1.20 enables a MoQ server by default and
+  tries to write a self-signed cert to the CWD (denied under the old
+  hardened systemd unit, pointless noise in the container — the ports are
+  useless here either way).
 - Segments land at 4 s (= camera GOP), occasionally 8 s when a keyframe
   misses the boundary — `#EXT-X-TARGETDURATION:8` is normal.
 - The muxer stays hot (`hlsAlwaysRemux`), so page loads start immediately
@@ -55,9 +58,12 @@ diagnostics.
 
 | File | Purpose |
 |---|---|
-| `/usr/local/bin/mediamtx` | static binary v1.20.1 (GitHub release, linux_arm64) — same version as the ara relay |
-| `/etc/mediamtx/canteiro-hls.yml` | copy of [`mediamtx.yml`](mediamtx.yml) |
-| `/etc/systemd/system/canteiro-hls.service` | copy of [`canteiro-hls.service`](canteiro-hls.service) (DynamicUser, ProtectSystem=strict) |
+| `~/canteiro-hls/compose.yml` | copy of [`compose.yml`](compose.yml) — image `bluenviron/mediamtx:1.20.1` (pinned; same version as the ara relay's binary) |
+| `~/canteiro-hls/mediamtx.yml` | copy of [`mediamtx.yml`](mediamtx.yml), ro-mounted into the container |
+
+(Until 2026-08-29 this ran as a systemd unit with a hand-downloaded binary
+at `/usr/local/bin/mediamtx`; the disabled unit stays on the Pi for one
+wave as rollback.)
 
 The `tailscale serve` route (persists across reboots):
 
@@ -68,7 +74,7 @@ sudo tailscale serve --bg --set-path=/hls http://127.0.0.1:8888
 ## Operate
 
 ```bash
-python scripts/devtool.py run bnu-raspberrypi "systemctl status canteiro-hls --no-pager"
+python scripts/devtool.py run bnu-raspberrypi "docker ps --filter name=canteiro-hls"
 python scripts/devtool.py run bnu-raspberrypi "curl -s 'http://127.0.0.1:8888/canteiro/index.m3u8?cookieCheck=1'"
-python scripts/devtool.py run bnu-raspberrypi "journalctl -u canteiro-hls -n 20 --no-pager"
+python scripts/devtool.py run bnu-raspberrypi "docker logs canteiro-hls --tail 20"
 ```

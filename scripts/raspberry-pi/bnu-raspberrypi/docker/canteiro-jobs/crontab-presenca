@@ -1,0 +1,2 @@
+# canteiro-presenca — daily 20:00 America/Sao_Paulo (container TZ env)
+0 20 * * * python3 /app/canteiro-presenca.py

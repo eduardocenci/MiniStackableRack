@@ -1,0 +1,17 @@
+# canteiro-hls — mediamtx as an HLS packager, containerized 2026-08-29
+# (was a systemd unit + hand-downloaded binary).
+#
+# Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/docker/canteiro-hls/
+# Live copy:          bnu-raspberrypi:~/canteiro-hls/
+#
+# Version pinned (not :latest, no auto-update cron): mediamtx majors move
+# fast and this path is load-bearing for the /live page — bump the tag
+# deliberately, fleet-update style.
+services:
+  canteiro-hls:
+    image: bluenviron/mediamtx:1.20.1   # same version the binary had
+    container_name: canteiro-hls
+    network_mode: host   # :8888 must stay where `tailscale serve /hls` points
+    restart: unless-stopped
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro

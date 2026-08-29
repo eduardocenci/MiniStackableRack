@@ -1,0 +1,25 @@
+# go2rtc — canteiro restream hub, containerized 2026-08-29 (was a systemd
+# unit + hand-downloaded binary).
+#
+# Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/docker/go2rtc/
+# Live copy:          bnu-raspberrypi:~/go2rtc/
+#
+# Version pinned (not :latest, no auto-update cron): every camera consumer
+# at bnu hangs off this one process — bump the tag deliberately,
+# fleet-update style.
+services:
+  go2rtc:
+    image: alexxit/go2rtc:1.9.14   # same version the binary had
+    container_name: go2rtc
+    network_mode: host   # :8554 RTSP + :1984 API must stay on the host IPs
+    restart: unless-stopped
+    devices:
+      # bcm2835-codec trio for the canteiro_h264 fallback's h264_v4l2m2m
+      # hardware encode (the image ships its own ffmpeg)
+      - /dev/video10:/dev/video10
+      - /dev/video11:/dev/video11
+      - /dev/video12:/dev/video12
+    group_add:
+      - "44"   # host 'video' group (device nodes are root:video 0660)
+    volumes:
+      - ./go2rtc.yaml:/config/go2rtc.yaml:ro

@@ -1,0 +1,59 @@
+# canteiro-jobs — the three canteiro WhatsApp jobs as containers (migrated
+# from systemd timers 2026-08-29, decisão Eduardo).
+#
+# Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/docker/canteiro-jobs/
+# Live copy:          bnu-raspberrypi:~/canteiro-jobs/
+#   env/canteiro-*.env are the live env files (moved from /etc/canteiro-*.env,
+#   NOT in git — root .env at the repo root is authoritative, see
+#   REMOTE_ACCESS.md §5 drift list).
+#
+# All three run host-network: WAHA on the bnu LAN (10.1.1.126:3000), go2rtc on
+# 127.0.0.1:1984, and the ara Pi over the tailnet. user 1000 = eduardocenci,
+# matching the ownership of the bind-mounted state dir and rclone.conf.
+services:
+  canteiro-watchdog:
+    build: .
+    image: canteiro-jobs:local
+    container_name: canteiro-watchdog
+    network_mode: host
+    user: "1000:1000"
+    restart: unless-stopped
+    init: true
+    env_file: env/canteiro-watchdog.env
+    environment:
+      STATE_DIRECTORY: /var/lib/canteiro-watchdog
+    volumes:
+      # same state dir the systemd unit used — state.json + lastframe.jpg
+      # survive the migration, and rollback to the timer needs no re-seed
+      - /var/lib/canteiro-watchdog:/var/lib/canteiro-watchdog
+    # the script stays a oneshot; the 60 s cadence of the old timer lives here
+    command: ["/bin/sh", "-c", "while true; do python3 /app/canteiro-watchdog.py; sleep 60; done"]
+
+  canteiro-presenca:
+    image: canteiro-jobs:local
+    container_name: canteiro-presenca
+    network_mode: host
+    user: "1000:1000"
+    restart: unless-stopped
+    init: true
+    env_file: env/canteiro-presenca.env
+    environment:
+      TZ: America/Sao_Paulo   # supercronic schedules in this zone
+    command: ["supercronic", "-passthrough-logs", "/app/crontab-presenca"]
+
+  canteiro-sunset-compare:
+    image: canteiro-jobs:local
+    container_name: canteiro-sunset-compare
+    network_mode: host
+    user: "1000:1000"
+    restart: unless-stopped
+    init: true
+    env_file: env/canteiro-sunset-compare.env
+    environment:
+      TZ: America/Sao_Paulo
+      RCLONE_CONFIG: /config/rclone/rclone.conf
+    volumes:
+      # rw on purpose: rclone refreshes the Drive token in place; uid 1000
+      # keeps the host file owned by eduardocenci
+      - /home/eduardocenci/.config/rclone:/config/rclone
+    command: ["supercronic", "-passthrough-logs", "/app/crontab-sunset-compare"]

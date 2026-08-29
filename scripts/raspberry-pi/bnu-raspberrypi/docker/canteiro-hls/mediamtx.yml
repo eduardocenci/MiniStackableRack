@@ -1,7 +1,7 @@
 # canteiro-hls — mediamtx as an HLS packager only (bnu-raspberrypi)
 #
-# Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/canteiro-hls/mediamtx.yml
-# Live copy:          bnu-raspberrypi:/etc/mediamtx/canteiro-hls.yml
+# Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/docker/canteiro-hls/mediamtx.yml
+# Live copy:          bnu-raspberrypi:~/canteiro-hls/mediamtx.yml (ro mount into the container)
 #
 # Why this exists (2026-08-29): go2rtc's built-in HLS keeps a ~1 s live window
 # (2 segments falsely advertised as 0.5 s each; real cadence ~2 s) — any hiccup

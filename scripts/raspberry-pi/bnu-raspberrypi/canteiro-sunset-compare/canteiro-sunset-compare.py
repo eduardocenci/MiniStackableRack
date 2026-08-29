@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """canteiro-sunset-compare — comparação diária do pôr do sol da obra ARA.
 
-Toda segunda–sexta às 20:10 America/Sao_Paulo (systemd timer no bnu-raspberrypi — o
-relógio deste Pi é Europe/London, então o fuso vem do OnCalendar e o "dia"
-é calculado aqui com ZoneInfo, nunca com a hora local) baixa do Google
+Toda segunda–sexta às 20:10 America/Sao_Paulo (container canteiro-sunset-compare
+no bnu-raspberrypi, supercronic com TZ=America/Sao_Paulo — ver
+docker/canteiro-jobs/; até 2026-08-29 era um systemd timer. O "dia" é
+calculado aqui com ZoneInfo, nunca com a hora local) baixa do Google
 Drive as fotos de `posicao1/por-do-sol/` do ÚLTIMO DIA ÚTIL (segunda
 compara com sexta; demais dias, com ontem) e de HOJE (timelapse do
 ara Pi, upload às 20:00 — daí a folga de 10 min + retries), empilha
@@ -15,13 +16,14 @@ Core build, mesmo padrão do canteiro-watchdog).
 A câmera grava data/hora dentro de cada frame, então a própria montagem
 carrega os carimbos dos dois dias.
 
-Config: /etc/canteiro-sunset-compare.env — WAHA_URL, WAHA_KEY,
-WAHA_SESSION, GROUP_JID, TEST_JID, RCLONE_REMOTE (default
-ceuazul:Timelapse; remote no rclone.conf de ~eduardocenci, token da mesma
-conta Google do upload do ara Pi).
+Config: ~/canteiro-jobs/env/canteiro-sunset-compare.env (env_file do
+compose) — WAHA_URL, WAHA_KEY, WAHA_SESSION, GROUP_JID, TEST_JID,
+RCLONE_REMOTE (default ceuazul:Timelapse; remote no rclone.conf de
+~eduardocenci montado no container, token da mesma conta Google do upload
+do ara Pi).
 
 Teste manual (vai ao TEST_JID — grupo Casa SmokeTests):
-  sudo bash -c 'set -a; . /etc/canteiro-sunset-compare.env; set +a; canteiro-sunset-compare.py --test'
+  docker exec canteiro-sunset-compare python3 /app/canteiro-sunset-compare.py --test
 """
 import base64
 import json

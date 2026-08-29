@@ -1,7 +1,9 @@
 # bnu-raspberrypi — rack Pi (Blumenau SC)
 
-Network monitoring node of the bnu rack; also drives the canteiro screen
-(live view of the ARA build site camera).
+Network monitoring node of the bnu rack; also the bnu-side hub of the ARA
+build-site camera (restream, live pages and WhatsApp reports). It no longer
+drives its attached screen — the mpv wall view (`canteiro-screen`) was
+removed on 2026-08-29 (decisão Eduardo: camera on the Pi screen not needed).
 
 | Fact | Value |
 |---|---|
@@ -16,12 +18,11 @@ Network monitoring node of the bnu rack; also drives the canteiro screen
 |---|---|
 | [`docker/globalnet/`](docker/globalnet/) | Multi-site dashboard container (`cenci/globalnet:latest`, port 5001→5050) |
 | netoverview | LAN discovery container (`cenci/netoverview:latest`, host networking; compose lives on the Pi at `~/netoverview/`, sourced from the netoverview repo) |
-| [`go2rtc/`](go2rtc/) | Restream hub of the ARA canteiro camera — single Starlink pull fanned out to the wall screen, TV cast, browser live view and the bnu Frigate NVR (LXC 105) |
-| [`canteiro-hls/`](canteiro-hls/) | systemd unit: mediamtx packaging the local go2rtc producer into proper HLS (4 s segments, ~35 s window) for the browser `/live` page — go2rtc's own HLS window (~1 s) kept collapsing (2026-08-29) |
-| [`canteiro-screen/`](canteiro-screen/) | systemd unit: mpv fullscreen of the ARA site camera (reads the local go2rtc) |
-| [`canteiro-watchdog/`](canteiro-watchdog/) | systemd timer (60 s): WhatsApp alert with the last frame when the ARA canteiro relay drops, recovery message when it returns |
-| [`canteiro-presenca/`](canteiro-presenca/) | systemd timer (daily 20:00 America/Sao_Paulo): WhatsApp report of how many people were at the ARA obra today, from the ara netoverview `/api/presence` |
-| [`canteiro-sunset-compare/`](canteiro-sunset-compare/) | systemd timer (Mon–Fri 20:10 America/Sao_Paulo): fetches yesterday's + today's `posicao1/por-do-sol` frames from Drive `CeuAzul/Timelapse/` (rclone), stacks them vertically (ffmpeg) and sends the "Dia de Trabalho" comparison to WhatsApp via WAHA `sendImage` |
+| [`docker/go2rtc/`](docker/go2rtc/) | Restream hub of the ARA canteiro camera — single Starlink pull fanned out to the TV cast, browser live view and the bnu Frigate NVR (LXC 105) |
+| [`docker/canteiro-hls/`](docker/canteiro-hls/) | mediamtx container packaging the local go2rtc producer into proper HLS (4 s segments, ~35 s window) for the browser `/live` page — go2rtc's own HLS window (~1 s) kept collapsing (2026-08-29) |
+| [`canteiro-watchdog/`](canteiro-watchdog/) | container, 60 s loop ([`docker/canteiro-jobs/`](docker/canteiro-jobs/)): WhatsApp alert with the last frame when the ARA canteiro relay drops, recovery message when it returns |
+| [`canteiro-presenca/`](canteiro-presenca/) | container, daily 20:00 America/Sao_Paulo ([`docker/canteiro-jobs/`](docker/canteiro-jobs/)): WhatsApp report of how many people were at the ARA obra today, from the ara netoverview `/api/presence` |
+| [`canteiro-sunset-compare/`](canteiro-sunset-compare/) | container, Mon–Fri 20:10 America/Sao_Paulo ([`docker/canteiro-jobs/`](docker/canteiro-jobs/)): fetches yesterday's + today's `posicao1/por-do-sol` frames from Drive `CeuAzul/Timelapse/` (rclone), stacks them vertically (ffmpeg) and sends the "Dia de Trabalho" comparison to WhatsApp via WAHA `sendImage` |
 | wayvnc | VNC access to the desktop session |
 
 ## Docker auto-update cron (and disk-space guard)

@@ -8,10 +8,11 @@ Intelbras, roteador Starlink) ficam de fora — o que sobra são celulares e
 computadores de pessoas, então a contagem aproxima "quantas pessoas
 passaram pela obra hoje".
 
-Roda no bnu-raspberrypi (que enxerga o WAHA na LAN) por systemd timer
-(canteiro-presenca.timer, OnCalendar 20:00 America/Sao_Paulo).
+Roda no bnu-raspberrypi (que enxerga o WAHA na LAN) no container
+canteiro-presenca — supercronic 20:00 America/Sao_Paulo, ver
+docker/canteiro-jobs/ (até 2026-08-29 era um systemd timer).
 
-Config: /etc/canteiro-presenca.env (EnvironmentFile do systemd) —
+Config: ~/canteiro-jobs/env/canteiro-presenca.env (env_file do compose) —
 WAHA_URL, WAHA_KEY, WAHA_SESSION, GROUP_JID, TEST_JID, ARA_NTO_URL,
 EXCLUDE_MACS, EXCLUDE_HOSTNAMES.
 Teste manual: canteiro-presenca.py --test [chatId]  (por padrão manda ao

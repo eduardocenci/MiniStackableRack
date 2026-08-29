@@ -1,13 +1,14 @@
 # go2rtc — LAN-facing restream of the ARA canteiro camera (bnu-raspberrypi)
 #
-# Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/go2rtc/go2rtc.yaml
-# Live copy:          bnu-raspberrypi:/etc/go2rtc/go2rtc.yaml
+# Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/docker/go2rtc/go2rtc.yaml
+# Live copy:          bnu-raspberrypi:~/go2rtc/go2rtc.yaml (ro mount at /config/go2rtc.yaml)
 #
 # Purpose: pulls the tailnet-only relay on ara-raspberrypi ONCE per stream and
 # fans it out on the bnu house LAN, so ara's Starlink upload always carries a
 # single copy of each stream (two parallel main-stream readers stalled it —
 # 2026-08-26). Consumers:
-#   - wall screen: canteiro-screen.service (mpv, rtsp://127.0.0.1:8554/canteiro)
+#   - canteiro-hls: mediamtx HLS packager for the browser /live page
+#     (rtsp://127.0.0.1:8554/canteiro)
 #   - Samsung AU8000 60" TV via DLNA — progressive fMP4 over HTTP:
 #       http://10.1.1.123:1984/api/stream.mp4?src=canteiro         (HEVC, copy)
 #       http://10.1.1.123:1984/api/stream.mp4?src=canteiro_h264    (H.264 transcode,
@@ -23,7 +24,7 @@ api:
   listen: ":1984"
 
 # RTSP serves BOTH the internal ffmpeg-transcode return path AND the LAN
-# consumers (wall screen on localhost, Frigate LXC on 10.1.1.160) — it must
+# consumers (canteiro-hls on localhost, Frigate LXC on 10.1.1.160) — it must
 # listen on all interfaces, not 127.0.0.1. No reader auth: reachable from the
 # house LAN and tailnet only, same trust level as the :1984 HTTP API.
 rtsp:

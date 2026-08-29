@@ -1,4 +1,0 @@
-# When a display is (un)plugged on a DRM connector, restart the canteiro
-# player so mpv re-places its fullscreen window on the new output layout.
-# Live copy: /etc/udev/rules.d/99-canteiro-screen-hotplug.rules
-ACTION=="change", SUBSYSTEM=="drm", ENV{HOTPLUG}=="1", RUN+="/usr/bin/systemctl try-restart canteiro-screen.service"

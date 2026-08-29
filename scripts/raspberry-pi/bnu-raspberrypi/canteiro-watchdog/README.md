@@ -13,8 +13,9 @@ Vigia o canteiro da obra (ARA) e avisa o grupo **"Casa Céu Azul"**
 
 No momento da queda a câmera já está inalcançável — então o watchdog
 **cacheia um frame por minuto enquanto está no ar** (`/api/frame.jpeg` do
-go2rtc local, que compartilha o produtor da tela de parede: custo ~zero) em
-`/var/lib/canteiro-watchdog/lastframe.jpg`, e é esse cache que vai no alerta.
+go2rtc local, cujo produtor o Frigate e o canteiro-hls mantêm ativo: custo
+~zero) em `/var/lib/canteiro-watchdog/lastframe.jpg`, e é esse cache que
+vai no alerta.
 
 ## Detecção
 
@@ -26,25 +27,31 @@ mensagens em `America/Sao_Paulo` (o relógio deste Pi está em BST).
 
 Sensores de rede no HA (`command_line`/`ping`) exigem editar
 `configuration.yaml` e **reiniciar o HA da casa** — e o alerta continuaria
-dependendo de WAHA do mesmo jeito. Este systemd timer entrega o mesmo
-resultado sem tocar no HA. (Se um dia migrar: o script é a especificação.)
+dependendo de WAHA do mesmo jeito. Este job entrega o mesmo resultado sem
+tocar no HA. (Se um dia migrar: o script é a especificação.)
+
+**Desde 2026-08-29 roda como container Docker** (`canteiro-watchdog`, loop
+de 60 s) — empacotamento, deploy, teste e rollback em
+[`../docker/canteiro-jobs/`](../docker/canteiro-jobs/). Até então era um
+systemd timer; os unit files antigos seguem no Pi **desabilitados** como
+rollback por uma onda, depois somem.
 
 | Arquivo | Cópia viva |
 |---|---|
-| [`canteiro-watchdog.py`](canteiro-watchdog.py) | `/usr/local/bin/canteiro-watchdog.py` |
-| [`canteiro-watchdog.service`](canteiro-watchdog.service) | `/etc/systemd/system/` (oneshot, `User=eduardocenci`, `StateDirectory`) |
-| [`canteiro-watchdog.timer`](canteiro-watchdog.timer) | `/etc/systemd/system/` (a cada 60 s) |
-| credenciais | `/etc/canteiro-watchdog.env` (600 root — WAHA_URL/KEY/SESSION, GROUP_JID, ARA_HOST/PORT, FAILS_TO_ALERT; espelho do `.env` `BNU_WAHA_*`) |
+| [`canteiro-watchdog.py`](canteiro-watchdog.py) | `~/canteiro-jobs/canteiro-watchdog.py` (COPY no build da imagem) |
+| estado | `/var/lib/canteiro-watchdog/` (bind mount — o mesmo dir da era systemd) |
+| credenciais | `~/canteiro-jobs/env/canteiro-watchdog.env` (600 — WAHA_URL/KEY/SESSION, GROUP_JID, ARA_HOST/PORT, FAILS_TO_ALERT; espelho do `.env` `BNU_WAHA_*`) |
 
 ## Operar
 
 ```bash
-python scripts/devtool.py run bnu-raspberrypi "systemctl list-timers canteiro-watchdog.timer --no-pager"
+python scripts/devtool.py run bnu-raspberrypi "docker ps --filter name=canteiro-watchdog"
 python scripts/devtool.py run bnu-raspberrypi "cat /var/lib/canteiro-watchdog/state.json"
-# teste de alerta (usa o grupo SmokeTests para não incomodar a família):
-python scripts/devtool.py run bnu-raspberrypi "sudo systemctl stop canteiro-watchdog.timer"  # pausar
+python scripts/devtool.py run bnu-raspberrypi "docker compose -f ~/canteiro-jobs/compose.yml stop canteiro-watchdog"  # pausar
 ```
 
-Teste de mensagem: `canteiro-watchdog.py --test-alert <jid>` (com o env
-carregado) — validado 2026-08-26 no grupo Casa SmokeTests (sendImage HTTP
-201; o WAHA da frota envia mídia).
+Teste de mensagem: `docker exec canteiro-watchdog python3
+/app/canteiro-watchdog.py --test-alert <jid-do-SmokeTests>` — **sempre com
+o jid explícito** (sem argumento o flag manda ao grupo real). Validado
+2026-08-26 (systemd) e 2026-08-29 (container) no grupo Casa SmokeTests
+(sendImage HTTP 201).

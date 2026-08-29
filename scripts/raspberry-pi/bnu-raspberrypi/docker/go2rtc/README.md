@@ -1,26 +1,29 @@
 # go2rtc — canteiro restream for LAN devices (bnu-raspberrypi)
 
 Bridges the tailnet-only ARA camera relay onto the bnu house LAN, and is the
-**single upstream consumer**: everything at bnu (the wall screen, the TV
-cast AND the bnu Frigate NVR) reads from this go2rtc, which pulls each
+**single upstream consumer**: everything at bnu (the TV cast, the browser
+live view AND the bnu Frigate NVR) reads from this go2rtc, which pulls each
 canteiro stream from ara exactly once:
 
 ```
 rtsp://ara-raspberrypi:8554/canteiro ──tailnet (1 copy each)──▶ go2rtc on bnu-raspberrypi
-                     + /canteiro-sub                             ├─ rtsp://127.0.0.1:8554/canteiro → canteiro-screen (mpv)
-                                                                 ├─ rtsp://10.1.1.123:8554/canteiro + canteiro_sub → bnu Frigate LXC 105 (record + person/vehicle detect, 2026-08-26)
+                     + /canteiro-sub                             ├─ rtsp://10.1.1.123:8554/canteiro + canteiro_sub → bnu Frigate LXC 105 (record + person/vehicle detect, 2026-08-26)
                                                                  ├─ rtsp://127.0.0.1:8554/canteiro → canteiro-hls (mediamtx :8888 → browser /live page, 2026-08-29)
                                                                  └─ /api/stream.mp4?src=canteiro → 55" TV (Cast)
 ```
+
+(The mpv wall view of this stream on the Pi's own screen —
+`canteiro-screen.service` — was removed on 2026-08-29, decisão Eduardo.)
 
 The RTSP listener is LAN-exposed (`:8554`, was localhost-only until
 2026-08-26) so the Frigate LXC can attach as another reader of the shared
 producer — no reader auth, same LAN+tailnet trust as the `:1984` API.
 
-**Why single-pull (2026-08-26 incident):** with the wall screen reading ara
-directly *and* go2rtc pulling for the TV, daytime bitrate × 2 streams
-saturated the canteiro's Starlink upload — the relay logged "reader is too
-slow, discarding frames" and the TV froze. One upstream copy fixed it.
+**Why single-pull (2026-08-26 incident):** with the then-existing wall
+screen reading ara directly *and* go2rtc pulling for the TV, daytime
+bitrate × 2 streams saturated the canteiro's Starlink upload — the relay
+logged "reader is too slow, discarding frames" and the TV froze. One
+upstream copy fixed it; the rule still applies to today's consumers.
 
 **Do not cast the `canteiro_h264` transcode:** ffmpeg software-decoding the
 3MP HEVC pushes the Pi 4 to load ~6 and starves everything on it (seen
@@ -32,12 +35,12 @@ substream (channel=1&subtype=1, H.264 640×480 — zero transcode) instead.
 | URL (LAN `10.1.1.123` / tailnet `bnu-raspberrypi` = `100.91.64.62`) | Content |
 |---|---|
 | `…:1984/api/stream.mp4?src=canteiro` | HEVC passthrough (2304×1296) — the TV cast |
-| `https://bnu-raspberrypi.woodpecker-shark.ts.net/live` | **browser live view — THE bookmark** ([`canteiro-live.html`](canteiro-live.html), hls.js over the **mediamtx `/hls` endpoint** ([`../canteiro-hls/`](../canteiro-hls/)) — 4 s segments, ~35 s window riding out Starlink/DERP jitter; native HLS on iOS; served by `tailscale serve --set-path=/live`). Until 2026-08-29 it used go2rtc's own HLS, whose ~1 s window caused constant interruptions. |
-| `https://…ts.net/hls/canteiro/index.m3u8?cookieCheck=1` | the HLS endpoint itself (mediamtx via `tailscale serve --set-path=/hls`; the query param dodges a redirect that escapes the mount — see [`../canteiro-hls/README.md`](../canteiro-hls/README.md)) |
+| `https://bnu-raspberrypi.woodpecker-shark.ts.net/live` | **browser live view — THE bookmark** ([`canteiro-live.html`](canteiro-live.html), hls.js over the **mediamtx `/hls` endpoint** ([`../docker/canteiro-hls/`](../docker/canteiro-hls/)) — 4 s segments, ~35 s window riding out Starlink/DERP jitter; native HLS on iOS; served by `tailscale serve --set-path=/live`). Until 2026-08-29 it used go2rtc's own HLS, whose ~1 s window caused constant interruptions. |
+| `https://…ts.net/hls/canteiro/index.m3u8?cookieCheck=1` | the HLS endpoint itself (mediamtx via `tailscale serve --set-path=/hls`; the query param dodges a redirect that escapes the mount — see [`../docker/canteiro-hls/README.md`](../docker/canteiro-hls/README.md)) |
 | `…:1984/stream.html?src=canteiro&mode=hls` | go2rtc's own HLS page — diagnostics only: ~1 s live window (2 fake-0.5 s segments), collapses on any hiccup; also **Safari/iOS only** (desktop Chrome has no native HLS) |
 | `…:1984/stream.html?src=canteiro&mode=mse` | low-latency view (~1 s behind live, but stutters on every network hiccup — HEVC via MSE) |
 | `…:1984/stream.html?src=canteiro_h264` | browser fallback if a device can't decode HEVC (starts the on-demand transcode — occasional use only) |
-| `…:8554/canteiro` · `…:8554/canteiro_sub` | RTSP (TCP) — Frigate's record feed (HEVC main) and detect feed (H.264 640×480 substream); also what the wall screen reads on localhost |
+| `…:8554/canteiro` · `…:8554/canteiro_sub` | RTSP (TCP) — Frigate's record feed (HEVC main) and detect feed (H.264 640×480 substream); also what canteiro-hls reads on localhost |
 | `…:1984/` | go2rtc web UI (diagnostics) |
 
 Every viewer above consumes the **shared local producer** — N phones/PCs
@@ -95,17 +98,22 @@ devices cannot resolve local names).
 
 ## Install layout (live)
 
+Docker container since 2026-08-29 (was a systemd unit + hand-downloaded
+binary; the disabled unit, `/usr/local/bin/go2rtc` and `/etc/go2rtc/`
+stay on the Pi for one wave as rollback).
+
 | File | Purpose |
 |---|---|
-| `/usr/local/bin/go2rtc` | static binary (GitHub release, linux_arm64) |
-| `/etc/go2rtc/go2rtc.yaml` | copy of [`go2rtc.yaml`](go2rtc.yaml) |
-| `/etc/systemd/system/go2rtc.service` | copy of [`go2rtc.service`](go2rtc.service) (system user `go2rtc`, `video` group for v4l2m2m encode) |
+| `~/go2rtc/compose.yml` | copy of [`compose.yml`](compose.yml) — image `alexxit/go2rtc:1.9.14` (pinned), host network, `/dev/video10-12` + `video` group for v4l2m2m encode |
+| `~/go2rtc/go2rtc.yaml` | copy of [`go2rtc.yaml`](go2rtc.yaml), ro-mounted at `/config/go2rtc.yaml` |
+| `/usr/local/share/canteiro-live/index.html` | copy of [`canteiro-live.html`](canteiro-live.html) — the `/live` page, served as a static file by `tailscale serve` (independent of the container) |
 
 ## Operate
 
 ```bash
-python scripts/devtool.py run bnu-raspberrypi "systemctl status go2rtc --no-pager"
+python scripts/devtool.py run bnu-raspberrypi "docker ps --filter name=go2rtc"
 python scripts/devtool.py run bnu-raspberrypi "curl -s http://127.0.0.1:1984/api/streams | head -5"
+python scripts/devtool.py run bnu-raspberrypi "docker logs go2rtc --tail 20"
 ```
 
 Streams are pulled from the relay **on demand** (go2rtc connects upstream
