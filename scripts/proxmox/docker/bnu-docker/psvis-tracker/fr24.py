@@ -40,6 +40,28 @@ def latest_landed(reg, max_age_s=6 * 3600, now_ts=None):
     return None
 
 
+def live_details(flight_id):
+    """Live flight details (the clickhandler endpoint) — works while the
+    flight is in the air; carries the trail flown so far (newest first)."""
+    r = requests.get(
+        "https://data-live.flightradar24.com/clickhandler/",
+        params={"flight": flight_id, "version": "1.5"},
+        headers=HEADERS,
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def latest_airborne(reg):
+    """Newest flight of `reg` with a real departure and no arrival yet."""
+    for f in list_flights(reg):
+        t = (f.get("time") or {}).get("real") or {}
+        if t.get("departure") and not t.get("arrival"):
+            return f
+    return None
+
+
 def playback(flight_id):
     """Full post-flight playback: identification, airports, aircraft and the
     complete track (lat/lon/altitude/speed/vspeed per timestamp)."""

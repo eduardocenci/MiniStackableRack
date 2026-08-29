@@ -29,9 +29,22 @@ o `fallback_text` como texto; o serviço está fora do ar → o próprio HA dete
 (`response_variable`) e manda o texto direto.
 
 Endpoints: `POST /report` (`{"flight_id", "direction", "test", "force",
-"chat_jid", "fallback_text"}` — todos opcionais; `test:true` envia ao grupo
-SmokeTests), `POST /backfill`, `GET /flights`, `GET /health`,
-`GET /charts/<id>.png`.
+"chat_jid", "fallback_text", "sim"}` — todos opcionais; `test:true` envia ao
+grupo SmokeTests; `direction:"took_off"` agenda o update em voo),
+`POST /backfill`, `GET /flights`, `GET /health`, `GET /charts/<id>.png`.
+
+## Update em voo (T+10 da decolagem)
+
+O FR24 quase nunca conhece o destino na decolagem. Estratégia intermediária
+(decisão Eduardo 2026-08-29): no `took_off` o HA agenda no tracker um update
+`ENROUTE_DELAY_S` (10 min) após a decolagem, com o trail ao vivo
+(`clickhandler`, fallback playback): **rumo cardinal** (média circular dos
+últimos headings), **mapa da rota até o momento**, altitude/velocidade atuais
+e **estimativas de chegada cruzadas com o flight log** — destinos anteriores
+compatíveis com o rumo (±45°), ETA pela média histórica da rota (mesma direção,
+senão reversa; senão distância restante ÷ cruzeiro médio do banco + buffer de
+descida). Dedupe por `enroute:<id>`; teste com voo já concluído: `sim:true`
+trunca o trail nos primeiros 10 min.
 
 ## Flight log (base histórica para comparações)
 

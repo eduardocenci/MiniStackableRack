@@ -224,8 +224,16 @@ automation:
                       jid: !secret psvis_group_jid
                       message: "{{ message }}"
         default:
-          # Take-off: immediate plain text, as before.
+          # Take-off: immediate plain text...
           - service: rest_command.send_whatsapp_bnu
             data:
               jid: !secret psvis_group_jid
               message: "{{ message }}"
+          # ...and schedule the T+10 en-route update on psvis-tracker: cardinal
+          # heading, route-so-far map, arrival estimates from the flight log
+          # (FR24 rarely knows the destination at departure).
+          - service: rest_command.psvis_flight_report
+            continue_on_error: true
+            data:
+              flight_id: "{{ fr24_id }}"
+              direction: took_off

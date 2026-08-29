@@ -123,6 +123,41 @@ def store_flight(flight, stats, list_entry=None):
         json.dump(flight, fh)
 
 
+def known_airports(exclude_icao=None):
+    """Distinct airports seen in the log (either endpoint of any flight) with
+    coordinates — the candidate destinations for the en-route estimate."""
+    with _conn() as c:
+        c.row_factory = sqlite3.Row
+        rows = c.execute(
+            "SELECT d_iata AS iata, d_icao AS icao, d_name AS name,"
+            "       d_city AS city, d_lat AS lat, d_lon AS lon FROM flights"
+            " UNION "
+            "SELECT o_iata, o_icao, o_name, o_city, o_lat, o_lon FROM flights"
+        ).fetchall()
+    out = {}
+    for r in rows:
+        if r["icao"] and r["lat"] is not None and r["icao"] != exclude_icao:
+            out.setdefault(r["icao"], dict(r))
+    return list(out.values())
+
+
+def route_durations(o_icao, d_icao, exclude_fid=None):
+    """Durations (s) of logged flights on a route, newest first."""
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT duration_s FROM flights"
+            " WHERE o_icao=? AND d_icao=? AND duration_s > 0 AND fr24_id != ?"
+            " ORDER BY dep_ts DESC LIMIT 10",
+            (o_icao, d_icao, exclude_fid or ""),
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+def avg_cruise_kmh():
+    with _conn() as c:
+        return c.execute("SELECT AVG(cruise_kmh) FROM flights").fetchone()[0]
+
+
 def list_flights(limit=20):
     with _conn() as c:
         c.row_factory = sqlite3.Row

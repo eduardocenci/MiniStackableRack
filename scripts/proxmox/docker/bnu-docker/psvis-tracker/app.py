@@ -19,6 +19,7 @@ import time
 from flask import Flask, jsonify, request, send_from_directory
 
 import db
+import enroute
 import fr24
 import report
 import waha
@@ -36,6 +37,8 @@ MAX_TRIES = int(os.environ.get("MAX_TRIES", "10"))
 # 15 min: the sweep is the UNIVERSAL capture path — a landing at any airport
 # with no HA event still gets stored and reported within one interval.
 SYNC_INTERVAL_S = int(os.environ.get("SYNC_INTERVAL_S", "900"))
+# T+10 en-route update after take-off (FR24 rarely knows the destination then)
+ENROUTE_DELAY_S = int(os.environ.get("ENROUTE_DELAY_S", "600"))
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 CHARTS_DIR = os.path.join(DATA_DIR, "charts")
 LAST_FILE = os.path.join(DATA_DIR, "last_reported")
@@ -106,23 +109,69 @@ def _run_report(flight_id, jid, force, fallback_text=""):
         log.info("fallback text sent to %s", jid)
 
 
+def _run_enroute(flight_id, jid, force, sim):
+    """T+10 after take-off: cardinal heading, route-so-far map and arrival
+    estimates for previously-seen destinations along the heading."""
+    if not force and ENROUTE_DELAY_S:
+        time.sleep(ENROUTE_DELAY_S)
+    for attempt in range(1, 4):
+        try:
+            fid = flight_id
+            if not fid:
+                entry = fr24.latest_airborne(REG)
+                fid = (entry or {}).get("identification", {}).get("id")
+            if not fid:
+                raise LookupError("no airborne flight found on FR24")
+            key = f"enroute:{fid}"
+            if not force and _already_reported(key):
+                return
+            try:
+                origin, track, dest_hint = enroute.from_clickhandler(fr24.live_details(fid))
+                if len(track) < 5:
+                    raise ValueError("live trail empty")
+            except Exception:  # not live any more (or endpoint hiccup)
+                origin, track, dest_hint = enroute.from_playback(fr24.playback(fid))
+            if sim:  # test path: pretend we are ENROUTE_DELAY_S into the flight
+                track = enroute.truncate_after_takeoff(track, ENROUTE_DELAY_S)
+            caption, png = enroute.build(origin, track, dest_hint, exclude_fid=fid)
+            name = f"{fid}-enroute.png"
+            with open(os.path.join(CHARTS_DIR, name), "wb") as fh:
+                fh.write(png)
+            waha.send_image(jid, f"{SELF_URL}/charts/{name}", caption)
+            _mark_reported(key)
+            log.info("en-route update for %s sent to %s", fid, jid)
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning("en-route attempt %d/3 failed: %s", attempt, exc)
+            if attempt < 3:
+                time.sleep(RETRY_S)
+    log.error("giving up on en-route update (flight_id=%s)", flight_id)
+
+
 @app.post("/report")
 def report_endpoint():
     body = request.get_json(silent=True) or {}
     direction = body.get("direction", "landed")
-    if direction != "landed":
-        return jsonify(status="skipped", reason="report only on landing"), 200
     test = bool(body.get("test"))
     jid = body.get("chat_jid") or (TEST_GROUP_JID if test else GROUP_JID)
     if not jid:
         return jsonify(status="error", reason="no chat JID configured"), 500
     flight_id = (body.get("flight_id") or "").strip() or None
     force = bool(body.get("force") or test)
-    fallback_text = body.get("fallback_text") or ""
-    threading.Thread(
-        target=_run_report, args=(flight_id, jid, force, fallback_text), daemon=True
-    ).start()
-    return jsonify(status="accepted", flight_id=flight_id, test=test), 202
+    if direction == "landed":
+        fallback_text = body.get("fallback_text") or ""
+        threading.Thread(
+            target=_run_report, args=(flight_id, jid, force, fallback_text), daemon=True
+        ).start()
+        return jsonify(status="accepted", flight_id=flight_id, test=test), 202
+    if direction == "took_off":
+        threading.Thread(
+            target=_run_enroute,
+            args=(flight_id, jid, force, bool(body.get("sim"))),
+            daemon=True,
+        ).start()
+        return jsonify(status="enroute-scheduled", flight_id=flight_id, test=test), 202
+    return jsonify(status="skipped", reason="unknown direction"), 200
 
 
 def _sync_history(limit=15):
