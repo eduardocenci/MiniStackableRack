@@ -19,7 +19,7 @@ Root
     │   ├── homeassistant/      Home Assistant OS runs as a VM on Proxmox
     │   │   └── <site>-homeassistant/
     │   ├── docker/             Docker host on Proxmox — one folder per deployment, one subfolder per container
-    │   │   └── bnu-docker/     LXC 101: waha, waha-listener, condfy-bridge, netoverview-agent
+    │   │   └── bnu-docker/     LXC 101: waha, waha-listener, condfy-bridge, netoverview-agent, psvis-tracker
     │   ├── frigate/            Frigate NVR in an LXC (bnu: LXC 105)
     │   ├── ollama/             Ollama LLM host in an LXC (bnu: LXC 106)
     │   ├── plex/               Plex media server in an LXC (bg: LXC 102)
@@ -109,7 +109,7 @@ python scripts/devtool.py guest bnu 101 "docker ps"   # inside an LXC/VM
 
 **Tailscale is the network layer.** Tailnet devices are nodes named exactly after their `<deployment>-<component>` name (e.g. `bnu-proxmox`, `ply-nas-ds918plus`). The machine Claude runs on is itself a tailnet node, so **those devices are directly reachable by their bare name** (MagicDNS) — no VPN setup, no port forwarding. Run `tailscale status` locally to list all nodes and their `100.x` IPs. Services bound to a device's Tailscale IP (e.g. Copyparty on the NAS) are reachable only through the tailnet, by design.
 
-**But not every device is on the tailnet.** The bnu docker LXC (`10.1.1.126` — waha, waha-listener, condfy-bridge, netoverview-agent), ollama, the Zigbee gateways, the Hikvision NVR and doorbell, and the routers are **LAN-only**: their bare names do not resolve. Reach them by hopping through the site's Proxmox host — `python scripts/devtool.py lan bnu 10.1.1.132 "curl -sS http://10.1.1.132/"`. Full list in `REMOTE_ACCESS.md` §2. Outside those devices, prefer tailnet names over LAN IPs in new work.
+**But not every device is on the tailnet.** The bnu docker LXC (`10.1.1.126` — waha, waha-listener, condfy-bridge, netoverview-agent, psvis-tracker), ollama, the Zigbee gateways, the Hikvision NVR and doorbell, and the routers are **LAN-only**: their bare names do not resolve. Reach them by hopping through the site's Proxmox host — `python scripts/devtool.py lan bnu 10.1.1.132 "curl -sS http://10.1.1.132/"`. Full list in `REMOTE_ACCESS.md` §2. Outside those devices, prefer tailnet names over LAN IPs in new work.
 
 **Sites are `bnu`, `ply`, `bg`, `fln`** — four, not three. `fln` has no folders under `scripts/` yet, but it is a full rack in `.env`, `devtool.py` and `globalnet/architecture.yaml`.
 

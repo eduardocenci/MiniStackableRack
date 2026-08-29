@@ -29,7 +29,29 @@
 #
 # Reuses rest_command.send_whatsapp_bnu (defined in family_presence.yaml — rest_commands
 # are global) and !secret whatsapp_group_jid.
+#
+# MESSAGE OVERVIEW (2026-08-29)
+#   The event dict carries much more than the city: real departure/arrival epochs,
+#   aircraft model, airport names/codes/coordinates and the FR24 flight id. The
+#   message shows route, times+duration, model and the FR24 playback link. Lines
+#   whose source field is missing are omitted — FR24 data can be partial (a real
+#   PS-VIS flight has been seen with no destination airport at all).
+#
+# POST-FLIGHT REPORT (cruise stats + altitude chart)
+#   On LANDING the automation also pings psvis-tracker (LXC 101 @ 10.1.1.126:8790,
+#   scripts/proxmox/docker/bnu-docker/psvis-tracker/) with the FR24 flight id; it
+#   pulls the full playback trail and sends the altitude/speed profile chart to the
+#   same group a couple of minutes later. Fire-and-forget: continue_on_error, and
+#   the tracker resolves the newest landed PS-VIS flight itself if the id is empty.
 # ──────────────────────────────────────────────────────────────────────────────
+
+rest_command:
+  # Triggers the post-flight report (chart + cruise stats) on psvis-tracker.
+  psvis_flight_report:
+    url: "http://10.1.1.126:8790/report"
+    method: POST
+    content_type: application/json
+    payload: '{"flight_id": "{{ flight_id }}", "direction": "{{ direction }}"}'
 
 input_boolean:
   psvis_flight_alerts:
@@ -96,14 +118,74 @@ automation:
         {{ (dist_km | float(99999) <= blumenau_radius_km)
            or (direction == 'took_off' and (o_iata == 'BNU' or o_icao == 'SSBL'))
            or (direction == 'landed'   and (d_iata == 'BNU' or d_icao == 'SSBL')) }}
-      # ── Other endpoint for the message (city → name → code, skipping Blumenau) ─
-      # Single-line templates so YAML folding + Jinja don't inject stray whitespace.
-      other_endpoint: >-
-        {% if direction == 'took_off' %}{{ trigger.event.data.airport_destination_city | default('', true) or trigger.event.data.airport_destination_name | default('', true) or d_iata }}{% else %}{{ trigger.event.data.airport_origin_city | default('', true) or trigger.event.data.airport_origin_name | default('', true) or o_iata }}{% endif %}
-      flight_label: >-
-        {{ trigger.event.data.flight_number | default('', true) or trigger.event.data.callsign | default('', true) }}
+      # ── Enriched overview fields (all defensive — any field may be missing) ─
+      model: "{{ trigger.event.data.aircraft_model | default('', true) }}"
+      fr24_id: "{{ trigger.event.data.id | default('', true) }}"
+      dep_ts: "{{ trigger.event.data.time_real_departure | default(0, true) | int(0) }}"
+      # At the landed event FR24 usually hasn't stamped time_real_arrival yet —
+      # the event fires within one 10 s scan of touchdown, so now() IS the arrival.
+      arr_ts: "{{ trigger.event.data.time_real_arrival | default(0, true) | int(0) or (now().timestamp() | int) }}"
+      # ── The non-Blumenau endpoint: name (city prefix + 'Airport' stripped),
+      #    codes and coordinates. On take-off it's the destination, else origin.
+      other_city: >-
+        {{ (trigger.event.data.airport_destination_city if direction == 'took_off' else trigger.event.data.airport_origin_city) | default('', true) }}
+      other_raw_name: >-
+        {{ (trigger.event.data.airport_destination_name if direction == 'took_off' else trigger.event.data.airport_origin_name) | default('', true) }}
+      other_iata: "{{ d_iata if direction == 'took_off' else o_iata }}"
+      other_icao: "{{ d_icao if direction == 'took_off' else o_icao }}"
+      other_lat: >-
+        {{ (trigger.event.data.airport_destination_latitude if direction == 'took_off' else trigger.event.data.airport_origin_latitude) | default(none, true) }}
+      other_lon: >-
+        {{ (trigger.event.data.airport_destination_longitude if direction == 'took_off' else trigger.event.data.airport_origin_longitude) | default(none, true) }}
+      # 'Sao Paulo Campo de Marte Airport' → 'Campo de Marte'
+      other_name: >-
+        {%- set n = other_raw_name | replace(' Airport', '') | replace('Airport', '') | trim -%}
+        {%- if other_city and n.startswith(other_city) -%}{%- set n = n[(other_city | length):] -%}{%- endif -%}
+        {{ n | trim(' -–') }}
+      other_codes: >-
+        {%- if other_iata and other_icao and other_iata != other_icao -%}{{ other_iata }}/{{ other_icao }}{%- else -%}{{ other_iata or other_icao }}{%- endif -%}
+      # 'Campo de Marte (RTE/SBMT) — Sao Paulo'
+      other_label: >-
+        {%- set nm = other_name or other_city -%}
+        {%- set head = (nm ~ (' (' ~ other_codes ~ ')' if other_codes else '')) if nm else other_codes -%}
+        {{ head ~ (' — ' ~ other_city if other_city and other_city != nm else '') }}
+      # Great-circle route length (km) from Blumenau to the other airport.
+      route_km: >
+        {% set la1 = other_lat | float(none) %}
+        {% set lo1 = other_lon | float(none) %}
+        {% if la1 is none or lo1 is none %}
+          0
+        {% else %}
+          {% set r = pi / 180 %}
+          {% set dlat = (bnu_lat - la1) * r %}
+          {% set dlon = (bnu_lon - lo1) * r %}
+          {% set a = (sin(dlat / 2)) ** 2 + cos(la1 * r) * cos(bnu_lat * r) * (sin(dlon / 2)) ** 2 %}
+          {{ (6371 * 2 * atan2(sqrt(a), sqrt(1 - a))) | round(0) | int }}
+        {% endif %}
+      dep_hm: "{{ (dep_ts | int(0)) | timestamp_custom('%H:%M', true) if (dep_ts | int(0)) else '' }}"
+      arr_hm: "{{ (arr_ts | int(0)) | timestamp_custom('%H:%M', true) }}"
+      dur_txt: >-
+        {%- set dp = dep_ts | int(0) -%}
+        {%- if dp -%}
+        {%- set d = (arr_ts | int(0)) - dp -%}
+        {%- if d >= 3600 -%}{{ d // 3600 }}h{{ '%02d' | format((d % 3600) // 60) }}{%- else -%}{{ d // 60 }} min{%- endif -%}
+        {%- endif -%}
+      # Empty lines are dropped by `select` (truthy filter) — HA's sandboxed
+      # Jinja forbids list.append, so the message is assembled declaratively.
       message: >-
-        {% if direction == 'took_off' %}🛫 *PS-VIS decolou de Blumenau*{% if other_endpoint %}{{ '\n' }}✈️ Destino: {{ other_endpoint }}{% endif %}{% else %}🛬 *PS-VIS pousou em Blumenau*{% if other_endpoint %}{{ '\n' }}✈️ Origem: {{ other_endpoint }}{% endif %}{% endif %}{{ '\n' }}🕐 {{ now().strftime('%H:%M') }}{% if flight_label %}{{ '\n' }}🔖 Voo {{ flight_label }}{% endif %}
+        {%- if direction == 'took_off' -%}
+        {%- set header = '🛫 *PS-VIS decolou de Blumenau*' -%}
+        {%- set endpoint_l = '✈️ Destino: ' ~ other_label if other_label else '' -%}
+        {%- set times_l = '🕐 Decolagem ' ~ (dep_hm or now().strftime('%H:%M')) -%}
+        {%- else -%}
+        {%- set header = '🛬 *PS-VIS pousou em Blumenau*' -%}
+        {%- set endpoint_l = '✈️ Origem: ' ~ other_label if other_label else '' -%}
+        {%- set times_l = '🕐 Saída ' ~ dep_hm ~ ' → Chegada ' ~ arr_hm ~ ' (' ~ dur_txt ~ ')' if dep_hm else '🕐 ' ~ arr_hm -%}
+        {%- endif -%}
+        {%- set model_l = '🛩️ ' ~ model if model else '' -%}
+        {%- set route_l = '📏 Rota: ~' ~ (route_km | int) ~ ' km' if (route_km | int(0)) > 0 else '' -%}
+        {%- set link_l = '🔗 https://www.flightradar24.com/data/aircraft/ps-vis#' ~ fr24_id if fr24_id else '' -%}
+        {{ [header, endpoint_l, times_l, model_l, route_l, link_l] | select | join('\n') }}
     condition:
       - condition: state
         entity_id: input_boolean.psvis_flight_alerts
@@ -129,3 +211,14 @@ automation:
         data:
           jid: !secret whatsapp_group_jid
           message: "{{ message }}"
+      # Landing only: ask psvis-tracker for the post-flight chart + cruise stats.
+      # Fire-and-forget — a down tracker must not fail the alert we already sent.
+      - if:
+          - condition: template
+            value_template: "{{ direction == 'landed' }}"
+        then:
+          - service: rest_command.psvis_flight_report
+            continue_on_error: true
+            data:
+              flight_id: "{{ fr24_id }}"
+              direction: landed

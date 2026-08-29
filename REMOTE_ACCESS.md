@@ -53,7 +53,7 @@ those names do not exist.
 
 | LAN-only device | Address | What it is |
 |---|---|---|
-| `bnu_docker` | `10.1.1.126` | **LXC 101** — hosts waha, waha-listener, condfy-bridge, netoverview-agent |
+| `bnu_docker` | `10.1.1.126` | **LXC 101** — hosts waha, waha-listener, condfy-bridge, netoverview-agent, psvis-tracker |
 | `bnu_waha` / `bnu_listener` / `bnu_nta` | `10.1.1.126:3000/:8788/:5005` | the containers inside LXC 101 |
 | `bnu_ollama` | `10.1.1.50:11434` | Ollama LXC 106 |
 | `bnu_frigate` | `10.1.1.160` | Frigate LXC 105 — *also* a tailnet node (`bnu-frigate`), so either route works |
@@ -117,6 +117,33 @@ bnu-raspberrypi):
 | Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by `mediamtx` on the Pi (`rtsp://ara-raspberrypi:8554/canteiro`). Each lens also has a 640×480 H264 substream (`subtype=1`; channel 1's is relayed as `canteiro-sub` — the bnu Frigate detect feed since 2026-08-26). ONVIF **events work** (PullPoint, probed 2026-08-26): topics are motion/tamper/scene-change only — **no person/vehicle classification locally** (that stays in the Imou cloud/Mibo app; CGI remains 401) |
 | Starlink router | `192.168.1.1` | house LAN gateway (DHCP for the whole `192.168.1.0/24`). **Local gRPC API works** (`192.168.1.1:9000`, reflection on): `grpcurl -plaintext -d '{"wifi_get_clients":{}}' 192.168.1.1:9000 SpaceX.API.Device.Device/Handle` → associated clients with **name+MAC+IP** (what the app shows; `wifi_set_client_given_name` also exists). No local roster of DISCONNECTED clients (that list lives in the Starlink cloud — probed 2026-08-26). `grpcurl` v1.9.1 installed at `/usr/local/bin` on the Pi; `starlink-names.timer` syncs these names into netoverview nicknames every 5 min |
 
+### PLY site specifics (learned 2026-08-26)
+
+- **ply has two LANs with no route between them from the desktop side**: the
+  rack LAN `192.168.0.0/24` (ply-proxmox `.21`, HA VM `.11`, plus the media
+  devices below) and the LAN ply-desktop sits on (`192.168.1.0/24`).
+  ply-desktop cannot ping `192.168.0.x` — reach rack-LAN devices through
+  `ply-proxmox` or ply HA.
+- **ply HA cannot originate connections to the tailnet** (Tailscale add-on is
+  inbound-only): `curl http://100.x…` from inside HA times out. When ply HA
+  must consume a tailnet service, forward it onto the rack LAN from
+  ply-proxmox — pattern: socket-activated `systemd-socket-proxyd` units, see
+  `scripts/proxmox/ply-proxmox/` (`192.168.0.21:8554/:1984` → `bnu-frigate`,
+  feeds `camera.frigate_birdseye`).
+- **Rack-LAN media devices** (not in HA `.env`, discovered via pyatv scan +
+  HA): Apple TV 4K "Entertainment Room" `192.168.0.247` (tvOS 26.6, AirPlay
+  pairing mandatory; paired with ply HA — credential lives in HA
+  `core.config_entries`, pyatv protocol key `3`); Samsung QN90F 75"
+  `192.168.0.228` (**has a Google Cast receiver**, HA
+  `media_player.qn90f9745` — casting to it wakes the TV from standby); Sonos
+  Arc Ultra `.212` + Era 100 `.236` (AirPlay, no pairing needed, audio only).
+- **pyatv `play_url` is broken vs tvOS 26.6** (AirPlay /play accepted, no
+  playback session, `/playback-info` → 500 — fails even with Apple's reference
+  HLS). HA's `apple_tv` integration uses the same library AND hard-routes any
+  `media-source://` id down the RAOP *audio* path (`media_type = MUSIC` in
+  `async_play_media`), so **video to the Apple TV is currently impossible**;
+  cast video to the QN90F receiver instead (`script.cast_frigate_birdseye`).
+
 ### Re-authentication
 Key expiry is disabled on every node, and every Windows node runs Tailscale in
 **unattended mode** so the tunnel survives reboot without a desktop login
@@ -133,7 +160,7 @@ so plain `ssh` works non-interactively.
 |---|---|---|---|---|---|
 | Proxmox | `<region>-proxmox` | SSH → web `https://<host>:8006` | `root` | **key**, else `PROXMOX_PW` | SFTP OK. Gateway to all guests (§4) |
 | Home Assistant | `<region>-homeassistant` | **REST API** → SSH add-on → web `:8123` | `hassio` | REST: `<REGION>_HA_TOKEN`; SSH: `HA_SSH_PW` **password only** | Add-on SSH has **no key auth** and **no SFTP**; `/config` needs `sudo` → `push` uses `base64 -d \| sudo tee`. **MagicDNS names do NOT resolve inside HA containers** (add-on shell and core alike, seen 2026-08-26: `ara-raspberrypi` → HTTP 000 while `100.66.255.82` → 200) — scripts under `/config` must use tailnet `100.x` IPs. The add-on shell also lacks `requests`; the core container (where `shell_command` runs) has it — test scripts via `shell_command` + `?return_response`, not the SSH shell |
-| Windows 11 VM | `<region>-win11` | SSH → guest agent (§4) → RDP | `eduardocenci` | **key** | Default shell is **PowerShell**. No SFTP — `push`/`pull` go through base64 |
+| Windows 11 VM | `<region>-win11` | ~~SSH~~ → guest agent (§4) → RDP | `eduardocenci` | ~~key~~ **broken** | **SSH key auth REJECTED on all four win11 VMs since ≤2026-08-28** (paramiko AuthenticationException; no password fallback). Use the QEMU guest agent (`devtool.py guest <site> <vmid>`), which works on all four. Default shell is **PowerShell**. No SFTP — `push`/`pull` go through base64 |
 | Raspberry Pi | `<region>-raspberrypi` | SSH | `eduardocenci` | **key**, else `RASPBERRYPI_PW` | SFTP OK. `sudo` is passwordless on bnu/bg but **asks a password on fln** (seen 2026-08-26) — plain `docker` works everywhere (user in `docker` group); for root-only cmds on fln pipe the password: `devtool.ssh_run(dev, "sudo -S <cmd>", input_bytes=(ENV["RASPBERRYPI_PW"]+"\n").encode())` |
 | GL-KVM | `<region>-glkvm` | SSH → web `http://<host>` | `root` | **key**, else `GLKVM_PW` | Runs **dropbear**: keys live in `/etc/dropbear/authorized_keys`, not just `~/.ssh`. SFTP may fail → devtool falls back to base64 |
 | Synology NAS | `ply-nas-ds918plus` (alias `ply-nas`) | SSH → DSM web `:5000` | `PLY_NAS_SSH_LOGIN` | **key**, else `PLY_NAS_SSH_PW` | Only at ply. Docker still needs root: `echo $PW \| sudo -S docker …`; compose is v1 at `/usr/local/bin/docker-compose` |
@@ -167,11 +194,60 @@ list. Never open a browser unless every CLI/API option is exhausted.
   fourth hung until timeout. Reliable fallback for text files: base64 the
   content into a `run` command (`echo <b64> | base64 -d > /path`), which goes
   over the already-open exec channel instead of opening an SFTP subsystem.
+- `devtool.py ha` has a hardcoded **15 s timeout** — too short for HA
+  config-flow steps that validate a stream (generic camera flow probes RTSP
+  server-side). Pattern that works: import `devtool` for `ENV` and do the
+  request with `urllib` and a 120 s timeout (see the flow driven 2026-08-26
+  for `camera.frigate_birdseye`). A flow answering
+  `"errors":{"stream_source":"timeout"}` is **HA's own probe** timing out
+  (readable signal), distinct from the client timeout (traceback).
+- `pkill -f <name>` through `devtool.py run` **matches the SSH session's own
+  command line** and kills the remote shell (session dies with no output,
+  exit 127). Use the bracket trick: `pkill -f '[a]tvremote'`.
+- **`devtool.py ha` tokens cannot reach `/api/hassio/*`** (Supervisor proxy →
+  HTTP 401). For Supervisor operations (backups, add-on info, core/os update)
+  SSH into the HA add-on and use the `ha` CLI **inside a login shell** —
+  non-interactive sessions lack `SUPERVISOR_TOKEN`:
+  `devtool.py run <site>-homeassistant "bash -lc 'ha supervisor info --raw-json'"`.
+  The CLI's `--raw-json` output may have trailing shell noise — parse with
+  `json.JSONDecoder().raw_decode`, not `json.loads` (seen 2026-08-28).
+- **Parallel devtool SSH to the same Proxmox host** can throw paramiko
+  "Error reading SSH protocol banner" — serialize connections per host and
+  retry (seen 2026-08-28 on bnu/bg-proxmox).
+- `ply-raspberrypi` and `ply-nas-ds918plus` were powered off earlier on
+  2026-08-28 (SSH timeouts); Eduardo turned them back on the same evening and
+  both are reachable again — a ply timeout means power/network at the site,
+  not a method regression.
+- **Long-running `ha` CLI ops (core/OS update) outlive the SSH channel** — the
+  channel recv-times-out after ~2 min while the Supervisor keeps working.
+  Fire-and-poll: launch the op, then poll `ha core info` / Supervisor issues
+  from fresh connections. For HAOS specifically, never `ha host reboot` until
+  the Supervisor raises its `reboot_required` issue (slow WANs stage the OTA
+  late — seen at ply 2026-08-28). After any HA host reboot the Supervisor
+  blocks add-on/OS ops for ~5 min ("system is not running - startup").
+- **apt on hosts/Pis: always a detached `systemd-run --unit=...`** so SSH drops
+  or an upgraded sshd can't kill dpkg mid-run; monitors must use piped
+  `sudo -S -p ''` (apt can upgrade `sudo` itself and break passwordless sudo
+  mid-run — seen on bg Pi 2026-08-28) and catch `BaseException`, because
+  `devtool.py` calls `sys.exit()` (SystemExit) on connect timeouts during
+  reboot windows.
+- **Backup order on HA VMs: `ha backups new` BEFORE `qm snapshot`** — the
+  snapshot's fsfreeze hook can freeze the Supervisor and block backups
+  ("system is not running - freeze"); recovery is `ha backups thaw`
+  (seen at bg 2026-08-28).
 - Non-ASCII in remote output (accents, emoji) used to crash `devtool.py` on
   this machine's cp1252 stdout. Fixed 2026-08-09: `main()` reconfigures
   stdout/stderr to UTF-8 with `errors="replace"`, so no `PYTHONIOENCODING`
   prefix is needed. Undrawable glyphs render as `?` instead of losing the
   command's whole output.
+- **Git Bash mangles absolute-path ARGUMENTS before devtool ever sees them**
+  (MSYS path conversion): `/api/states` becomes `C:/Program Files/Git/api/...`
+  (ha → InvalidURL) and a remote `/tmp/x` becomes the Windows `%TEMP%` path
+  (push writes to the wrong remote file). Prefix every `devtool.py` call whose
+  arguments carry absolute paths (`ha`, `push`, `pull`, and `run`/`guest`
+  command strings starting with `/`) with `MSYS_NO_PATHCONV=1` when running
+  from Git Bash (seen 2026-08-29). Same story for local tar: `tar -f C:\…`
+  reads `C:` as a remote host — add `--force-local`.
 
 ## 4. Guests: VMs, LXCs and containers
 
@@ -223,7 +299,8 @@ structure with placeholders and must be kept in sync.
 these hold live copies): `bnu-raspberrypi:~/globalnet/.env`, HA `secrets.yaml`,
 the NAS compose `.env` + `copyparty.local.conf`, on LXC 101
 `/opt/waha/docker-compose.yml` (hardcoded), `/opt/waha-listener/.env`,
-`/opt/condfy-bridge/.env`, and `ara-raspberrypi:/etc/mediamtx/mediamtx.yml`
+`/opt/condfy-bridge/.env`, `/opt/psvis-tracker/.env`, and
+`ara-raspberrypi:/etc/mediamtx/mediamtx.yml`
 (camera `ARA_CANTEIRO_CAM_KEY` embedded in the source URLs).
 
 ## 6. Tailscale: preventing re-authentication
