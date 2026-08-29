@@ -9,6 +9,7 @@ canteiro stream from ara exactly once:
 rtsp://ara-raspberrypi:8554/canteiro ──tailnet (1 copy each)──▶ go2rtc on bnu-raspberrypi
                      + /canteiro-sub                             ├─ rtsp://127.0.0.1:8554/canteiro → canteiro-screen (mpv)
                                                                  ├─ rtsp://10.1.1.123:8554/canteiro + canteiro_sub → bnu Frigate LXC 105 (record + person/vehicle detect, 2026-08-26)
+                                                                 ├─ rtsp://127.0.0.1:8554/canteiro → canteiro-hls (mediamtx :8888 → browser /live page, 2026-08-29)
                                                                  └─ /api/stream.mp4?src=canteiro → 55" TV (Cast)
 ```
 
@@ -31,8 +32,9 @@ substream (channel=1&subtype=1, H.264 640×480 — zero transcode) instead.
 | URL (LAN `10.1.1.123` / tailnet `bnu-raspberrypi` = `100.91.64.62`) | Content |
 |---|---|
 | `…:1984/api/stream.mp4?src=canteiro` | HEVC passthrough (2304×1296) — the TV cast |
-| `https://bnu-raspberrypi.woodpecker-shark.ts.net/live` | **browser live view — THE bookmark** ([`canteiro-live.html`](canteiro-live.html), hls.js + ~10 s buffer absorbing Starlink jitter; works in every browser incl. desktop Chrome, native HLS fallback on iOS; served by `tailscale serve --set-path=/live`) |
-| `…:1984/stream.html?src=canteiro&mode=hls` | go2rtc's own HLS page — **Safari/iOS only** (desktop Chrome has no native HLS and shows a black player) |
+| `https://bnu-raspberrypi.woodpecker-shark.ts.net/live` | **browser live view — THE bookmark** ([`canteiro-live.html`](canteiro-live.html), hls.js over the **mediamtx `/hls` endpoint** ([`../canteiro-hls/`](../canteiro-hls/)) — 4 s segments, ~35 s window riding out Starlink/DERP jitter; native HLS on iOS; served by `tailscale serve --set-path=/live`). Until 2026-08-29 it used go2rtc's own HLS, whose ~1 s window caused constant interruptions. |
+| `https://…ts.net/hls/canteiro/index.m3u8?cookieCheck=1` | the HLS endpoint itself (mediamtx via `tailscale serve --set-path=/hls`; the query param dodges a redirect that escapes the mount — see [`../canteiro-hls/README.md`](../canteiro-hls/README.md)) |
+| `…:1984/stream.html?src=canteiro&mode=hls` | go2rtc's own HLS page — diagnostics only: ~1 s live window (2 fake-0.5 s segments), collapses on any hiccup; also **Safari/iOS only** (desktop Chrome has no native HLS) |
 | `…:1984/stream.html?src=canteiro&mode=mse` | low-latency view (~1 s behind live, but stutters on every network hiccup — HEVC via MSE) |
 | `…:1984/stream.html?src=canteiro_h264` | browser fallback if a device can't decode HEVC (starts the on-demand transcode — occasional use only) |
 | `…:8554/canteiro` · `…:8554/canteiro_sub` | RTSP (TCP) — Frigate's record feed (HEVC main) and detect feed (H.264 640×480 substream); also what the wall screen reads on localhost |

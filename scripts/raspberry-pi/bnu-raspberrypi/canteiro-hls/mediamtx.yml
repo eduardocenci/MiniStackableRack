@@ -1,0 +1,42 @@
+# canteiro-hls — mediamtx as an HLS packager only (bnu-raspberrypi)
+#
+# Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/canteiro-hls/mediamtx.yml
+# Live copy:          bnu-raspberrypi:/etc/mediamtx/canteiro-hls.yml
+#
+# Why this exists (2026-08-29): go2rtc's built-in HLS keeps a ~1 s live window
+# (2 segments falsely advertised as 0.5 s each; real cadence ~2 s) — any hiccup
+# longer than that rotates the segment out from under hls.js, the /live page
+# hard-restarts, and a restart then waits up to 4 s (camera GOP) for a
+# keyframe. That was the "stream keeps interrupting" complaint.
+# mediamtx packages the SAME local go2rtc producer into honest 4 s segments
+# with a 7-segment (~28 s) window, so the page can hold a real buffer that
+# rides out Starlink jitter. It reads rtsp://127.0.0.1:8554/canteiro — the
+# shared go2rtc producer — so Starlink still carries exactly one copy.
+
+logLevel: info
+
+# HLS server only — go2rtc owns RTSP :8554 / HTTP :1984 on this Pi.
+api: no
+metrics: no
+pprof: no
+playback: no
+rtsp: no
+rtmp: no
+webrtc: no
+srt: no
+moq: no
+
+hls: yes
+hlsAddress: :8888        # LAN+tailnet trust, same level as go2rtc :1984/:8554;
+                         # browsers reach it via tailscale serve at /hls (HTTPS)
+hlsVariant: fmp4         # H265 requires fMP4; plain (non-low-latency) variant —
+                         # stability over latency for a canteiro monitor
+hlsSegmentCount: 7       # ~28 s live window (segments land at the 4 s GOP)
+hlsSegmentDuration: 4s   # matches the iM9 keyframe interval exactly
+hlsAlwaysRemux: yes      # muxer always hot → instant page loads, no
+                         # first-viewer keyframe wait
+
+paths:
+  canteiro:
+    source: rtsp://127.0.0.1:8554/canteiro
+    rtspTransport: tcp

@@ -3,12 +3,21 @@
      Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/go2rtc/canteiro-live.html
      Live copy: bnu-raspberrypi:/usr/local/share/canteiro-live/index.html,
      served at https://bnu-raspberrypi.woodpecker-shark.ts.net/live via
-     `tailscale serve` (path /live). Video: same-origin
-     /api/stream.m3u8?src=canteiro&mp4 (go2rtc, fMP4/HEVC HLS).
-     - hls.js with ~10 s buffer (absorbs Starlink jitter); native HLS on iOS.
+     `tailscale serve` (path /live).
+     Video: same-origin /hls/canteiro/index.m3u8 — mediamtx (canteiro-hls
+     service, ../canteiro-hls/) packaging the shared go2rtc producer into
+     honest 4 s segments with a ~35 s live window. (Until 2026-08-29 this
+     pointed at go2rtc's own HLS, whose ~1 s window collapsed on any Starlink
+     or DERP hiccup — the "stream keeps interrupting" era.)
+     ?cookieCheck=1 pre-answers mediamtx's cookie-support redirect, which
+     would otherwise escape the /hls mount (tailscale serve strips the path
+     prefix, but the redirect Location is absolute).
+     - hls.js with ~12 s live offset (absorbs Starlink jitter); native HLS on iOS.
+     - Hidden tab: stops loading (no bandwidth, no go2rtc/mediamtx log churn),
+       resumes at the live edge when shown again.
      - Offline screen: after ~15 s without recovery shows "CANTEIRO FORA DO
        AR" with an offline timer, over the last good frame (canvas-captured
-       every 30 s while playing), retrying every 5 s forever. -->
+       every 30 s while playing), retrying every 5 s while visible. -->
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
@@ -47,7 +56,7 @@
 <video id="v" muted autoplay playsinline controls></video>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
-  const SRC = '/api/stream.m3u8?src=canteiro&mp4';
+  const SRC = '/hls/canteiro/index.m3u8?cookieCheck=1';
   const OFFLINE_AFTER_MS = 15000;   // tolera rebuffer curto antes de declarar queda
   const RETRY_MS = 5000;
   const v = document.getElementById('v');
@@ -103,13 +112,14 @@
   }
 
   function start() {
+    if (document.hidden) return;   // aba oculta não briga pela banda nem polui log
     clearTimeout(retryTimer);
     if (window.Hls && Hls.isSupported()) {
       if (hls) { hls.destroy(); hls = null; }
       hls = new Hls({
-        liveSyncDuration: 10,        // ~10 s atrás do ao vivo (absorve jitter)
-        liveMaxLatencyDuration: 25,
-        maxBufferLength: 30,
+        liveSyncDuration: 12,        // ~12 s atrás do ao vivo (janela real de ~35 s
+        liveMaxLatencyDuration: 30,  // no mediamtx dá folga p/ Starlink + DERP)
+        maxBufferLength: 40,
         backBufferLength: 10,
         lowLatencyMode: false,
       });
@@ -131,7 +141,13 @@
   v.addEventListener('stalled', markDown);
   v.addEventListener('waiting', markDown);
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && (v.paused || v.readyState < 3)) start();
+    if (document.hidden) {           // pausa o consumo enquanto ninguém olha
+      clearTimeout(retryTimer);
+      if (hls) hls.stopLoad();
+      return;
+    }
+    if (hls) { hls.startLoad(); v.play().catch(() => {}); }
+    else start();
   });
   start();
 </script>

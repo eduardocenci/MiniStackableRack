@@ -1,0 +1,17 @@
+[Unit]
+Description=Canteiro HLS packager (mediamtx) - real segment window for the /live page
+After=network-online.target go2rtc.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/mediamtx /etc/mediamtx/canteiro-hls.yml
+Restart=always
+RestartSec=5
+DynamicUser=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
