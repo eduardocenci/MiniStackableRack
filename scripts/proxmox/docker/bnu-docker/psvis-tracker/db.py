@@ -153,11 +153,6 @@ def route_durations(o_icao, d_icao, exclude_fid=None):
     return [r[0] for r in rows]
 
 
-def avg_cruise_kmh():
-    with _conn() as c:
-        return c.execute("SELECT AVG(cruise_kmh) FROM flights").fetchone()[0]
-
-
 def list_flights(limit=20):
     with _conn() as c:
         c.row_factory = sqlite3.Row

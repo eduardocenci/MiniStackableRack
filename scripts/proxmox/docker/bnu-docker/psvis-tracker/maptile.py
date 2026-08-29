@@ -43,8 +43,29 @@ def _get_tile(z, x, y):
     return Image.open(path).convert("RGB")
 
 
-def render_path(track, width=1200, height=520):
-    """PIL Image with the track drawn over OSM tiles, or raises."""
+# Airplane silhouette, nose pointing up (heading 0°=N), in local px coords.
+_PLANE = [
+    (0, -16), (2, -10), (3, -5), (15, 3), (15, 7), (3, 4), (2, 10),
+    (8, 15), (8, 18), (0, 14), (-8, 18), (-8, 15), (-2, 10), (-3, 4),
+    (-15, 7), (-15, 3), (-3, -5), (-2, -10),
+]
+
+
+def _plane_points(cx, cy, heading_deg, scale=1.0):
+    th = math.radians(heading_deg)
+    c, s = math.cos(th), math.sin(th)
+    return [
+        (cx + (x * c - y * s) * scale, cy + (x * s + y * c) * scale)
+        for x, y in _PLANE
+    ]
+
+
+def render_path(track, width=1200, height=520, plane_heading=None):
+    """PIL Image with the track drawn over OSM tiles, or raises.
+
+    With `plane_heading` (degrees) the current position is drawn as an
+    airplane icon rotated to the flight heading instead of the end dot —
+    used by the en-route update, where the flight is still moving."""
     lons = [p["longitude"] for p in track]
     lats = [p["latitude"] for p in track]
     pad = 0.12
@@ -81,8 +102,17 @@ def render_path(track, width=1200, height=520):
         x, y = _lonlat_to_px(lon, lat, zoom)
         pts.append((x - left, y - top))
     draw.line(pts, fill=BLUE, width=4, joint="curve")
-    for p, fill in ((pts[0], (255, 255, 255)), (pts[-1], BLUE)):
-        draw.ellipse([p[0] - 7, p[1] - 7, p[0] + 7, p[1] + 7], fill=fill, outline=INK, width=2)
+    if plane_heading is None:
+        for p, fill in ((pts[0], (255, 255, 255)), (pts[-1], BLUE)):
+            draw.ellipse([p[0] - 7, p[1] - 7, p[0] + 7, p[1] + 7], fill=fill, outline=INK, width=2)
+    else:
+        p = pts[0]
+        draw.ellipse([p[0] - 7, p[1] - 7, p[0] + 7, p[1] + 7],
+                     fill=(255, 255, 255), outline=INK, width=2)
+        cx, cy = pts[-1]
+        # white halo behind for contrast on any tile, then the blue aircraft
+        draw.polygon(_plane_points(cx, cy, plane_heading, 1.55), fill=(255, 255, 255))
+        draw.polygon(_plane_points(cx, cy, plane_heading, 1.25), fill=BLUE, outline=INK)
 
     draw.text((width - 8, height - 6), "© OpenStreetMap", fill=INK, anchor="rs")
     return img

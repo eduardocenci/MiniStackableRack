@@ -39,11 +39,12 @@ O FR24 quase nunca conhece o destino na decolagem. Estratégia intermediária
 (decisão Eduardo 2026-08-29): no `took_off` o HA agenda no tracker um update
 `ENROUTE_DELAY_S` (10 min) após a decolagem, com o trail ao vivo
 (`clickhandler`, fallback playback): **rumo cardinal** (média circular dos
-últimos headings), **mapa da rota até o momento**, altitude/velocidade atuais
-e **estimativas de chegada cruzadas com o flight log** — destinos anteriores
-compatíveis com o rumo (±45°), ETA pela média histórica da rota (mesma direção,
-senão reversa; senão distância restante ÷ cruzeiro médio do banco + buffer de
-descida). Dedupe por `enroute:<id>`; teste com voo já concluído: `sim:true`
+últimos headings), **mapa da rota até o momento** com a aeronave desenhada
+como ícone de avião apontando o rumo, altitude/velocidade atuais e
+**estimativas de chegada cruzadas com o flight log** — destinos anteriores
+compatíveis com o rumo (±45°), **só por histórico** (sem estimativa por
+distância): faixa em negrito do voo anterior mais rápido ao mais lento na
+rota (mesma direção, senão reversa), ex. `*~14:44–14:50*`. Dedupe por `enroute:<id>`; teste com voo já concluído: `sim:true`
 trunca o trail nos primeiros 10 min.
 
 ## Flight log (base histórica para comparações)

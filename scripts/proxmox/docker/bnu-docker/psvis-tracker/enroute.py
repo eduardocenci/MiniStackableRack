@@ -10,15 +10,13 @@ from datetime import datetime
 
 import db
 import maptile
-from report import TZ_LOCAL, _fmt_int_br, _haversine_km
+from report import TZ_LOCAL, _fmt_int_br
 
 CARDINALS = [
     "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
     "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
 ]
 HEADING_TOLERANCE_DEG = 45
-FALLBACK_CRUISE_KMH = 450
-DESCENT_BUFFER_S = 600
 
 
 def _bearing(lat1, lon1, lat2, lon2):
@@ -136,7 +134,9 @@ def build(origin, track, dest_hint=None, exclude_fid=None):
         p1, p2 = track[-2], track[-1]
         heading = _bearing(p1["latitude"], p1["longitude"], p2["latitude"], p2["longitude"])
 
-    # ── candidates: previously-seen airports that lie along the heading ─────
+    # ── candidates: previously-seen airports along the heading, estimated
+    #    ONLY from route history — the range spans the fastest to the slowest
+    #    previous flight on that route (same direction, else the reverse one).
     lines = []
     for cand in db.known_airports(exclude_icao=origin.get("icao")):
         brg = _bearing(cur["latitude"], cur["longitude"], cand["lat"], cand["lon"])
@@ -145,16 +145,12 @@ def build(origin, track, dest_hint=None, exclude_fid=None):
             continue
         durs = db.route_durations(origin.get("icao"), cand["icao"], exclude_fid=exclude_fid) \
             or db.route_durations(cand["icao"], origin.get("icao"), exclude_fid=exclude_fid)
-        if durs:
-            eta = dep_ts + sum(durs) / len(durs)
-            note = "histórico"
-        else:
-            rem_km = _haversine_km(cur["latitude"], cur["longitude"], cand["lat"], cand["lon"])
-            kmh = db.avg_cruise_kmh() or FALLBACK_CRUISE_KMH
-            eta = now_ts + rem_km / kmh * 3600 + DESCENT_BUFFER_S
-            note = "por distância"
-        eta_hm = datetime.fromtimestamp(eta, TZ_LOCAL).strftime("%H:%M")
-        lines.append((diff, f"• {_label(cand)}: chegada ~{eta_hm} ({note})"))
+        if not durs:
+            continue
+        lo = datetime.fromtimestamp(dep_ts + min(durs), TZ_LOCAL).strftime("%H:%M")
+        hi = datetime.fromtimestamp(dep_ts + max(durs), TZ_LOCAL).strftime("%H:%M")
+        eta_txt = f"*~{lo}*" if lo == hi else f"*~{lo}–{hi}*"
+        lines.append((diff, f"• {_label(cand)}: chegada {eta_txt}"))
     lines.sort()
     cand_lines = [text for _, text in lines[:3]]
 
@@ -168,12 +164,12 @@ def build(origin, track, dest_hint=None, exclude_fid=None):
         caption.append(f"✈️ Destino (FR24): {_label(dest_hint)}")
     caption.append(f"📍 {_fmt_int_br(cur_alt)} ft · {_fmt_int_br(cur_kt)} kt")
     if cand_lines:
-        caption.append("🎯 Estimativas (destinos anteriores no rumo):")
+        caption.append("🎯 Estimativas (histórico de destinos no rumo):")
         caption.extend(cand_lines)
     else:
-        caption.append("🎯 Nenhum destino anterior no rumo — rota nova")
+        caption.append("🎯 Nenhum destino com histórico no rumo — rota nova")
 
-    img = maptile.render_path(track, width=1200, height=560)
+    img = maptile.render_path(track, width=1200, height=560, plane_heading=heading)
     import io
 
     buf = io.BytesIO()
