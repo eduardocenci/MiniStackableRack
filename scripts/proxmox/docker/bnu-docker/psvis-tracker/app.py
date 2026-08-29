@@ -61,7 +61,7 @@ def _resolve_flight_id(flight_id):
     return (entry or {}).get("identification", {}).get("id")
 
 
-def _run_report(flight_id, jid, force):
+def _run_report(flight_id, jid, force, fallback_text=""):
     if not force and INITIAL_DELAY_S:
         time.sleep(INITIAL_DELAY_S)
     for attempt in range(1, MAX_TRIES + 1):
@@ -87,6 +87,11 @@ def _run_report(flight_id, jid, force):
             if attempt < MAX_TRIES:
                 time.sleep(RETRY_S)
     log.error("giving up on flight report (flight_id=%s)", flight_id)
+    # The landing alert must never be lost: HA delegated the whole message to
+    # us, so on total FR24 failure send its pre-rendered text (no chart/cruise).
+    if fallback_text:
+        waha.send_text(jid, fallback_text)
+        log.info("fallback text sent to %s", jid)
 
 
 @app.post("/report")
@@ -101,7 +106,10 @@ def report_endpoint():
         return jsonify(status="error", reason="no chat JID configured"), 500
     flight_id = (body.get("flight_id") or "").strip() or None
     force = bool(body.get("force") or test)
-    threading.Thread(target=_run_report, args=(flight_id, jid, force), daemon=True).start()
+    fallback_text = body.get("fallback_text") or ""
+    threading.Thread(
+        target=_run_report, args=(flight_id, jid, force, fallback_text), daemon=True
+    ).start()
     return jsonify(status="accepted", flight_id=flight_id, test=test), 202
 
 

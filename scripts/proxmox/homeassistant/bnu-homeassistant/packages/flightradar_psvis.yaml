@@ -37,12 +37,18 @@
 #   whose source field is missing are omitted — FR24 data can be partial (a real
 #   PS-VIS flight has been seen with no destination airport at all).
 #
-# POST-FLIGHT REPORT (cruise stats + altitude chart)
-#   On LANDING the automation also pings psvis-tracker (LXC 101 @ 10.1.1.126:8790,
-#   scripts/proxmox/docker/bnu-docker/psvis-tracker/) with the FR24 flight id; it
-#   pulls the full playback trail and sends the altitude/speed profile chart to the
-#   same group a couple of minutes later. Fire-and-forget: continue_on_error, and
-#   the tracker resolves the newest landed PS-VIS flight itself if the id is empty.
+# POST-FLIGHT REPORT — ONE message per landing (decisão Eduardo 2026-08-29)
+#   On LANDING nothing is sent from here on the happy path: psvis-tracker
+#   (LXC 101 @ 10.1.1.126:8790, scripts/proxmox/docker/bnu-docker/psvis-tracker/)
+#   pulls the FR24 playback trail and sends a SINGLE image message — the
+#   altitude/speed profile + route map with the full caption (route, times,
+#   model, cruise altitude/speed, FR24 link) — a couple of minutes after
+#   touchdown. Reliability is layered so the alert can never be lost:
+#     • FR24 playback fails for good → the tracker sends `fallback_text`
+#       (the enriched message rendered here) as plain text;
+#     • the tracker itself is down/rejects → this automation detects it via
+#       response_variable and sends that same text directly.
+#   TAKE-OFFS keep the immediate plain-text path (there is no chart to attach).
 # ──────────────────────────────────────────────────────────────────────────────
 
 rest_command:
@@ -51,7 +57,7 @@ rest_command:
     url: "http://10.1.1.126:8790/report"
     method: POST
     content_type: application/json
-    payload: '{"flight_id": "{{ flight_id }}", "direction": "{{ direction }}"}'
+    payload: '{"flight_id": "{{ flight_id }}", "direction": "{{ direction }}", "fallback_text": {{ fallback | default("") | to_json }}}'
 
 input_boolean:
   psvis_flight_alerts:
@@ -207,18 +213,33 @@ automation:
           entity_id: input_text.psvis_last_alert_ts
         data:
           value: "{{ now().timestamp() | int }}"
-      - service: rest_command.send_whatsapp_bnu
-        data:
-          jid: !secret whatsapp_group_jid
-          message: "{{ message }}"
-      # Landing only: ask psvis-tracker for the post-flight chart + cruise stats.
-      # Fire-and-forget — a down tracker must not fail the alert we already sent.
-      - if:
-          - condition: template
-            value_template: "{{ direction == 'landed' }}"
-        then:
-          - service: rest_command.psvis_flight_report
-            continue_on_error: true
+      - choose:
+          # Landing: delegate the single image+caption message to psvis-tracker;
+          # if the call itself fails (down/refused), fall back to plain text here.
+          - conditions:
+              - condition: template
+                value_template: "{{ direction == 'landed' }}"
+            sequence:
+              - service: rest_command.psvis_flight_report
+                continue_on_error: true
+                response_variable: tracker_resp
+                data:
+                  flight_id: "{{ fr24_id }}"
+                  direction: landed
+                  fallback: "{{ message }}"
+              - if:
+                  - condition: template
+                    value_template: >
+                      {{ tracker_resp is not defined
+                         or (tracker_resp.status | default(500) | int) >= 300 }}
+                then:
+                  - service: rest_command.send_whatsapp_bnu
+                    data:
+                      jid: !secret whatsapp_group_jid
+                      message: "{{ message }}"
+        default:
+          # Take-off: immediate plain text, as before.
+          - service: rest_command.send_whatsapp_bnu
             data:
-              flight_id: "{{ fr24_id }}"
-              direction: landed
+              jid: !secret whatsapp_group_jid
+              message: "{{ message }}"

@@ -113,6 +113,24 @@ def compute_stats(flight):
             name = name[len(city):].strip(" -–")
         return name or city
 
+    def codes_pair(side):
+        c = ((ap.get(side) or {}).get("code") or {})
+        ia, ic = c.get("iata"), c.get("icao")
+        return f"{ia}/{ic}" if ia and ic and ia != ic else (ia or ic or "")
+
+    def city(side):
+        a = ap.get(side) or {}
+        return (((a.get("position") or {}).get("region") or {}).get("city")) or ""
+
+    def apos(side):
+        p = (ap.get(side) or {}).get("position") or {}
+        return p.get("latitude"), p.get("longitude")
+
+    o_pos, d_pos = apos("origin"), apos("destination")
+    route_km = 0
+    if None not in o_pos and None not in d_pos:
+        route_km = _haversine_km(o_pos[0], o_pos[1], d_pos[0], d_pos[1])
+
     reg = ((flight.get("aircraft") or {}).get("identification") or {}).get("registration") or "PS-VIS"
 
     return {
@@ -121,6 +139,12 @@ def compute_stats(flight):
         "destination": code("destination"),
         "origin_name": friendly("origin"),
         "destination_name": friendly("destination"),
+        "o_codes": codes_pair("origin"),
+        "o_city": city("origin"),
+        "d_city": city("destination"),
+        "route_km": route_km,
+        "model": (((flight.get("aircraft") or {}).get("model") or {}).get("text")) or "",
+        "fr24_id": ((flight.get("identification") or {}).get("id")) or "",
         "dep_ts": dep_ts,
         "arr_ts": arr_ts,
         "duration_s": arr_ts - dep_ts,
@@ -142,19 +166,34 @@ def compute_stats(flight):
 
 
 def build_caption(s):
+    """The SINGLE WhatsApp landing message (the chart travels as its image).
+    Mirrors the HA fallback text and adds the cruise lines before the link."""
     dep = datetime.fromtimestamp(s["dep_ts"], TZ_LOCAL).strftime("%H:%M")
     arr = datetime.fromtimestamp(s["arr_ts"], TZ_LOCAL).strftime("%H:%M")
+    lines = [f"🛬 *{s['reg']} pousou em {s['d_city'] or s['destination']}*"]
+    origem = s["origin_name"] or s["o_city"] or s["origin"]
+    line = f"✈️ Origem: {origem}"
+    if s["o_codes"]:
+        line += f" ({s['o_codes']})"
+    if s["o_city"] and s["o_city"] != origem:
+        line += f" — {s['o_city']}"
+    lines.append(line)
+    lines.append(f"🕐 Saída {dep} → Chegada {arr} ({_fmt_hm(s['duration_s'])})")
+    if s["model"]:
+        lines.append(f"🛩️ {s['model']}")
+    if s["route_km"]:
+        lines.append(f"📏 Rota: ~{_fmt_int_br(s['route_km'])} km")
+    lines.append(f"⛰️ Altitude de Cruzeiro: {_fmt_int_br(s['cruise_alt_ft'])} ft")
     max_note = "" if s["max_kt"] <= s["cruise_kt"] else f" · máx {_fmt_int_br(s['max_kt'])} kt"
-    names = ""
-    if s["origin_name"] and s["destination_name"]:
-        names = f" ({s['origin_name']} → {s['destination_name']})"
-    return (
-        f"{s['reg']}, {s['origin']} → {s['destination']}{names}\n"
-        f"{dep}–{arr}\n"
-        f"⛰️ Cruzeiro: {_fmt_int_br(s['cruise_alt_ft'])} ft\n"
-        f"💨 Velocidade de Cruzeiro: {_fmt_int_br(s['cruise_kt'])} kt ({_fmt_int_br(s['cruise_kmh'])} km/h){max_note}\n"
-        f"⏱️ {_fmt_hm(s['duration_s'])} no ar · {_fmt_int_br(s['dist_km'])} km percorridos"
+    lines.append(
+        f"💨 Velocidade de Cruzeiro: {_fmt_int_br(s['cruise_kt'])} kt "
+        f"({_fmt_int_br(s['cruise_kmh'])} km/h){max_note}"
     )
+    if s["fr24_id"]:
+        lines.append(
+            f"🔗 https://www.flightradar24.com/data/aircraft/{s['reg'].lower()}#{s['fr24_id']}"
+        )
+    return "\n".join(lines)
 
 
 def build_chart(s):

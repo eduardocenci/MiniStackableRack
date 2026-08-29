@@ -1,30 +1,36 @@
 # psvis-tracker — relatório pós-voo do PS-VIS
 
-Container no LXC 101 (`10.1.1.126`, porta **8790**) que complementa o alerta de
-pouso do PS-VIS com um **overview do voo**: gráfico de altitude + velocidade e
-estatísticas de cruzeiro, enviados ao grupo WhatsApp Casa Blumenau via WAHA.
+Container no LXC 101 (`10.1.1.126`, porta **8790**) que envia **a mensagem
+única de pouso do PS-VIS**: gráfico de altitude + velocidade e mapa do
+trajeto, com legenda completa (rota, horários, modelo, cruzeiro, link FR24),
+ao grupo WhatsApp Casa Blumenau via WAHA.
 
-## Fluxo
+## Fluxo (uma mensagem por pouso — decisão Eduardo 2026-08-29)
 
-1. A automação `psvis_blumenau_flight_alert` no bnu-homeassistant
+1. No pouso, a automação `psvis_blumenau_flight_alert` no bnu-homeassistant
    (`scripts/proxmox/homeassistant/bnu-homeassistant/packages/flightradar_psvis.yaml`)
-   manda o texto imediato de pouso e, em seguida, chama
-   `POST http://10.1.1.126:8790/report` com o `flight_id` do evento FR24.
+   **não manda texto** — chama `POST http://10.1.1.126:8790/report` com o
+   `flight_id` do evento FR24 e um `fallback_text` (o texto enriquecido
+   renderizado no HA). Decolagens continuam como texto direto do HA.
 2. O serviço espera `INITIAL_DELAY_S` (o FR24 leva ~1–2 min para finalizar o
    track após o toque) e busca o **playback** do voo — o trail completo com
    altitude/velocidade ponto a ponto. Se o `flight_id` não vier, resolve o voo
    mais recente do PS-VIS com pouso real via `flight/list.json`.
-3. Calcula: altitude/velocidade de cruzeiro (mediana no platô ≥95 % da altitude
-   máxima), velocidade máxima, tempo no ar e km percorridos (haversine sobre o
-   trail, táxi excluído).
-4. Renderiza o gráfico (matplotlib, dois painéis empilhados — nunca eixo duplo)
-   e envia via WAHA `sendImage`. O PNG é servido em `/charts/<id>.png` porque o
-   WAHA Core busca imagens por URL — resolve `psvis-tracker:8000` pela rede
-   compartilhada `waha_default`.
+3. Calcula: altitude de cruzeiro e velocidade de cruzeiro (**média no trecho
+   contíguo estabilizado** a ≥95 % da altitude máxima), velocidade máxima,
+   duração e distância da rota, e monta a legenda inteira a partir do playback.
+4. Renderiza o gráfico (matplotlib, dois painéis empilhados — nunca eixo
+   duplo) + mapa OSM e envia via WAHA `sendImage`. O PNG é servido em
+   `/charts/<id>.png` porque o WAHA Core busca imagens por URL — resolve
+   `psvis-tracker:8000` pela rede compartilhada `waha_default`.
+
+**O alerta nunca se perde** (camadas): playback falhou de vez → o serviço manda
+o `fallback_text` como texto; o serviço está fora do ar → o próprio HA detecta
+(`response_variable`) e manda o texto direto.
 
 Endpoints: `POST /report` (`{"flight_id", "direction", "test", "force",
-"chat_jid"}` — todos opcionais; `test:true` envia ao grupo SmokeTests),
-`GET /health`, `GET /charts/<id>.png`.
+"chat_jid", "fallback_text"}` — todos opcionais; `test:true` envia ao grupo
+SmokeTests), `GET /health`, `GET /charts/<id>.png`.
 
 APIs FR24 não-oficiais (as mesmas da integração HA) — sujeitas a mudança.
 
