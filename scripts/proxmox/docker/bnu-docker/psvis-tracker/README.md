@@ -44,7 +44,14 @@ como ícone de avião apontando o rumo, altitude/velocidade atuais e
 **estimativas de chegada cruzadas com o flight log** — destinos anteriores
 compatíveis com o rumo (±45°), **só por histórico** (sem estimativa por
 distância): faixa em negrito do voo anterior mais rápido ao mais lento na
-rota (mesma direção, senão reversa), ex. `*~14:44–14:50*`. Dedupe por `enroute:<id>`; teste com voo já concluído: `sim:true`
+rota (mesma direção, senão reversa), ex. `*~14:44–14:50*`. Sem limite de
+candidatos; ordenação pesa igualmente **alinhamento com o rumo** e
+**frequência de voos na rota**. Depois das estimativas, um bloco `🌦️ Meteo
+agora (METAR)` traz, por destino, a condição no destino (via
+aviationweather.gov, sem chave; aeroporto sem METAR usa a estação mais
+próxima, anotada — SSBL→SBNF) e, resumida, a condição *em rota* (estação mais
+próxima do ponto médio restante). Meteo é best-effort: falha derruba só o
+bloco, nunca o update. Dedupe por `enroute:<id>`; teste com voo já concluído: `sim:true`
 trunca o trail nos primeiros 10 min.
 
 ## Flight log (base histórica para comparações)

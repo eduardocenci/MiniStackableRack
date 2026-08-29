@@ -5,12 +5,16 @@ known ten minutes in: the cardinal heading, the route flown so far (map), and
 arrival estimates for previously-seen destinations that lie along the heading
 — cross-referenced against the flight log (db.py).
 """
+import logging
 import math
 from datetime import datetime
 
 import db
 import maptile
+import metar
 from report import TZ_LOCAL, _fmt_int_br
+
+log = logging.getLogger("psvis.enroute")
 
 CARDINALS = [
     "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
@@ -108,6 +112,40 @@ def _label(c):
     return f"{nm} ({codes})" if codes and codes not in nm else nm
 
 
+def _weather_lines(cur, cands):
+    """METAR breakdown, one line per candidate destination: conditions at the
+    destination (nearest reporting station when the aerodrome publishes no
+    METAR) and, briefly, en route (station nearest the remaining-route
+    midpoint). Fully best-effort — any failure just drops the block."""
+    if not cands:
+        return []
+    try:
+        reported = metar.by_ids([c["icao"] for c in cands if c.get("icao")])
+        lines = ["🌦️ Meteo agora (METAR):"]
+        for c in cands:
+            obs, station = reported.get(c["icao"]), None
+            if not obs:
+                near = metar.nearest(c["lat"], c["lon"])
+                if near:
+                    obs, station = near[0], near[0].get("icaoId")
+            if not obs:
+                continue
+            dest_txt = metar.summarize(obs)
+            if station and station != c["icao"]:
+                dest_txt += f" ({station})"
+            line = f"• {c.get('city') or _codes(c)}: {dest_txt}"
+            mid_lat = (cur["latitude"] + c["lat"]) / 2
+            mid_lon = (cur["longitude"] + c["lon"]) / 2
+            near_mid = metar.nearest(mid_lat, mid_lon)
+            if near_mid and near_mid[0].get("icaoId") not in (obs.get("icaoId"),):
+                line += f" · em rota: {metar.summarize(near_mid[0], brief=True)}"
+            lines.append(line)
+        return lines if len(lines) > 1 else []
+    except Exception as exc:  # noqa: BLE001 — weather must never break the update
+        log.warning("METAR block failed: %s", exc)
+        return []
+
+
 def build(origin, track, dest_hint=None, exclude_fid=None):
     """Returns (caption, map_png_bytes) for the en-route update."""
     if len(track) < 5:
@@ -137,22 +175,32 @@ def build(origin, track, dest_hint=None, exclude_fid=None):
     # ── candidates: previously-seen airports along the heading, estimated
     #    ONLY from route history — the range spans the fastest to the slowest
     #    previous flight on that route (same direction, else the reverse one).
-    lines = []
+    #    Ranked by alignment AND route frequency, equally weighted; no cap.
+    cands = []
     for cand in db.known_airports(exclude_icao=origin.get("icao")):
         brg = _bearing(cur["latitude"], cur["longitude"], cand["lat"], cand["lon"])
         diff = _angdiff(heading, brg)
         if diff > HEADING_TOLERANCE_DEG:
             continue
-        durs = db.route_durations(origin.get("icao"), cand["icao"], exclude_fid=exclude_fid) \
-            or db.route_durations(cand["icao"], origin.get("icao"), exclude_fid=exclude_fid)
+        same = db.route_durations(origin.get("icao"), cand["icao"], exclude_fid=exclude_fid)
+        rev = db.route_durations(cand["icao"], origin.get("icao"), exclude_fid=exclude_fid)
+        durs = same or rev
         if not durs:
             continue
         lo = datetime.fromtimestamp(dep_ts + min(durs), TZ_LOCAL).strftime("%H:%M")
         hi = datetime.fromtimestamp(dep_ts + max(durs), TZ_LOCAL).strftime("%H:%M")
-        eta_txt = f"*~{lo}*" if lo == hi else f"*~{lo}–{hi}*"
-        lines.append((diff, f"• {_label(cand)}: chegada {eta_txt}"))
-    lines.sort()
-    cand_lines = [text for _, text in lines[:3]]
+        cands.append({
+            **cand,
+            "diff": diff,
+            "freq": len(same) + len(rev),
+            "eta_txt": f"*~{lo}*" if lo == hi else f"*~{lo}–{hi}*",
+        })
+    if cands:
+        max_freq = max(c["freq"] for c in cands)
+        for c in cands:
+            c["score"] = 0.5 * (1 - c["diff"] / HEADING_TOLERANCE_DEG) + 0.5 * (c["freq"] / max_freq)
+        cands.sort(key=lambda c: -c["score"])
+    cand_lines = [f"• {_label(c)}: chegada {c['eta_txt']}" for c in cands]
 
     dep_hm = datetime.fromtimestamp(dep_ts, TZ_LOCAL).strftime("%H:%M")
     mins = int(round((now_ts - dep_ts) / 60))
@@ -168,6 +216,8 @@ def build(origin, track, dest_hint=None, exclude_fid=None):
         caption.extend(cand_lines)
     else:
         caption.append("🎯 Nenhum destino com histórico no rumo — rota nova")
+
+    caption.extend(_weather_lines(cur, cands))
 
     img = maptile.render_path(track, width=1200, height=560, plane_heading=heading)
     import io
