@@ -1,0 +1,10 @@
+# Schedules in America/Sao_Paulo (container TZ). Same cadence the four
+# systemd timers had; sunrise/sunset sequences run 40-60 min — supercronic
+# has no start timeout, and overlapping trabalho grabs were concurrent under
+# systemd too. No catch-up for missed captures (a late sun event is useless);
+# the upload's catch-up lives in entrypoint.sh.
+0 5 * * * timelapse-capture sunrise
+40 16 * * * timelapse-capture sunset
+*/15 7-17 * * * timelapse-capture trabalho
+0 18 * * * timelapse-capture trabalho
+0 20 * * * rclone move /var/lib/timelapse/outbox ceuazul:Timelapse --min-age 1m --log-level INFO

@@ -1,0 +1,12 @@
+# starlink-names container (2026-08-29; was a systemd timer).
+services:
+  starlink-names:
+    build: .
+    image: starlink-names:local
+    container_name: starlink-names
+    network_mode: host   # dish gRPC 192.168.1.1:9000 + netoverview on 127.0.0.1:5000
+    user: "1000:1000"
+    restart: unless-stopped
+    init: true
+    environment:
+      TZ: America/Sao_Paulo

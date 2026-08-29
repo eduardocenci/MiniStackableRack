@@ -1,0 +1,21 @@
+# canteiro-relay — mediamtx RTSP relay of the canteiro camera to the tailnet,
+# containerized 2026-08-29 (was mediamtx.service + hand-downloaded binary).
+#
+# Authoritative copy: scripts/raspberry-pi/ara-raspberrypi/docker/canteiro-relay/
+# Live copy:          ara-raspberrypi:~/canteiro-relay/
+#   mediamtx.yml here is the repo TEMPLATE (__ARA_CANTEIRO_CAM_KEY__); the
+#   live ~/canteiro-relay/mediamtx.yml carries the real camera key (moved
+#   from /etc/mediamtx/mediamtx.yml — REMOTE_ACCESS.md drift list).
+#
+# THE single upstream for everything at bnu (go2rtc → Frigate/TV/HLS) — the
+# bnu canteiro-watchdog pages the family ~3 min after :8554 goes dark, so
+# pause that container for any cutover/restart longer than a blip.
+# Version pinned: bump deliberately, fleet-update style.
+services:
+  canteiro-relay:
+    image: bluenviron/mediamtx:1.20.1   # same version the binary had
+    container_name: canteiro-relay
+    network_mode: host   # :8554 must answer on the tailnet IP bnu pulls from
+    restart: unless-stopped
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro

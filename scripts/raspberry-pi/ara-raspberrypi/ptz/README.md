@@ -11,7 +11,7 @@ ssh eduardocenci@ara-raspberrypi "canteiro-ptz stop"
 
 | File | Live copy |
 |---|---|
-| [`canteiro-ptz.py`](canteiro-ptz.py) | `/usr/local/bin/canteiro-ptz` (755) |
+| [`canteiro-ptz.py`](canteiro-ptz.py) | baked into the `canteiro-timelapse` image as `/usr/local/bin/canteiro-ptz` (see [`../docker/canteiro-timelapse/`](../docker/canteiro-timelapse/)); a host copy stays at `/usr/local/bin/canteiro-ptz` for manual aiming (755). Creds: env in `~/canteiro-timelapse/env/canteiro-ptz.env` (container) and `/etc/canteiro-ptz.env` (host copy) |
 | credentials | `/etc/canteiro-ptz.env` (640 root:eduardocenci — CAM_HOST/CAM_USER/CAM_PASS, mirror of `.env` `ARA_CANTEIRO_CAM_KEY`) |
 
 ## Why there is no `goto <preset>` (empirical, 2026-08-24, fw 2.800.00IB00N.0.R)

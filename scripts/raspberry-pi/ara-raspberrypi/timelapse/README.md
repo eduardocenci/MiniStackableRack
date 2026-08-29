@@ -52,28 +52,38 @@ movimento manual — sondado 27/08/2026, 95 s parado). Health-check:
 `timelapse-capture pos2test` (foto em /tmp, sem tocar o outbox). Os
 movimentos saem do próprio Pi pela LAN — internet não participa da captura.
 
-## Unidades (systemd, sem Docker — padrão do ara-raspberrypi)
+## Agendas (container `canteiro-timelapse` desde 2026-08-29)
 
-| Unit | Agenda | Faz |
+Roda no container `canteiro-timelapse`
+([`../docker/canteiro-timelapse/`](../docker/canteiro-timelapse/), supercronic
+com `TZ=America/Sao_Paulo`; até 2026-08-29 eram 4 systemd timers — os units
+seguem no Pi desabilitados como rollback por uma onda):
+
+| Entrada do crontab | Agenda | Faz |
 |---|---|---|
-| `timelapse-sunrise.timer` | 05:00 (cobre o nascer mais cedo do ano, ~05:15 dez) | dorme até cada janela; posicao1 + lentefixa + posicao2 ×3 |
-| `timelapse-trabalho.timer` | 07:00–18:00, a cada 15 min (45×/dia) | 1 frame PT → `outbox/trabalho/` |
-| `timelapse-sunset.timer` | 16:40 (cobre o T−20 mais cedo do ano, 17:09 jun) | dorme até cada janela; posicao1 + lentefixa + posicao2 ×5 |
-| `timelapse-upload.timer` | 20:00 diário, `Persistent=true` | `rclone move outbox → ceuazul:Timelapse` |
+| `timelapse-capture sunrise` | 05:00 (cobre o nascer mais cedo do ano, ~05:15 dez) | dorme até cada janela; posicao1 + lentefixa + posicao2 ×3 |
+| `timelapse-capture trabalho` | 07:00–18:00, a cada 15 min (45×/dia) | 1 frame PT → `outbox/trabalho/` |
+| `timelapse-capture sunset` | 16:40 (cobre o T−20 mais cedo do ano, 17:09 jun) | dorme até cada janela; posicao1 + lentefixa + posicao2 ×5 |
+| `rclone move …` | 20:00 diário **+ na partida do container** | `rclone move outbox → ceuazul:Timelapse` |
 
-Fluxo local: cada frame vai a `/var/lib/timelapse/outbox/` e o `rclone move`
-das 20:00 **apaga do Pi assim que a transferência é confirmada** — nenhuma
-cópia local é mantida (decisão Eduardo 26/08/2026; o Drive é o único
-arquivo). Starlink fora do ar → outbox acumula (SD de 58 GB ≈ anos) e o
-próximo upload drena.
+O upload na partida do container (entrypoint) substitui o `Persistent=true`
+do timer antigo: queda de energia no barracão → o Pi volta → o Docker sobe o
+container → o outbox drena na hora, sem esperar as 20:00. `rclone move` é
+idempotente, então a repetição é inócua.
+
+Fluxo local: cada frame vai a `/var/lib/timelapse/outbox/` (bind mount — o
+mesmo dir da era systemd) e o `rclone move` **apaga do Pi assim que a
+transferência é confirmada** — nenhuma cópia local é mantida (decisão
+Eduardo 26/08/2026; o Drive é o único arquivo). Starlink fora do ar →
+outbox acumula (SD de 58 GB ≈ anos) e o próximo upload drena.
 
 | Arquivo | Cópia viva |
 |---|---|
-| [`timelapse-capture.py`](timelapse-capture.py) | `/usr/local/bin/timelapse-capture` (755) |
-| `timelapse-{sunrise,trabalho,sunset,upload}.{service,timer}` | `/etc/systemd/system/` |
-| remote rclone `ceuazul` | `~eduardocenci/.config/rclone/rclone.conf` (600) — OAuth Google de eduardocenci@gmail.com, `root_folder_id` apontando para a pasta **CeuAzul**; backup do conf em `gitignore/ara-rclone.conf` no repo raiz |
+| [`timelapse-capture.py`](timelapse-capture.py) | `~/canteiro-timelapse/timelapse-capture` (COPY no build, vira `/usr/local/bin/timelapse-capture` na imagem) |
+| [`../ptz/canteiro-ptz.py`](../ptz/canteiro-ptz.py) | idem (`/usr/local/bin/canteiro-ptz` na imagem); credenciais em `~/canteiro-timelapse/env/canteiro-ptz.env`, montado ro em `/etc/canteiro-ptz.env` |
+| remote rclone `ceuazul` | `~eduardocenci/.config/rclone/rclone.conf` (600, montado rw no container — uid 1000 preserva o dono no refresh do token) — OAuth Google de eduardocenci@gmail.com, `root_folder_id` apontando para a pasta **CeuAzul**; backup do conf em `gitignore/ara-rclone.conf` no repo raiz |
 
-Consumidor downstream: o timer seg–sex das 20:10 no bnu-raspberrypi
+Consumidor downstream: o container seg–sex das 20:10 no bnu-raspberrypi
 ([`../../bnu-raspberrypi/canteiro-sunset-compare/`](../../bnu-raspberrypi/canteiro-sunset-compare/))
 compara o `posicao1/por-do-sol` do último dia útil vs hoje no WhatsApp e
 arquiva cada montagem em `posicao1/DiaDeTrabalho/YYYY-MM-DD.jpg` —
@@ -82,11 +92,15 @@ mudanças na estrutura do Drive precisam acompanhar lá.
 ## Operação
 
 ```bash
-ssh eduardocenci@ara-raspberrypi "systemctl list-timers 'timelapse-*'"
-ssh eduardocenci@ara-raspberrypi "journalctl -u timelapse-sunset -n 30 --no-pager"
+ssh eduardocenci@ara-raspberrypi "docker logs canteiro-timelapse --tail 30"
 ssh eduardocenci@ara-raspberrypi "ls -R /var/lib/timelapse/outbox | head"
-ssh eduardocenci@ara-raspberrypi "systemctl start timelapse-upload"   # drenar agora
+ssh eduardocenci@ara-raspberrypi "docker restart canteiro-timelapse"   # drenar agora (upload na partida)
 ```
+
+O subcomando `trabalho` recusa rodar fora de 07:00–18:00 (guarda no
+script); para exercitar a captura fora do expediente use `docker exec
+canteiro-timelapse timelapse-capture pos2test` (mexe a câmera!) ou um grab
+ffmpeg direto do relay.
 
 Premissas a vigiar nas primeiras semanas: (1) enquadramento estável entre
 dias em `posicao1/` — se variar, o guard-return não está confiável e o

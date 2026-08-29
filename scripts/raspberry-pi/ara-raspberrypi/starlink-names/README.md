@@ -22,9 +22,13 @@ Notes:
   not on the router — probed 2026-08-26: no local roster RPC).
 - The `Controller` entry (the router itself) is skipped; router and camera
   were hand-nicknamed ("Roteador Starlink", "Câmera do canteiro (iM9)").
-- `grpcurl` v1.9.1 (official fullstorydev release, linux_arm64) installed
-  at `/usr/local/bin/grpcurl` on 2026-08-26.
+- `grpcurl` v1.9.1 (official fullstorydev release, linux_arm64) is baked
+  into the container image (a host copy from 2026-08-26 remains at
+  `/usr/local/bin/grpcurl`).
 
-Install (as deployed 2026-08-26): `starlink-names.py` →
-`/usr/local/bin/` (755); service+timer → `/etc/systemd/system/`;
-`systemctl enable --now starlink-names.timer`.
+Install: Docker container `starlink-names` since 2026-08-29
+([`../docker/starlink-names/`](../docker/starlink-names/) — own image,
+deliberately separate from the camera stack; supercronic every 5 min; the
+old service+timer stay on the Pi disabled, one wave, as rollback). Test:
+`docker exec starlink-names python3 /app/starlink-names.py` (prints
+`done: N nickname(s) set`; never overwrites, so re-runs are safe).

@@ -13,10 +13,10 @@ In the software, add the camera by IP using the **Pi's tailnet address**
 **Intelbras-1**, user `admin`, password = the camera's Device Password
 (`.env` `ARA_CANTEIRO_CAM_KEY`).
 
-| File | Live copy |
-|---|---|
-| [`dvrip-bridge.service`](dvrip-bridge.service) | `/etc/systemd/system/dvrip-bridge.service` |
+Docker container since 2026-08-29 (`dvrip-bridge`, image `alpine/socat`
+pinned — see [`compose.yml`](compose.yml); was a socat systemd unit, left
+disabled on the Pi one wave as rollback). Live copy: `~/dvrip-bridge/`.
 
 Notes: TCP only (37777). Some flows also use UDP 37778 — not forwarded;
-add a second socat line if a tool demands it. The forward is protocol-blind
-(no credentials involved on the Pi).
+add a second socat service if a tool demands it. The forward is
+protocol-blind (no credentials involved on the Pi).

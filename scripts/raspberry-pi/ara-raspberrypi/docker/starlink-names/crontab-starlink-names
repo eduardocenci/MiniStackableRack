@@ -1,0 +1,3 @@
+# every 5 min, like the old starlink-names.timer; an overlap is skipped by
+# supercronic (harmless — the next run syncs the same state)
+*/5 * * * * python3 /app/starlink-names.py

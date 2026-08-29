@@ -6,10 +6,12 @@ powered up together with the Starlink kit and the Intelbras camera on
 site**, but since 2026-08-26 it IS a dashboard site: registered in
 `globalnet/architecture.yaml` as `home: true` (nodes `ara_rpi`/`ara_nto` +
 camera/router probes; `make fleet` audits this Pi like the rack ones —
-decisão Eduardo). Services here are plain systemd units, plus Docker
-running the standard **netoverview** container (deployed 2026-08-26, same
-shape as the rack Pis: compose at `~/netoverview` + 5-min pull cron with
-prune — see [`../README.md`](../README.md)).
+decisão Eduardo). Since 2026-08-29 **every service here is a Docker
+container** (five: netoverview + the four in [`docker/`](docker/); the old
+systemd units stay on the Pi disabled, as rollback for one wave). Only
+netoverview self-updates via the 5-min pull cron with prune (see
+[`../README.md`](../README.md)) — the other four are local builds or
+pinned images, updated deliberately.
 
 | Fact | Value |
 |---|---|
@@ -41,7 +43,8 @@ prune — see [`../README.md`](../README.md)).
 - Every lens has a **640×480 H264 substream**: `subtype=1` in the RTSP path
   (`rtsp://192.168.1.56:554/cam/realmonitor?channel=<1|2>&subtype=1`) —
   cheap detect feed. Channel 1's is relayed as `canteiro-sub` and feeds the
-  bnu Frigate object detection (person/vehicle) — see [`mediamtx/`](mediamtx/).
+  bnu Frigate object detection (person/vehicle) — see
+  [`docker/canteiro-relay/`](docker/canteiro-relay/).
 - **OSD/watermark** — the top-left **"intelbras" corner logo is NOT removable
   at the camera on any interface** (fully probed 2026-08-26):
   - ONVIF media service reports `OSD="true"` but exposes only ONE OSD object,
@@ -75,7 +78,8 @@ prune — see [`../README.md`](../README.md)).
 
 | Service | What it does |
 |---|---|
-| [`mediamtx/`](mediamtx/) | RTSP relay: pulls the iM9 camera streams and re-serves them on the tailnet at `rtsp://ara-raspberrypi:8554/canteiro` (+ `canteiro-alt`, `canteiro-sub`). Sole tailnet consumer: go2rtc on bnu-raspberrypi, which fans out to the wall screen, the TV and the bnu Frigate NVR (recording + person/vehicle detection of the obra since 2026-08-26) |
+| [`docker/canteiro-relay/`](docker/canteiro-relay/) | mediamtx container (pinned 1.20.1): pulls the iM9 camera streams and re-serves them on the tailnet at `rtsp://ara-raspberrypi:8554/canteiro` (+ `canteiro-alt`, `canteiro-sub`). Sole tailnet consumer: go2rtc on bnu-raspberrypi, which fans out to the TV, the browser `/live` page and the bnu Frigate NVR (recording + person/vehicle detection of the obra since 2026-08-26). **Single upstream for everything at bnu** — pause the bnu `canteiro-watchdog` container before any restart longer than a blip |
 | netoverview (Docker) | LAN discovery/ARP monitor of the house LAN `192.168.1.0/24` · web UI `http://ara-raspberrypi:5000` · standard fleet compose (`netoverview/netoverview_docker/docker-compose.yml` → `~/netoverview/`), self-updates via the 5-min pull cron · its `/api/presence` feeds the daily 20:00 obra-presence WhatsApp report ([`../bnu-raspberrypi/canteiro-presenca/`](../bnu-raspberrypi/canteiro-presenca/)) |
-| [`timelapse/`](timelapse/) | Daily construction-timelapse frames off the local relay: 8 solar windows (sunrise T…T+20 + sunset T−20…T+20, NOAA per day), each shot from TWO PT positions — guard (`posicao1/`) and a dead-reckoned calibrated second framing (`posicao2/`, burst recipe via `canteiro-ptz`, all LAN-local) — plus the fixed-lens twin (`lentefixa/`); worker-presence frames every 15 min 07:00–18:00 (`trabalho/`) → nightly 20:00 `rclone move` to Google Drive `CeuAzul/Timelapse/`, deleting local copies on confirmed transfer (AI ground-truth for build progress; see home-ara CLAUDE.md) |
-| [`starlink-names/`](starlink-names/) | systemd timer (5 min): Starlink router gRPC `wifi_get_clients` → auto-nickname new devices in netoverview with the names the Starlink app shows; never overwrites manual renames. Display-only (presence report names) — the bnu HA Frigate gate suppresses on ANY non-fixed device online |
+| [`timelapse/`](timelapse/) | `canteiro-timelapse` container ([`docker/canteiro-timelapse/`](docker/canteiro-timelapse/), supercronic in America/Sao_Paulo): daily construction-timelapse frames off the local relay — 8 solar windows (sunrise T…T+20 + sunset T−20…T+20, NOAA per day), each shot from TWO PT positions — guard (`posicao1/`) and a dead-reckoned calibrated second framing (`posicao2/`, burst recipe via `canteiro-ptz`, all LAN-local) — plus the fixed-lens twin (`lentefixa/`); worker-presence frames every 15 min 07:00–18:00 (`trabalho/`) → 20:00 `rclone move` to Google Drive `CeuAzul/Timelapse/` **plus an upload-on-container-start catch-up** (replaces the old timer's `Persistent=true` after shed power cuts), deleting local copies on confirmed transfer (AI ground-truth for build progress; see home-ara CLAUDE.md) |
+| [`starlink-names/`](starlink-names/) | `starlink-names` container ([`docker/starlink-names/`](docker/starlink-names/), 5 min): Starlink router gRPC `wifi_get_clients` → auto-nickname new devices in netoverview with the names the Starlink app shows; never overwrites manual renames. Display-only (presence report names) — the bnu HA Frigate gate suppresses on ANY non-fixed device online |
+| [`docker/dvrip-bridge/`](docker/dvrip-bridge/) | socat container (alpine/socat pinned): bridges the camera's DVRIP port `37777` onto the tailnet (`ara-raspberrypi:37777` → `192.168.1.56:37777`) |

@@ -1,0 +1,22 @@
+# canteiro-timelapse — camera jobs container (2026-08-29; was 4 systemd
+# timers). See Dockerfile header for the build-context layout.
+services:
+  canteiro-timelapse:
+    build: .
+    image: canteiro-timelapse:local
+    container_name: canteiro-timelapse
+    network_mode: host   # RTSP on the local relay :8554 + camera ONVIF on the house LAN
+    user: "1000:1000"
+    restart: unless-stopped
+    init: true
+    environment:
+      TZ: America/Sao_Paulo
+      RCLONE_CONFIG: /config/rclone/rclone.conf
+    volumes:
+      - /var/lib/timelapse:/var/lib/timelapse   # outbox — same dir the timers used
+      # rw on purpose: rclone refreshes the Drive token in place; uid 1000
+      # keeps the host file owned by eduardocenci
+      - /home/eduardocenci/.config/rclone:/config/rclone
+      # camera creds at the exact path canteiro-ptz reads (moved from /etc
+      # on the host; chmod 600 eduardocenci)
+      - ./env/canteiro-ptz.env:/etc/canteiro-ptz.env:ro

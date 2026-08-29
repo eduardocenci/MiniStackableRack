@@ -1,0 +1,12 @@
+# dvrip-bridge — camera DVRIP port 37777 bridged onto the tailnet,
+# containerized 2026-08-29 (was a socat systemd unit).
+#
+# Authoritative copy: scripts/raspberry-pi/ara-raspberrypi/docker/dvrip-bridge/
+# Live copy:          ara-raspberrypi:~/dvrip-bridge/
+services:
+  dvrip-bridge:
+    image: alpine/socat:1.8.0.3   # pinned; entrypoint is socat, command = its args
+    container_name: dvrip-bridge
+    network_mode: host   # listen on all interfaces incl. the tailnet IP
+    restart: unless-stopped
+    command: TCP-LISTEN:37777,fork,reuseaddr TCP:192.168.1.56:37777

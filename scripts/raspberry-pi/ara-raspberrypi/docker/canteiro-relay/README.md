@@ -1,14 +1,23 @@
-# mediamtx — canteiro camera relay (ara-raspberrypi)
+# canteiro-relay — canteiro camera relay (mediamtx, ara-raspberrypi)
 
 Relays the Intelbras iM9+ Full Color site camera (`192.168.1.56`, Wi-Fi,
 LAN-only) onto the tailnet so any fleet node can watch the obra without
-touching the camera or the house LAN:
+touching the camera or the house LAN. Docker container since 2026-08-29
+(`canteiro-relay`, image `bluenviron/mediamtx:1.20.1` pinned; was a systemd
+unit + hand-downloaded binary, left disabled on the Pi one wave as rollback):
 
 ```
-iM9 camera ──RTSP 554 (LAN)──▶ mediamtx on ara-raspberrypi ──RTSP 8554 (tailnet)──▶ go2rtc on bnu-raspberrypi
-                                                                (single consumer)     ├─ wall screen + TV cast
-                                                                                      └─ bnu Frigate (record + detect)
+iM9 camera ──RTSP 554 (LAN)──▶ canteiro-relay on ara-raspberrypi ──RTSP 8554 (tailnet)──▶ go2rtc on bnu-raspberrypi
+                                                                      (single consumer)     ├─ TV cast + /live HLS page
+                                                                                            └─ bnu Frigate (record + detect)
 ```
+
+**Cutover/restart guard:** the bnu `canteiro-watchdog` container pages the
+family ~3 min after `:8554` goes dark — `docker stop canteiro-watchdog` on
+bnu first for anything longer than a blip. After a relay restart the bnu
+`canteiro-hls` muxer can crash-loop on the RTSP timestamp jump ("sample
+timestamp is impossible to handle", /live answers 500) —
+`docker restart canteiro-hls` on bnu fixes it (seen 2026-08-29).
 
 | Path | What it is |
 |---|---|
@@ -23,9 +32,8 @@ house LAN, and the camera credential stays on this Pi.
 
 | File | Purpose |
 |---|---|
-| `/usr/local/bin/mediamtx` | static binary (GitHub release, linux_arm64) |
-| `/etc/mediamtx/mediamtx.yml` | config — copy of [`mediamtx.yml`](mediamtx.yml) with the real `chave de acesso` (640 `root:mediamtx`) |
-| `/etc/systemd/system/mediamtx.service` | copy of [`mediamtx.service`](mediamtx.service) (runs as system user `mediamtx`) |
+| `~/canteiro-relay/compose.yml` | copy of [`compose.yml`](compose.yml) — pinned image, host network |
+| `~/canteiro-relay/mediamtx.yml` | config — copy of [`mediamtx.yml`](mediamtx.yml) with the real `chave de acesso` (600 `eduardocenci`, ro-mounted at `/mediamtx.yml`) |
 
 ## Camera key — install / update
 
@@ -36,9 +44,9 @@ anti-bruteforce lockout warm (401 → 403), so the relay must not pull until
 the key is real. To install the key (from repo root, key in `.env`):
 
 ```bash
-sed "s/__ARA_CANTEIRO_CAM_KEY__/<CHAVE>/g" scripts/raspberry-pi/ara-raspberrypi/mediamtx/mediamtx.yml \
-  | ssh eduardocenci@ara-raspberrypi "sudo tee /etc/mediamtx/mediamtx.yml > /dev/null && sudo chown root:mediamtx /etc/mediamtx/mediamtx.yml && sudo chmod 640 /etc/mediamtx/mediamtx.yml && sudo systemctl restart mediamtx"
-ssh eduardocenci@ara-raspberrypi "journalctl -u mediamtx -n 20 --no-pager"   # expect "[path canteiro] source ready"
+sed "s/__ARA_CANTEIRO_CAM_KEY__/<CHAVE>/g" scripts/raspberry-pi/ara-raspberrypi/docker/canteiro-relay/mediamtx.yml \
+  | ssh eduardocenci@ara-raspberrypi "cat > ~/canteiro-relay/mediamtx.yml && chmod 600 ~/canteiro-relay/mediamtx.yml && docker restart canteiro-relay"
+ssh eduardocenci@ara-raspberrypi "docker logs canteiro-relay --tail 20"   # expect "[path canteiro] source ready"
 ```
 
 URL-encode the key first if it contains symbols. Keep the key in the
@@ -57,8 +65,9 @@ credential mirror (listed in `REMOTE_ACCESS.md` §5).
   payload when image encryption is on).
 - Camera IP drifted → it is a DHCP lease on the Starlink router; update
   `192.168.1.56` here or pin a reservation in the Starlink app.
-- After replacing `/etc/mediamtx/mediamtx.yml`, always
-  `sudo systemctl restart mediamtx` — do NOT trust the hot-reload: it can
+- After replacing `~/canteiro-relay/mediamtx.yml`, always
+  `docker restart canteiro-relay` — do NOT trust the hot-reload: it can
   catch the file mid-write, fall back to an all-defaults config (extra
   listeners on :1935/:8888/:8889/:8890/:8892, "path 'canteiro' is not
-  configured") and never recover (seen 2026-08-24).
+  configured") and never recover (seen 2026-08-24 on the systemd-era
+  binary; same engine in the container).

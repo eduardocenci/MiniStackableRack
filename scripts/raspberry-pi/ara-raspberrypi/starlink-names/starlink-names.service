@@ -1,9 +1,0 @@
-[Unit]
-Description=Sync Starlink router client names into netoverview nicknames
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-User=eduardocenci
-ExecStart=/usr/bin/python3 /usr/local/bin/starlink-names.py
