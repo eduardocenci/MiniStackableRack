@@ -40,6 +40,35 @@ def latest_landed(reg, max_age_s=6 * 3600, now_ts=None):
     return None
 
 
+FEED_URL = "https://data-cloud.flightradar24.com/zones/fcgi/feed.js"
+FEED_PARAMS = {
+    "faa": "1", "satellite": "1", "mlat": "1", "flarm": "1", "adsb": "1",
+    "gnd": "1", "air": "1", "vehicles": "0", "estimated": "1",
+    "maxage": "14400", "gliders": "0", "stats": "0",
+}
+# feed row indexes (list): 4 alt_ft · 9 reg · 10 ts · 11 origin_iata ·
+# 12 dest_iata · 14 on_ground(0/1) · 16 callsign
+
+
+def live_reg(reg):
+    """Live feed filtered by registration: {flight_id: row}. Empty when the
+    aircraft is not transmitting. Tiny response — safe to poll every ~30 s
+    (the HA integration polls the same feed every 10 s for its whole area)."""
+    r = requests.get(
+        FEED_URL, params={**FEED_PARAMS, "reg": reg}, headers=HEADERS, timeout=15
+    )
+    r.raise_for_status()
+    return {k: v for k, v in r.json().items() if isinstance(v, list)}
+
+
+def list_entry(flight_id, reg):
+    """The flight-list entry for one id, or None."""
+    for e in list_flights(reg):
+        if (e.get("identification") or {}).get("id") == flight_id:
+            return e
+    return None
+
+
 def live_details(flight_id):
     """Live flight details (the clickhandler endpoint) — works while the
     flight is in the air; carries the trail flown so far (newest first)."""

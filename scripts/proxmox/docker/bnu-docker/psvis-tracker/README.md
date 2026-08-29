@@ -54,15 +54,21 @@ próxima do ponto médio restante). Meteo é best-effort: falha derruba só o
 bloco, nunca o update. Dedupe por `enroute:<id>`; teste com voo já concluído: `sim:true`
 trunca o trail nos primeiros 10 min.
 
-## Airborne watch (decolagem em qualquer aeroporto)
+## Live watch (decolagem/pouso IMEDIATOS em qualquer aeroporto)
 
-Os eventos do HA só são garantidos perto de Blumenau, então o tracker também
-vigia sozinho: a cada `AIRBORNE_POLL_S` (5 min) consulta a lista FR24; ao ver
-o PS-VIS no ar (partida real sem chegada, com menos de 45 min) manda o texto
-de decolagem — só para origem ≠ `HOME_ICAO` (SSBL), onde o HA não alcança —
-e agenda o update em voo para T+10 da decolagem real. Marcadores de claim
-(`takeoff:<id>`, `enroute:<id>`) tornam o caminho HA e o watch mutuamente
-exclusivos por voo.
+Os eventos do HA só são garantidos perto de Blumenau. Para paridade de
+imediatismo em qualquer lugar, o tracker vigia o **feed ao vivo do FR24
+filtrado pelo prefixo** (`feed.js?reg=PS-VIS` — o mesmo feed que a integração
+do HA consome a cada 10 s para a área) a cada `FAST_POLL_S` (30 s), reagindo
+às transições de `on_ground` como o HA faz: decolagem → texto na hora (origem
+≠ `HOME_ICAO`/`HOME_IATA`; em BNU o HA anuncia) + update em voo agendado para
+T+10 da decolagem real; pouso (flip para solo, ou sumiço em voo confirmado
+pela chegada real na lista) → relatório completo imediato. Primeira visão em
+pleno voo (restart no meio) não gera texto de decolagem falso (>15 min de
+partida) mas ainda agenda/manda o update em voo. Backups em camadas: watch
+via lista (`AIRBORNE_POLL_S`, 5 min) e a varredura (15 min). Claims
+(`takeoff:`/`enroute:<id>`) + um set de jobs em execução mantêm HA e watches
+mutuamente exclusivos por voo.
 
 ## Flight log (base histórica para comparações)
 

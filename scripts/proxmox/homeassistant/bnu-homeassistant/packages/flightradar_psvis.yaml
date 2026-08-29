@@ -23,13 +23,14 @@
 #   The only gate is the registration (PS-VIS). Area events still only fire near
 #   BNU by construction (the configured FR24 area), but tracked events fire
 #   wherever PS-VIS takes off or lands, and the message header names the actual
-#   city. Coverage guarantee for airports with no live event, both directions:
-#   psvis-tracker's FR24 history sweep (15 min) stores AND reports any
-#   completed flight not yet communicated, and its airborne watch (5 min)
-#   notices a take-off anywhere — sending the take-off text for non-BNU
-#   origins (BNU's comes instantly from here) and scheduling the T+10
-#   en-route update from the real departure time. Claim markers make the HA
-#   path and the watch mutually exclusive per flight.
+#   city. Away from BNU the tracker delivers the SAME immediacy on its own:
+#   its live watch polls the reg-filtered FR24 feed every 30 s (the very feed
+#   this integration polls every 10 s for the area) and reacts to on_ground
+#   transitions anywhere — take-off text at once (non-BNU origins; BNU's comes
+#   from here), T+10 en-route update from the real departure, landing report on
+#   touchdown. Backups: airborne watch via flight list (5 min) and the history
+#   sweep (15 min) that stores AND reports anything still missed. Claim markers
+#   + an in-flight job set keep every path mutually exclusive per flight.
 #
 # Reuses rest_command.send_whatsapp_bnu (defined in family_presence.yaml — rest_commands
 # are global) and !secret psvis_group_jid.

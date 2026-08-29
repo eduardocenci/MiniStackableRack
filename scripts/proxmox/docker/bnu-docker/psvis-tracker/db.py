@@ -141,6 +141,16 @@ def known_airports(exclude_icao=None):
     return list(out.values())
 
 
+def airport_by_iata(iata):
+    """Gazetteer lookup from the flight log (city names for feed IATA codes)."""
+    if not iata:
+        return None
+    for a in known_airports():
+        if a.get("iata") == iata:
+            return a
+    return None
+
+
 def route_durations(o_icao, d_icao, exclude_fid=None):
     """Durations (s) of logged flights on a route, newest first."""
     with _conn() as c:

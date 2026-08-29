@@ -24,6 +24,7 @@ import enroute
 import fr24
 import report
 import waha
+from report import TZ_LOCAL
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger("psvis")
@@ -46,6 +47,10 @@ ENROUTE_DELAY_S = int(os.environ.get("ENROUTE_DELAY_S", "600"))
 # T+10 en-route update scheduled from the real departure time.
 AIRBORNE_POLL_S = int(os.environ.get("AIRBORNE_POLL_S", "300"))
 HOME_ICAO = os.environ.get("HOME_ICAO", "SSBL")  # HA announces this one itself
+HOME_IATA = os.environ.get("HOME_IATA", "BNU")
+# Live watch: the reg-filtered FR24 feed (same feed the HA integration polls
+# every 10 s for its area) — IMMEDIATE take-off/landing detection anywhere.
+FAST_POLL_S = int(os.environ.get("FAST_POLL_S", "30"))
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 CHARTS_DIR = os.path.join(DATA_DIR, "charts")
 LAST_FILE = os.path.join(DATA_DIR, "last_reported")
@@ -182,7 +187,6 @@ def _takeoff_text(entry):
     if d_city:
         lines.append(f"✈️ Destino: {d_city}")
     if dep:
-        from report import TZ_LOCAL
         lines.append(f"🕐 Decolagem {datetime.fromtimestamp(dep, TZ_LOCAL).strftime('%H:%M')}")
     if fid:
         lines.append(f"🔗 https://www.flightradar24.com/data/aircraft/ps-vis#{fid}")
@@ -222,6 +226,122 @@ def _airborne_loop():
         time.sleep(AIRBORNE_POLL_S)
 
 
+# ── Live watch: immediate take-off/landing detection at ANY airport ──────────
+# Polls the reg-filtered live feed and reacts to on_ground transitions, the
+# same signal the HA integration uses for its Blumenau area. The 5-min
+# airborne watch and the 15-min sweep remain as layered backups.
+
+_active_reports = set()
+_active_lock = threading.Lock()
+
+
+def _spawn_once(key, fn):
+    """Run fn in a thread unless an identical job is already in flight —
+    closes the HA-event vs live-watch race on the same landing."""
+    with _active_lock:
+        if key in _active_reports:
+            return False
+        _active_reports.add(key)
+
+    def wrap():
+        try:
+            fn()
+        finally:
+            with _active_lock:
+                _active_reports.discard(key)
+
+    threading.Thread(target=wrap, daemon=True).start()
+    return True
+
+
+def _on_airborne_first_seen(fid, row):
+    o_iata = row[11] or ""
+    entry = None
+    try:
+        entry = fr24.list_entry(fid, REG)
+    except Exception:  # noqa: BLE001
+        pass
+    dep = (((entry or {}).get("time") or {}).get("real") or {}).get("departure") \
+        or row[10] or int(time.time())
+    now = time.time()
+    key = f"takeoff:{fid}"
+    if not _already_reported(key):
+        _mark_reported(key)
+        o_icao = ((((entry or {}).get("airport") or {}).get("origin") or {})
+                  .get("code") or {}).get("icao") or ""
+        if o_icao == HOME_ICAO or o_iata == HOME_IATA:
+            log.info("take-off %s at home — HA announces it", fid)
+        elif now - dep > 15 * 60:
+            log.info("first sight of %s is mid-flight — skipping take-off text", fid)
+        elif GROUP_JID:
+            if entry:
+                text = _takeoff_text(entry)
+            else:
+                city = (db.airport_by_iata(o_iata) or {}).get("city") or o_iata
+                text = "\n".join(filter(None, [
+                    f"🛫 *PS-VIS decolou de {city}*" if city else "🛫 *PS-VIS decolou*",
+                    f"🕐 Decolagem {datetime.fromtimestamp(dep, TZ_LOCAL).strftime('%H:%M')}",
+                    f"🔗 https://www.flightradar24.com/data/aircraft/ps-vis#{fid}",
+                ]))
+            waha.send_text(GROUP_JID, text)
+            log.info("live watch: take-off text for %s sent", fid)
+    if GROUP_JID and not _already_reported(f"enroute:{fid}"):
+        delay = max(0, dep + ENROUTE_DELAY_S - now)
+        threading.Thread(
+            target=_run_enroute, args=(fid, GROUP_JID, False, False, delay), daemon=True
+        ).start()
+
+
+def _on_landing_detected(fid, wait_arrival=False):
+    if _already_reported(fid) or not GROUP_JID:
+        return
+
+    def run():
+        if wait_arrival:  # disappeared from the feed — confirm it actually landed
+            for _ in range(30):
+                try:
+                    e = fr24.list_entry(fid, REG)
+                    if e and ((e.get("time") or {}).get("real") or {}).get("arrival"):
+                        break
+                except Exception:  # noqa: BLE001
+                    pass
+                time.sleep(60)
+            else:
+                log.info("no FR24 arrival for %s — leaving it to the sweep", fid)
+                return
+        _run_report(fid, GROUP_JID, False, "")
+
+    if _spawn_once(f"report:{fid}", run):
+        log.info("live watch: landing of %s detected (wait_arrival=%s)", fid, wait_arrival)
+
+
+_live_state = {}
+
+
+def _live_watch_once():
+    rows = fr24.live_reg(REG)
+    for fid, row in rows.items():
+        airborne = row[14] == 0
+        prev = _live_state.get(fid)
+        if airborne and (prev is None or not prev["airborne"]):
+            _on_airborne_first_seen(fid, row)
+        elif not airborne and prev and prev["airborne"]:
+            _on_landing_detected(fid)
+        _live_state[fid] = {"airborne": airborne}
+    for fid in [f for f in _live_state if f not in rows]:
+        if _live_state.pop(fid)["airborne"]:
+            _on_landing_detected(fid, wait_arrival=True)
+
+
+def _live_watch_loop():
+    while True:
+        try:
+            _live_watch_once()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("live watch failed: %s", exc)
+        time.sleep(FAST_POLL_S)
+
+
 @app.post("/report")
 def report_endpoint():
     body = request.get_json(silent=True) or {}
@@ -234,9 +354,15 @@ def report_endpoint():
     force = bool(body.get("force") or test)
     if direction == "landed":
         fallback_text = body.get("fallback_text") or ""
-        threading.Thread(
-            target=_run_report, args=(flight_id, jid, force, fallback_text), daemon=True
-        ).start()
+        if force:  # tests always run, on their own jid
+            threading.Thread(
+                target=_run_report, args=(flight_id, jid, force, fallback_text), daemon=True
+            ).start()
+        else:  # dedupe vs the live watch reacting to the same landing
+            _spawn_once(
+                f"report:{flight_id or 'latest'}",
+                lambda: _run_report(flight_id, jid, force, fallback_text),
+            )
         return jsonify(status="accepted", flight_id=flight_id, test=test), 202
     if direction == "took_off":
         threading.Thread(
@@ -312,4 +438,5 @@ def health():
 if __name__ == "__main__":
     threading.Thread(target=_sync_loop, daemon=True).start()
     threading.Thread(target=_airborne_loop, daemon=True).start()
+    threading.Thread(target=_live_watch_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=8000)

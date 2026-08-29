@@ -18,8 +18,10 @@ services:
       RETRY_S: "60"
       MAX_TRIES: "10"
       SYNC_INTERVAL_S: "900"   # universal capture: any-airport landings ≤15 min
-      AIRBORNE_POLL_S: "300"   # airborne watch: any-airport take-offs ≤5 min
+      FAST_POLL_S: "30"        # live watch: IMMEDIATE take-off/landing anywhere
+      AIRBORNE_POLL_S: "300"   # backup watch via flight list
       HOME_ICAO: "SSBL"        # HA announces take-offs here itself
+      HOME_IATA: "BNU"
       TZ: "America/Sao_Paulo"
     volumes:
       - ./data:/data
