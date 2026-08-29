@@ -19,13 +19,14 @@
 #   HA restarts (unlike the tracked list, which is in-memory and requires the aircraft to
 #   be live in FR24 at the moment it is added). We listen to BOTH and dedupe.
 #
-# SCOPING TO BLUMENAU
-#   We do NOT trust the area radius alone — instead every event is confirmed to be at
-#   Blumenau by an explicit great-circle distance from the airport (≤ BLUMENAU_RADIUS_KM)
-#   OR by the relevant airport code (origin on take-off / destination on landing) being
-#   BNU/SSBL. The nearest other airport (Navegantes SBNF) is ~40 km away, far outside the
-#   radius, so there is no ambiguity. Widen/replace this to alert on ALL PS-VIS
-#   take-offs/landings by relaxing the `at_blumenau` variable below.
+# SCOPE — ANY airport (decisão Eduardo 2026-08-29; was Blumenau-only before)
+#   The only gate is the registration (PS-VIS). Area events still only fire near
+#   BNU by construction (the configured FR24 area), but tracked events fire
+#   wherever PS-VIS takes off or lands, and the message header names the actual
+#   city. Coverage guarantee for airports with no live event: psvis-tracker's
+#   FR24 history sweep (every 15 min) stores AND reports any completed flight
+#   not yet communicated — so a landing anywhere reaches the group within
+#   ~15 min even if no HA event ever fired.
 #
 # Reuses rest_command.send_whatsapp_bnu (defined in family_presence.yaml — rest_commands
 # are global) and !secret psvis_group_jid.
@@ -96,34 +97,10 @@ automation:
       # ── Aircraft of interest ────────────────────────────────────────────────
       raw_reg: "{{ (trigger.event.data.aircraft_registration | default('')) | upper | replace('-','') }}"
       direction: "{{ trigger.id }}"          # 'took_off' | 'landed'
-      # ── Blumenau Regional Airport (BNU / SSBL) ─────────────────────────────
-      bnu_lat: -26.8306007
-      bnu_lon: -49.0903015
-      blumenau_radius_km: 6
-      ev_lat: "{{ trigger.event.data.latitude | default(none) }}"
-      ev_lon: "{{ trigger.event.data.longitude | default(none) }}"
-      # Great-circle distance (km) from the airport to the aircraft at the transition.
-      # HA templates expose sin/cos/atan2/sqrt/pi; there is no radians(), so × pi/180.
-      dist_km: >
-        {% set la1 = ev_lat | float(none) %}
-        {% set lo1 = ev_lon | float(none) %}
-        {% if la1 is none or lo1 is none %}
-          99999
-        {% else %}
-          {% set r = pi / 180 %}
-          {% set dlat = (bnu_lat - la1) * r %}
-          {% set dlon = (bnu_lon - lo1) * r %}
-          {% set a = (sin(dlat / 2)) ** 2 + cos(la1 * r) * cos(bnu_lat * r) * (sin(dlon / 2)) ** 2 %}
-          {{ (6371 * 2 * atan2(sqrt(a), sqrt(1 - a))) | round(2) }}
-        {% endif %}
       o_iata: "{{ trigger.event.data.airport_origin_code_iata | default('', true) }}"
       o_icao: "{{ trigger.event.data.airport_origin_code_icao | default('', true) }}"
       d_iata: "{{ trigger.event.data.airport_destination_code_iata | default('', true) }}"
       d_icao: "{{ trigger.event.data.airport_destination_code_icao | default('', true) }}"
-      at_blumenau: >
-        {{ (dist_km | float(99999) <= blumenau_radius_km)
-           or (direction == 'took_off' and (o_iata == 'BNU' or o_icao == 'SSBL'))
-           or (direction == 'landed'   and (d_iata == 'BNU' or d_icao == 'SSBL')) }}
       # ── Enriched overview fields (all defensive — any field may be missing) ─
       model: "{{ trigger.event.data.aircraft_model | default('', true) }}"
       fr24_id: "{{ trigger.event.data.id | default('', true) }}"
@@ -131,7 +108,15 @@ automation:
       # At the landed event FR24 usually hasn't stamped time_real_arrival yet —
       # the event fires within one 10 s scan of touchdown, so now() IS the arrival.
       arr_ts: "{{ trigger.event.data.time_real_arrival | default(0, true) | int(0) or (now().timestamp() | int) }}"
-      # ── The non-Blumenau endpoint: name (city prefix + 'Airport' stripped),
+      # ── The LOCAL endpoint (where the transition happened): origin city on
+      #    take-off, destination city on landing — drives the dynamic header.
+      here_city: >-
+        {{ (trigger.event.data.airport_origin_city if direction == 'took_off' else trigger.event.data.airport_destination_city) | default('', true) }}
+      here_lat: >-
+        {{ (trigger.event.data.airport_origin_latitude if direction == 'took_off' else trigger.event.data.airport_destination_latitude) | default(none, true) }}
+      here_lon: >-
+        {{ (trigger.event.data.airport_origin_longitude if direction == 'took_off' else trigger.event.data.airport_destination_longitude) | default(none, true) }}
+      # ── The OTHER endpoint: name (city prefix + 'Airport' stripped),
       #    codes and coordinates. On take-off it's the destination, else origin.
       other_city: >-
         {{ (trigger.event.data.airport_destination_city if direction == 'took_off' else trigger.event.data.airport_origin_city) | default('', true) }}
@@ -155,17 +140,19 @@ automation:
         {%- set nm = other_name or other_city -%}
         {%- set head = (nm ~ (' (' ~ other_codes ~ ')' if other_codes else '')) if nm else other_codes -%}
         {{ head ~ (' — ' ~ other_city if other_city and other_city != nm else '') }}
-      # Great-circle route length (km) from Blumenau to the other airport.
+      # Great-circle route length (km) between the two airports of the event.
       route_km: >
         {% set la1 = other_lat | float(none) %}
         {% set lo1 = other_lon | float(none) %}
-        {% if la1 is none or lo1 is none %}
+        {% set la2 = here_lat | float(none) %}
+        {% set lo2 = here_lon | float(none) %}
+        {% if la1 is none or lo1 is none or la2 is none or lo2 is none %}
           0
         {% else %}
           {% set r = pi / 180 %}
-          {% set dlat = (bnu_lat - la1) * r %}
-          {% set dlon = (bnu_lon - lo1) * r %}
-          {% set a = (sin(dlat / 2)) ** 2 + cos(la1 * r) * cos(bnu_lat * r) * (sin(dlon / 2)) ** 2 %}
+          {% set dlat = (la2 - la1) * r %}
+          {% set dlon = (lo2 - lo1) * r %}
+          {% set a = (sin(dlat / 2)) ** 2 + cos(la1 * r) * cos(la2 * r) * (sin(dlon / 2)) ** 2 %}
           {{ (6371 * 2 * atan2(sqrt(a), sqrt(1 - a))) | round(0) | int }}
         {% endif %}
       dep_hm: "{{ (dep_ts | int(0)) | timestamp_custom('%H:%M', true) if (dep_ts | int(0)) else '' }}"
@@ -180,11 +167,11 @@ automation:
       # Jinja forbids list.append, so the message is assembled declaratively.
       message: >-
         {%- if direction == 'took_off' -%}
-        {%- set header = '🛫 *PS-VIS decolou de Blumenau*' -%}
+        {%- set header = ('🛫 *PS-VIS decolou de ' ~ here_city ~ '*') if here_city else '🛫 *PS-VIS decolou*' -%}
         {%- set endpoint_l = '✈️ Destino: ' ~ other_label if other_label else '' -%}
         {%- set times_l = '🕐 Decolagem ' ~ (dep_hm or now().strftime('%H:%M')) -%}
         {%- else -%}
-        {%- set header = '🛬 *PS-VIS pousou em Blumenau*' -%}
+        {%- set header = ('🛬 *PS-VIS pousou em ' ~ here_city ~ '*') if here_city else '🛬 *PS-VIS pousou*' -%}
         {%- set endpoint_l = '✈️ Origem: ' ~ other_label if other_label else '' -%}
         {%- set times_l = '🕐 Saída ' ~ dep_hm ~ ' → Chegada ' ~ arr_hm ~ ' (' ~ dur_txt ~ ')' if dep_hm else '🕐 ' ~ arr_hm -%}
         {%- endif -%}
@@ -197,11 +184,10 @@ automation:
         entity_id: input_boolean.psvis_flight_alerts
         state: "on"
       # Only PS-VIS (registration may come as PS-VIS or PSVIS from FR24).
+      # ANY airport counts (decisão Eduardo 2026-08-29) — area events only fire
+      # near BNU by construction, but tracked events fire wherever PS-VIS moves.
       - condition: template
         value_template: "{{ raw_reg == 'PSVIS' }}"
-      # Only take-offs/landings AT Blumenau.
-      - condition: template
-        value_template: "{{ at_blumenau }}"
       # Dedupe: ignore a second matching event within 90 s of the last alert.
       - condition: template
         value_template: >

@@ -42,8 +42,12 @@ médio, máximos, distâncias) + `track_points` (o path exato: ts/lat/lon/
 altitude/velocidade/vspeed/heading ponto a ponto) + playback bruto gzipado em
 `/data/playbacks/<id>.json.gz`. Alimentação em duas vias: o próprio relatório
 de pouso grava antes de enviar, e um **sync periódico** (`SYNC_INTERVAL_S`,
-6 h) varre a lista FR24 e grava qualquer voo concluído ainda ausente — é o que
-captura as pernas de ida (BNU→fora) e cura falhas. Objetivo futuro: comparar
+**15 min**) varre a lista FR24 e grava **e reporta** qualquer voo concluído
+ainda não visto — é a captura universal: pouso do PS-VIS em **qualquer
+aeroporto** chega ao grupo em ≤15 min mesmo sem evento do HA (eventos só
+existem perto de Blumenau, ou onde for enquanto a aeronave estiver na lista
+tracked em memória do FR24). Só voos novos no banco são reportados — restart e
+backfill nunca geram spam. Objetivo futuro: comparar
 um voo novo com o histórico (mais lento? cruzeiro mais baixo? desvio de rota
 significativo?).
 

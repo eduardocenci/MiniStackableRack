@@ -33,7 +33,9 @@ SELF_URL = os.environ.get("SELF_URL", "http://psvis-tracker:8000")
 INITIAL_DELAY_S = int(os.environ.get("INITIAL_DELAY_S", "120"))
 RETRY_S = int(os.environ.get("RETRY_S", "60"))
 MAX_TRIES = int(os.environ.get("MAX_TRIES", "10"))
-SYNC_INTERVAL_S = int(os.environ.get("SYNC_INTERVAL_S", "21600"))  # 6 h
+# 15 min: the sweep is the UNIVERSAL capture path — a landing at any airport
+# with no HA event still gets stored and reported within one interval.
+SYNC_INTERVAL_S = int(os.environ.get("SYNC_INTERVAL_S", "900"))
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 CHARTS_DIR = os.path.join(DATA_DIR, "charts")
 LAST_FILE = os.path.join(DATA_DIR, "last_reported")
@@ -63,6 +65,16 @@ def _resolve_flight_id(flight_id):
     return (entry or {}).get("identification", {}).get("id")
 
 
+def _send_report(fid, flight, stats, jid):
+    """Render chart+map and send the single flight message via WAHA."""
+    png = report.build_report_image(stats)
+    with open(os.path.join(CHARTS_DIR, f"{fid}.png"), "wb") as fh:
+        fh.write(png)
+    waha.send_image(jid, f"{SELF_URL}/charts/{fid}.png", report.build_caption(stats))
+    _mark_reported(fid)
+    log.info("report for %s sent to %s", fid, jid)
+
+
 def _run_report(flight_id, jid, force, fallback_text=""):
     if not force and INITIAL_DELAY_S:
         time.sleep(INITIAL_DELAY_S)
@@ -80,13 +92,7 @@ def _run_report(flight_id, jid, force, fallback_text=""):
                 db.store_flight(flight, stats)
             except Exception:
                 log.warning("flight log store failed for %s", fid, exc_info=True)
-            png = report.build_report_image(stats)  # profile chart + route map
-            with open(os.path.join(CHARTS_DIR, f"{fid}.png"), "wb") as fh:
-                fh.write(png)
-            caption = report.build_caption(stats)
-            waha.send_image(jid, f"{SELF_URL}/charts/{fid}.png", caption)
-            _mark_reported(fid)
-            log.info("report for %s sent to %s", fid, jid)
+            _send_report(fid, flight, stats, jid)
             return
         except Exception as exc:  # noqa: BLE001 — retry on anything, FR24 lags
             log.warning("attempt %d/%d failed: %s", attempt, MAX_TRIES, exc)
@@ -120,9 +126,11 @@ def report_endpoint():
 
 
 def _sync_history(limit=15):
-    """Pull the FR24 flight list for REG and log any completed flight not yet
-    stored. Catches BOTH directions (outbound legs never land at Blumenau, so
-    the landing hook alone would miss them) and self-heals missed flights."""
+    """Pull the FR24 flight list for REG; store AND report any completed
+    flight not yet seen. This is the universal capture path: it covers
+    landings at ANY airport (HA events only exist near Blumenau or while the
+    aircraft is in the in-memory tracked list) and self-heals missed flights.
+    Only flights new to the DB are reported — restarts/backfills never spam."""
     stored = 0
     for entry in fr24.list_flights(REG, limit=limit):
         fid = (entry.get("identification") or {}).get("id")
@@ -131,9 +139,12 @@ def _sync_history(limit=15):
             continue
         try:
             flight = fr24.playback(fid)
-            db.store_flight(flight, report.compute_stats(flight), list_entry=entry)
+            stats = report.compute_stats(flight)
+            db.store_flight(flight, stats, list_entry=entry)
             stored += 1
             log.info("history sync: stored flight %s", fid)
+            if GROUP_JID and not _already_reported(fid):
+                _send_report(fid, flight, stats, GROUP_JID)
         except Exception as exc:  # noqa: BLE001 — one bad flight must not stop the sweep
             log.warning("history sync: %s failed: %s", fid, exc)
     return stored
