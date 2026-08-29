@@ -54,6 +54,16 @@ próxima do ponto médio restante). Meteo é best-effort: falha derruba só o
 bloco, nunca o update. Dedupe por `enroute:<id>`; teste com voo já concluído: `sim:true`
 trunca o trail nos primeiros 10 min.
 
+## Airborne watch (decolagem em qualquer aeroporto)
+
+Os eventos do HA só são garantidos perto de Blumenau, então o tracker também
+vigia sozinho: a cada `AIRBORNE_POLL_S` (5 min) consulta a lista FR24; ao ver
+o PS-VIS no ar (partida real sem chegada, com menos de 45 min) manda o texto
+de decolagem — só para origem ≠ `HOME_ICAO` (SSBL), onde o HA não alcança —
+e agenda o update em voo para T+10 da decolagem real. Marcadores de claim
+(`takeoff:<id>`, `enroute:<id>`) tornam o caminho HA e o watch mutuamente
+exclusivos por voo.
+
 ## Flight log (base histórica para comparações)
 
 Todo voo completado do PS-VIS — **nas duas direções** — é gravado em

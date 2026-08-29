@@ -15,6 +15,7 @@ import logging
 import os
 import threading
 import time
+from datetime import datetime
 
 from flask import Flask, jsonify, request, send_from_directory
 
@@ -39,6 +40,12 @@ MAX_TRIES = int(os.environ.get("MAX_TRIES", "10"))
 SYNC_INTERVAL_S = int(os.environ.get("SYNC_INTERVAL_S", "900"))
 # T+10 en-route update after take-off (FR24 rarely knows the destination then)
 ENROUTE_DELAY_S = int(os.environ.get("ENROUTE_DELAY_S", "600"))
+# Airborne watch: HA take-off events are only guaranteed near Blumenau, so the
+# tracker polls the FR24 list itself — a take-off ANYWHERE is noticed within
+# one interval, gets its text (non-BNU origins; HA already covers BNU) and its
+# T+10 en-route update scheduled from the real departure time.
+AIRBORNE_POLL_S = int(os.environ.get("AIRBORNE_POLL_S", "300"))
+HOME_ICAO = os.environ.get("HOME_ICAO", "SSBL")  # HA announces this one itself
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 CHARTS_DIR = os.path.join(DATA_DIR, "charts")
 LAST_FILE = os.path.join(DATA_DIR, "last_reported")
@@ -109,22 +116,31 @@ def _run_report(flight_id, jid, force, fallback_text=""):
         log.info("fallback text sent to %s", jid)
 
 
-def _run_enroute(flight_id, jid, force, sim):
+def _run_enroute(flight_id, jid, force, sim, delay_s=None):
     """T+10 after take-off: cardinal heading, route-so-far map and arrival
-    estimates for previously-seen destinations along the heading."""
-    if not force and ENROUTE_DELAY_S:
-        time.sleep(ENROUTE_DELAY_S)
+    estimates for previously-seen destinations along the heading. May be
+    triggered by the HA event AND by the airborne watch — the claim marker
+    below makes whichever wakes first the only sender."""
+    delay = ENROUTE_DELAY_S if delay_s is None else delay_s
+    if not force and delay > 0:
+        time.sleep(delay)
+    fid = flight_id
+    if not fid:
+        try:
+            entry = fr24.latest_airborne(REG)
+            fid = (entry or {}).get("identification", {}).get("id")
+        except Exception:  # noqa: BLE001
+            pass
+    if not fid:
+        log.warning("en-route: no airborne flight found on FR24")
+        return
+    key = f"enroute:{fid}"
+    if not force:
+        if _already_reported(key):
+            return
+        _mark_reported(key)  # claim it before the slow build
     for attempt in range(1, 4):
         try:
-            fid = flight_id
-            if not fid:
-                entry = fr24.latest_airborne(REG)
-                fid = (entry or {}).get("identification", {}).get("id")
-            if not fid:
-                raise LookupError("no airborne flight found on FR24")
-            key = f"enroute:{fid}"
-            if not force and _already_reported(key):
-                return
             try:
                 origin, track, dest_hint = enroute.from_clickhandler(fr24.live_details(fid))
                 if len(track) < 5:
@@ -138,14 +154,72 @@ def _run_enroute(flight_id, jid, force, sim):
             with open(os.path.join(CHARTS_DIR, name), "wb") as fh:
                 fh.write(png)
             waha.send_image(jid, f"{SELF_URL}/charts/{name}", caption)
-            _mark_reported(key)
             log.info("en-route update for %s sent to %s", fid, jid)
             return
         except Exception as exc:  # noqa: BLE001
             log.warning("en-route attempt %d/3 failed: %s", attempt, exc)
             if attempt < 3:
                 time.sleep(RETRY_S)
-    log.error("giving up on en-route update (flight_id=%s)", flight_id)
+    log.error("giving up on en-route update (flight_id=%s)", fid)
+
+
+def _takeoff_text(entry):
+    """Plain take-off announcement built from a flight-list entry — used for
+    take-offs away from home, where no HA event announces anything."""
+    ap = entry.get("airport") or {}
+
+    def side_city(side):
+        a = ap.get(side) or {}
+        code = a.get("code") or {}
+        pos = a.get("position") or {}
+        return (((pos.get("region") or {}).get("city"))
+                or a.get("name") or code.get("iata") or code.get("icao") or "")
+
+    o_city, d_city = side_city("origin"), side_city("destination")
+    dep = ((entry.get("time") or {}).get("real") or {}).get("departure")
+    fid = (entry.get("identification") or {}).get("id")
+    lines = [f"🛫 *PS-VIS decolou de {o_city}*" if o_city else "🛫 *PS-VIS decolou*"]
+    if d_city:
+        lines.append(f"✈️ Destino: {d_city}")
+    if dep:
+        from report import TZ_LOCAL
+        lines.append(f"🕐 Decolagem {datetime.fromtimestamp(dep, TZ_LOCAL).strftime('%H:%M')}")
+    if fid:
+        lines.append(f"🔗 https://www.flightradar24.com/data/aircraft/ps-vis#{fid}")
+    return "\n".join(lines)
+
+
+def _airborne_check():
+    entry = fr24.latest_airborne(REG)
+    if not entry:
+        return
+    fid = (entry.get("identification") or {}).get("id")
+    dep = ((entry.get("time") or {}).get("real") or {}).get("departure")
+    if not fid or not dep:
+        return
+    now = time.time()
+    if now - dep > 45 * 60:
+        return  # stale — the landing sweep owns it from here
+    o_code = ((entry.get("airport") or {}).get("origin") or {}).get("code") or {}
+    if (GROUP_JID and o_code.get("icao") != HOME_ICAO
+            and not _already_reported(f"takeoff:{fid}")):
+        _mark_reported(f"takeoff:{fid}")
+        waha.send_text(GROUP_JID, _takeoff_text(entry))
+        log.info("remote take-off text for %s sent", fid)
+    if GROUP_JID and not _already_reported(f"enroute:{fid}"):
+        delay = max(0, dep + ENROUTE_DELAY_S - now)
+        threading.Thread(
+            target=_run_enroute, args=(fid, GROUP_JID, False, False, delay), daemon=True
+        ).start()
+
+
+def _airborne_loop():
+    while True:
+        try:
+            _airborne_check()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("airborne watch failed: %s", exc)
+        time.sleep(AIRBORNE_POLL_S)
 
 
 @app.post("/report")
@@ -237,4 +311,5 @@ def health():
 
 if __name__ == "__main__":
     threading.Thread(target=_sync_loop, daemon=True).start()
+    threading.Thread(target=_airborne_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=8000)
