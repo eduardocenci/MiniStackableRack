@@ -3,7 +3,7 @@
 Container no LXC 101 (`10.1.1.126`, porta **8790**) que envia **a mensagem
 única de pouso do PS-VIS**: gráfico de altitude + velocidade e mapa do
 trajeto, com legenda completa (rota, horários, modelo, cruzeiro, link FR24),
-ao grupo WhatsApp Casa Blumenau via WAHA.
+ao grupo WhatsApp **"Aeronave PS-VIS"** via WAHA (decisão Eduardo 2026-08-29 — o grupo da família não recebe mais alertas de voo).
 
 ## Fluxo (uma mensagem por pouso — decisão Eduardo 2026-08-29)
 
@@ -30,7 +30,22 @@ o `fallback_text` como texto; o serviço está fora do ar → o próprio HA dete
 
 Endpoints: `POST /report` (`{"flight_id", "direction", "test", "force",
 "chat_jid", "fallback_text"}` — todos opcionais; `test:true` envia ao grupo
-SmokeTests), `GET /health`, `GET /charts/<id>.png`.
+SmokeTests), `POST /backfill`, `GET /flights`, `GET /health`,
+`GET /charts/<id>.png`.
+
+## Flight log (base histórica para comparações)
+
+Todo voo completado do PS-VIS — **nas duas direções** — é gravado em
+`/data/flights.db` (SQLite): tabela `flights` (prefixo, rota com códigos e
+coordenadas dos aeroportos, horários programados/reais, duração, cruzeiro
+médio, máximos, distâncias) + `track_points` (o path exato: ts/lat/lon/
+altitude/velocidade/vspeed/heading ponto a ponto) + playback bruto gzipado em
+`/data/playbacks/<id>.json.gz`. Alimentação em duas vias: o próprio relatório
+de pouso grava antes de enviar, e um **sync periódico** (`SYNC_INTERVAL_S`,
+6 h) varre a lista FR24 e grava qualquer voo concluído ainda ausente — é o que
+captura as pernas de ida (BNU→fora) e cura falhas. Objetivo futuro: comparar
+um voo novo com o histórico (mais lento? cruzeiro mais baixo? desvio de rota
+significativo?).
 
 APIs FR24 não-oficiais (as mesmas da integração HA) — sujeitas a mudança.
 
@@ -46,7 +61,7 @@ python scripts/devtool.py guest bnu 101 "cd /opt/psvis-tracker && docker compose
 
 ```
 WAHA_API_KEY=      # BNU_WAHA_API_KEY
-GROUP_JID=         # BNU_WHATSAPP_GROUP_JID
+GROUP_JID=         # BNU_PSVIS_GROUP_JID (grupo "Aeronave PS-VIS")
 TEST_GROUP_JID=    # SMOKETESTS_WHATSAPP_GROUP_JID
 ```
 

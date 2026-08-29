@@ -18,6 +18,7 @@ import time
 
 from flask import Flask, jsonify, request, send_from_directory
 
+import db
 import fr24
 import report
 import waha
@@ -32,6 +33,7 @@ SELF_URL = os.environ.get("SELF_URL", "http://psvis-tracker:8000")
 INITIAL_DELAY_S = int(os.environ.get("INITIAL_DELAY_S", "120"))
 RETRY_S = int(os.environ.get("RETRY_S", "60"))
 MAX_TRIES = int(os.environ.get("MAX_TRIES", "10"))
+SYNC_INTERVAL_S = int(os.environ.get("SYNC_INTERVAL_S", "21600"))  # 6 h
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 CHARTS_DIR = os.path.join(DATA_DIR, "charts")
 LAST_FILE = os.path.join(DATA_DIR, "last_reported")
@@ -74,6 +76,10 @@ def _run_report(flight_id, jid, force, fallback_text=""):
                 return
             flight = fr24.playback(fid)
             stats = report.compute_stats(flight)  # raises while track is short
+            try:  # flight log first — a WAHA hiccup must not lose the record
+                db.store_flight(flight, stats)
+            except Exception:
+                log.warning("flight log store failed for %s", fid, exc_info=True)
             png = report.build_report_image(stats)  # profile chart + route map
             with open(os.path.join(CHARTS_DIR, f"{fid}.png"), "wb") as fh:
                 fh.write(png)
@@ -113,6 +119,47 @@ def report_endpoint():
     return jsonify(status="accepted", flight_id=flight_id, test=test), 202
 
 
+def _sync_history(limit=15):
+    """Pull the FR24 flight list for REG and log any completed flight not yet
+    stored. Catches BOTH directions (outbound legs never land at Blumenau, so
+    the landing hook alone would miss them) and self-heals missed flights."""
+    stored = 0
+    for entry in fr24.list_flights(REG, limit=limit):
+        fid = (entry.get("identification") or {}).get("id")
+        arr = ((entry.get("time") or {}).get("real") or {}).get("arrival")
+        if not fid or not arr or db.has_flight(fid):
+            continue
+        try:
+            flight = fr24.playback(fid)
+            db.store_flight(flight, report.compute_stats(flight), list_entry=entry)
+            stored += 1
+            log.info("history sync: stored flight %s", fid)
+        except Exception as exc:  # noqa: BLE001 — one bad flight must not stop the sweep
+            log.warning("history sync: %s failed: %s", fid, exc)
+    return stored
+
+
+def _sync_loop():
+    while True:
+        try:
+            _sync_history()
+        except Exception as exc:  # noqa: BLE001
+            log.warning("history sync sweep failed: %s", exc)
+        time.sleep(SYNC_INTERVAL_S)
+
+
+@app.post("/backfill")
+def backfill_endpoint():
+    limit = int((request.get_json(silent=True) or {}).get("limit", 15))
+    stored = _sync_history(limit)
+    return jsonify(stored=stored, total=db.count_flights())
+
+
+@app.get("/flights")
+def flights_endpoint():
+    return jsonify(db.list_flights(int(request.args.get("limit", 20))))
+
+
 @app.get("/charts/<path:name>")
 def charts(name):
     return send_from_directory(CHARTS_DIR, name)
@@ -120,8 +167,14 @@ def charts(name):
 
 @app.get("/health")
 def health():
-    return jsonify(status="ok", reg=REG, charts=len(glob.glob(os.path.join(CHARTS_DIR, "*.png"))))
+    return jsonify(
+        status="ok",
+        reg=REG,
+        charts=len(glob.glob(os.path.join(CHARTS_DIR, "*.png"))),
+        flights=db.count_flights(),
+    )
 
 
 if __name__ == "__main__":
+    threading.Thread(target=_sync_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=8000)

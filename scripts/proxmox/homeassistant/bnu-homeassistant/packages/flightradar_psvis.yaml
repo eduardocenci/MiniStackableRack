@@ -2,8 +2,8 @@
 # PS-VIS Flight Alerts — bnu-homeassistant
 # Deploy to: /config/packages/flightradar_psvis.yaml
 #
-# Sends a WhatsApp message to the Casa Blumenau group when aircraft PS-VIS departs
-# from or lands at Blumenau Regional Airport (BNU / SSBL).
+# Sends a WhatsApp message to the "Aeronave PS-VIS" group when aircraft PS-VIS
+# departs from or lands at Blumenau Regional Airport (BNU / SSBL).
 #
 # HOW IT WORKS
 #   The Flightradar24 integration (AlexandrErohin, v1.34.x) fires HA bus events when
@@ -28,7 +28,7 @@
 #   take-offs/landings by relaxing the `at_blumenau` variable below.
 #
 # Reuses rest_command.send_whatsapp_bnu (defined in family_presence.yaml — rest_commands
-# are global) and !secret whatsapp_group_jid.
+# are global) and !secret psvis_group_jid.
 #
 # MESSAGE OVERVIEW (2026-08-29)
 #   The event dict carries much more than the city: real departure/arrival epochs,
@@ -235,11 +235,11 @@ automation:
                 then:
                   - service: rest_command.send_whatsapp_bnu
                     data:
-                      jid: !secret whatsapp_group_jid
+                      jid: !secret psvis_group_jid
                       message: "{{ message }}"
         default:
           # Take-off: immediate plain text, as before.
           - service: rest_command.send_whatsapp_bnu
             data:
-              jid: !secret whatsapp_group_jid
+              jid: !secret psvis_group_jid
               message: "{{ message }}"
