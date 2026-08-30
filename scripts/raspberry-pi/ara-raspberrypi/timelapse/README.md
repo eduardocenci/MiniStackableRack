@@ -106,6 +106,11 @@ script); para exercitar a captura fora do expediente use `docker exec
 canteiro-timelapse timelapse-capture pos2test` (mexe a câmera!) ou um grab
 ffmpeg direto do relay.
 
+Lição operacional (30/08/2026): sessão manual de calibração/testes SEM
+tracking ativo (domingo) acumulou ~5% de tilt após 3 vai-e-voltas — sempre
+encerrar comparando um snap com a referência da guarda e corrigindo com
+nudge antes de sair (o guard-return só zera com gente rastreada na obra).
+
 Premissas a vigiar nas primeiras semanas: (1) enquadramento estável entre
 dias em `posicao1/` — se variar, o guard-return não está confiável e o
 fallback é montar com `lentefixa/`; (2) acúmulo de resíduo nas principais de
