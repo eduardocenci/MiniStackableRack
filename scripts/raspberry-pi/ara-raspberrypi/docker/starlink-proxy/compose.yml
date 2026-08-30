@@ -1,0 +1,17 @@
+# starlink-proxy — Starlink dish gRPC API bridged onto the tailnet.
+#
+# The dish (192.168.100.1:9200, no auth) is reachable only from the house
+# LAN; this relay makes it `ara-raspberrypi:9200` so globalnet (bnu Pi) can
+# read live WAN throughput + dish power draw for the ARA dashboard card
+# (env ARA_STARLINK_GRPC — see globalnet runbooks/monitoring). Same shape
+# as dvrip-bridge: pinned alpine/socat, host networking.
+#
+# Authoritative copy: scripts/raspberry-pi/ara-raspberrypi/docker/starlink-proxy/
+# Live copy:          ara-raspberrypi:~/starlink-proxy/
+services:
+  starlink-proxy:
+    image: alpine/socat:1.8.0.3   # pinned; entrypoint is socat, command = its args
+    container_name: starlink-proxy
+    network_mode: host   # listen on all interfaces incl. the tailnet IP
+    restart: unless-stopped
+    command: TCP-LISTEN:9200,fork,reuseaddr TCP:192.168.100.1:9200

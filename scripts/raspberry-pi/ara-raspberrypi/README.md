@@ -7,7 +7,7 @@ site**, but since 2026-08-26 it IS a dashboard site: registered in
 `globalnet/architecture.yaml` as `home: true` (nodes `ara_rpi`/`ara_nto` +
 camera/router probes; `make fleet` audits this Pi like the rack ones —
 decisão Eduardo). Since 2026-08-29 **every service here is a Docker
-container** (five: netoverview + the four in [`docker/`](docker/); the old
+container** (six: netoverview + the five in [`docker/`](docker/); the old
 systemd units stay on the Pi disabled, as rollback for one wave). Only
 netoverview self-updates via the 5-min pull cron with prune (see
 [`../README.md`](../README.md)) — the other four are local builds or
@@ -26,7 +26,8 @@ pinned images, updated deliberately.
 | Device | Address | Notes |
 |---|---|---|
 | Intelbras iM9+ Full Color ("iM9 M Full Color-9411", model iM9-M) | `192.168.1.56` | Dual-lens site camera: RTSP channel 1 = **PT lens** (motorized, auto-tracking — aim it with [`ptz/`](ptz/)), channel 2 = fixed lens. RTSP always on at `:554` (Digest, user `admin`, password = the **Device Password** set in the Mibo app, `.env` `ARA_CANTEIRO_CAM_KEY`). ONVIF on `:80`. DHCP lease — pin a reservation in the Starlink app if it drifts. |
-| Starlink router | `192.168.1.1` | House LAN gateway |
+| Starlink router | `192.168.1.1` | House LAN gateway. Local gRPC `:9000` (client names — [`starlink-names/`](starlink-names/)) |
+| Starlink dish | `192.168.100.1` | Behind the router. Local gRPC `:9200` (no auth): live throughput, latency, power draw, obstruction — relayed to the tailnet as `ara-raspberrypi:9200` by [`docker/starlink-proxy/`](docker/starlink-proxy/) |
 
 ### iM9 ONVIF event/stream facts (probed live 2026-08-26, fw 2.800.00IB00N.0.R)
 
@@ -83,3 +84,4 @@ pinned images, updated deliberately.
 | [`timelapse/`](timelapse/) | `canteiro-timelapse` container ([`docker/canteiro-timelapse/`](docker/canteiro-timelapse/), supercronic in America/Sao_Paulo): daily construction-timelapse frames off the local relay — 8 solar windows (sunrise T…T+20 + sunset T−20…T+20, NOAA per day), each shot from THREE PT positions — guard (`posicao1/`) plus two dead-reckoned calibrated framings, right (`posicao2/`) and left (`posicao3/`, mirror; burst recipes via `canteiro-ptz`, all LAN-local) — plus the fixed-lens twin (`lentefixa/`); worker-presence frames every 15 min 07:00–18:00 (`trabalho/`) → 20:00 `rclone move` to Google Drive `CeuAzul/Timelapse/` **plus an upload-on-container-start catch-up** (replaces the old timer's `Persistent=true` after shed power cuts), deleting local copies on confirmed transfer (AI ground-truth for build progress; see home-ara CLAUDE.md) |
 | [`starlink-names/`](starlink-names/) | `starlink-names` container ([`docker/starlink-names/`](docker/starlink-names/), 5 min): Starlink router gRPC `wifi_get_clients` → auto-nickname new devices in netoverview with the names the Starlink app shows; never overwrites manual renames. Display-only (presence report names) — the bnu HA Frigate gate suppresses on ANY non-fixed device online |
 | [`docker/dvrip-bridge/`](docker/dvrip-bridge/) | socat container (alpine/socat pinned): bridges the camera's DVRIP port `37777` onto the tailnet (`ara-raspberrypi:37777` → `192.168.1.56:37777`) |
+| [`docker/starlink-proxy/`](docker/starlink-proxy/) | socat container (alpine/socat pinned): bridges the Starlink **dish** gRPC API onto the tailnet (`ara-raspberrypi:9200` → `192.168.100.1:9200`) — globalnet reads live WAN throughput + dish watts from it for the ARA dashboard card |
