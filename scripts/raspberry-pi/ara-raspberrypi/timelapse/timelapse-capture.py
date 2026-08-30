@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """timelapse-capture — daily construction-timelapse frames of the ARA canteiro.
 
-Runs ENTIRELY on ara-raspberrypi (systemd timers, see *.timer next to this
-file): frame grabs hit the LOCAL mediamtx relay (127.0.0.1:8554) and PTZ
-moves go from the Pi to the camera over the house LAN via `canteiro-ptz` —
-internet (Starlink) is only involved in the 20:00 rclone upload, never in
-capture or movement.
+Runs ENTIRELY on ara-raspberrypi (supercronic inside the canteiro-timelapse
+container — see ../docker/canteiro-timelapse/; until 2026-08-29 it was four
+systemd timers): frame grabs hit the LOCAL mediamtx relay (127.0.0.1:8554)
+and PTZ moves go from the Pi to the camera over the house LAN via
+`canteiro-ptz` — internet (Starlink) is only involved in the 20:00 rclone
+upload, never in capture or movement.
 
   canteiro      = PT lens   (channel 1 — auto-tracking; the firmware returns
                   it to the guard position ~1 min after losing a tracked
@@ -16,10 +17,12 @@ capture or movement.
 Grabs are keyframe-only (-skip_frame nokey): HEVC mid-GOP grabs from the
 relay produce gray garbage (see ../ptz/README.md).
 
-Drive/outbox layout (decisão Eduardo 27/08/2026):
+Drive/outbox layout (decisão Eduardo 27/08/2026; posicao3 added 30/08/2026):
   posicao1/<janela>/YYYY-MM-DD_HHMM.jpg   PT lens at the guard (main, T+0:00)
-  posicao2/<janela>/...                   PT lens at the calibrated secondary
-                                          position (T+0:40)
+  posicao2/<janela>/...                   PT lens panned RIGHT (calibrated,
+                                          ~T+0:40)
+  posicao3/<janela>/...                   PT lens panned LEFT (mirror of
+                                          posicao2, ~T+2:00)
   lentefixa/<janela>/...                  fixed lens, shot with the main
   trabalho/YYYY-MM/...                    presence log, every 15 min 07:00-18:00
 
@@ -27,23 +30,26 @@ Drive/outbox layout (decisão Eduardo 27/08/2026):
 and por-do-sol-menos-20min / -menos-10min / por-do-sol / -mais-10min /
 -mais-20min.
 
-Posição 2 is dead-reckoned from the guard with the burst RECIPE calibrated by
-Eduardo on 27/08/2026 — this firmware has no usable ONVIF presets
+Posições 2 and 3 are dead-reckoned from the guard with burst RECIPES
+calibrated by Eduardo (pos2 27/08/2026, pos3 = mirror to the other side
+30/08/2026) — this firmware has no usable ONVIF presets
 (MaximumNumberOfPresets=0, GetStatus lies; ../ptz/README.md), but every
 excursion starts from the same guard position, so replaying the exact bursts
-reproduces the framing. After the posicao2 shot the mirrored reverse recipe
-walks the lens back (residual ±3-4% per round trip; the firmware guard-return
-wipes it at the first tracked person of the day).
+reproduces the framing. After each shot the mirrored reverse recipe walks
+the lens back to the guard (residual ±3-4% per round trip; the firmware
+guard-return wipes it at the first tracked person of the day).
 
 Subcommands
   trabalho   one PT frame -> outbox/trabalho/YYYY-MM/
   sunset     today's sunset windows T-20 T-10 T T+10 T+20 (NOAA, coords of
              the Céu Azul aerodrome 26°33'41"S 48°41'46"W, UTC-3 fixed);
-             per window: posicao1 + lentefixa, wait 30 s, RECIPE, posicao2,
-             reverse. Timer at 16:40 covers the earliest T-20 (17:09, June).
-  sunrise    same for the sunrise windows T T+10 T+20; timer at 05:00 covers
-             the earliest sunrise of the year (~05:15, December).
-  pos2test   RECIPE -> snap to /tmp/pos2test.jpg -> reverse, no outbox
+             per window: posicao1 + lentefixa, wait 30 s, then for each of
+             posicao2/posicao3: recipe -> shot -> reverse. The 16:40 start
+             covers the earliest T-20 (17:09, June).
+  sunrise    same for the sunrise windows T T+10 T+20; the 05:00 start
+             covers the earliest sunrise of the year (~05:15, December).
+  pos2test / pos3test
+             recipe -> snap to /tmp/pos<N>test.jpg -> reverse, no outbox
              writes — health/re-calibration check.
 """
 import math
@@ -77,11 +83,14 @@ SUNRISE_WINDOWS = [
     (20, "nascer-do-sol-mais-20min"),
 ]
 
-# Posição 2: burst recipe from the guard (calibrated by Eduardo, 27/08/2026).
-# Replayed as the EXACT sequence — motor ramps make 2x0.5s != 1x1.0s. The
-# reverse is the mirrored sequence with inverted signs. +vx pans right,
-# +vy tilts up.
-RECIPE = [(0.4, 0.0, 0.5), (0.4, 0.0, 0.5), (0.0, 0.4, 0.2)]
+# Burst recipes from the guard (pos2 calibrated 27/08/2026, pos3 = mirror to
+# the other side 30/08/2026 — Eduardo). Replayed as the EXACT sequence —
+# motor ramps make 2x0.5s != 1x1.0s. The reverse is the mirrored sequence
+# with inverted signs. +vx pans right, +vy tilts up.
+RECIPES = [
+    ("posicao2", [(0.4, 0.0, 0.5), (0.4, 0.0, 0.5), (0.0, 0.4, 0.2)]),
+    ("posicao3", [(-0.4, 0.0, 0.5), (-0.4, 0.0, 0.5), (0.0, 0.4, 0.2)]),
+]
 SECONDARY_DELAY_S = 30   # wait after the main shots before moving
 SETTLE_S = 2             # settle after arriving, before shooting
 
@@ -172,10 +181,10 @@ def ptz_move(vx, vy, dur):
     return ok
 
 
-def goto_secondary():
-    """Walk to posição 2; returns the bursts actually executed (for reversal)."""
+def goto_secondary(recipe):
+    """Walk a recipe from the guard; returns the bursts executed (for reversal)."""
     done = []
-    for vx, vy, dur in RECIPE:
+    for vx, vy, dur in recipe:
         if not ptz_move(vx, vy, dur):
             break
         done.append((vx, vy, dur))
@@ -219,25 +228,27 @@ def run_windows(T, windows, label):
         if not grab(RELAY_PT, f"posicao1/{folder}/{stamp}.jpg"):
             failures += 1
         grab(RELAY_FIXA, f"lentefixa/{folder}/{stamp}.jpg")
-        # posição 2: move, shoot, walk back — camera parks at the guard again
+        # posições 2 e 3: move, shoot, walk back — camera ends at the guard
         time.sleep(SECONDARY_DELAY_S)
-        done = goto_secondary()
-        if len(done) == len(RECIPE):
-            stamp2 = datetime.now().strftime("%Y-%m-%d_%H%M")
-            if not grab(RELAY_PT, f"posicao2/{folder}/{stamp2}.jpg"):
+        for pos_name, recipe in RECIPES:
+            done = goto_secondary(recipe)
+            if len(done) == len(recipe):
+                stamp2 = datetime.now().strftime("%Y-%m-%d_%H%M")
+                if not grab(RELAY_PT, f"{pos_name}/{folder}/{stamp2}.jpg"):
+                    failures += 1
+            else:
+                print(f"{pos_name} {folder} skipped (incomplete move)", file=sys.stderr)
                 failures += 1
-        else:
-            print(f"posicao2 {folder} skipped (incomplete move)", file=sys.stderr)
-            failures += 1
-        back_to_guard(done)
+            back_to_guard(done)
     return 0 if failures == 0 else 1
 
 
-def cmd_pos2test():
-    done = goto_secondary()
-    ok = len(done) == len(RECIPE) and _grab_abs(RELAY_PT, "/tmp/pos2test.jpg")
+def cmd_postest(pos_name):
+    recipe = dict(RECIPES)[pos_name]
+    done = goto_secondary(recipe)
+    ok = len(done) == len(recipe) and _grab_abs(RELAY_PT, f"/tmp/{pos_name}test.jpg")
     back_to_guard(done)
-    print("pos2test:", "ok -> /tmp/pos2test.jpg" if ok else "FAILED")
+    print(f"{pos_name} test:", f"ok -> /tmp/{pos_name}test.jpg" if ok else "FAILED")
     return 0 if ok else 1
 
 
@@ -250,7 +261,9 @@ def main():
     if cmd == "sunrise":
         return run_windows(sunrise_minutes(date.today()), SUNRISE_WINDOWS, "sunrise")
     if cmd == "pos2test":
-        return cmd_pos2test()
+        return cmd_postest("posicao2")
+    if cmd == "pos3test":
+        return cmd_postest("posicao3")
     print(__doc__)
     return 2
 

@@ -23,7 +23,9 @@ mesmo dia):
 CeuAzul/Timelapse/
 ├── posicao1/<janela>/        YYYY-MM-DD_HHMM.jpg — lente PT na GUARDA
 │                             (foto principal de cada janela, T+0:00)
-├── posicao2/<janela>/        lente PT na POSIÇÃO 2 calibrada (T+0:40)
+├── posicao2/<janela>/        lente PT na POSIÇÃO 2 (direita, ~T+0:40)
+├── posicao3/<janela>/        lente PT na POSIÇÃO 3 (esquerda, espelho da
+│                             posição 2, ~T+2:00)
 ├── lentefixa/<janela>/       lente fixa, disparada junto da principal
 └── trabalho/YYYY-MM/         lente PT na guarda, 07:00–18:00 a cada
                               15 min — presença (25 min até 26/08/2026)
@@ -38,18 +40,20 @@ as coordenadas do aeródromo Céu Azul — 26°33'41"S 48°41'46"W, UTC−3 fixo
 `trabalho/` contém imagens de trabalhadores: manter a pasta **não
 compartilhada** no Drive (uso interno de gestão da obra).
 
-## Posição 2 (dead-reckoning calibrado)
+## Posições 2 e 3 (dead-reckoning calibrado)
 
 Este firmware não tem preset ONVIF ([`../ptz/README.md`](../ptz/README.md)),
 mas toda excursão parte da guarda — replayar a MESMA sequência de bursts
-reproduz o enquadramento. Receita calibrada por Eduardo em 27/08/2026
-(`RECIPE` no script): `direita 0.4×0.5s → direita 0.4×0.5s → cima 0.4×0.2s`;
-volta = espelho com sinais invertidos. Fluxo por janela solar: principal
-(posicao1 + lentefixa) → 30 s → receita → foto posicao2 → reverso. Resíduo
-±3–4% por ciclo; o guard-return do firmware zera no primeiro
-trabalhador rastreado do dia (o retorno automático NÃO dispara após
-movimento manual — sondado 27/08/2026, 95 s parado). Health-check:
-`timelapse-capture pos2test` (foto em /tmp, sem tocar o outbox). Os
+reproduz o enquadramento. Receitas calibradas por Eduardo (`RECIPES` no
+script): **posição 2** (27/08/2026) `direita 0.4×0.5s ×2 → cima 0.4×0.2s`;
+**posição 3** (30/08/2026) = espelho para o outro lado, `esquerda 0.4×0.5s
+×2 → cima 0.4×0.2s`; volta = espelho com sinais invertidos. Fluxo por
+janela solar: principal (posicao1 + lentefixa) → 30 s → receita 2 → foto →
+reverso → receita 3 → foto → reverso. Resíduo ±3–4% por ciclo; o
+guard-return do firmware zera no primeiro trabalhador rastreado do dia (o
+retorno automático NÃO dispara após movimento manual — sondado 27/08/2026,
+95 s parado). Health-check: `timelapse-capture pos2test` / `pos3test`
+(foto em /tmp do container, sem tocar o outbox; mexem a câmera). Os
 movimentos saem do próprio Pi pela LAN — internet não participa da captura.
 
 ## Agendas (container `canteiro-timelapse` desde 2026-08-29)
@@ -61,9 +65,9 @@ seguem no Pi desabilitados como rollback por uma onda):
 
 | Entrada do crontab | Agenda | Faz |
 |---|---|---|
-| `timelapse-capture sunrise` | 05:00 (cobre o nascer mais cedo do ano, ~05:15 dez) | dorme até cada janela; posicao1 + lentefixa + posicao2 ×3 |
+| `timelapse-capture sunrise` | 05:00 (cobre o nascer mais cedo do ano, ~05:15 dez) | dorme até cada janela; posicao1 + lentefixa + posicao2 + posicao3 ×3 |
 | `timelapse-capture trabalho` | 07:00–18:00, a cada 15 min (45×/dia) | 1 frame PT → `outbox/trabalho/` |
-| `timelapse-capture sunset` | 16:40 (cobre o T−20 mais cedo do ano, 17:09 jun) | dorme até cada janela; posicao1 + lentefixa + posicao2 ×5 |
+| `timelapse-capture sunset` | 16:40 (cobre o T−20 mais cedo do ano, 17:09 jun) | dorme até cada janela; posicao1 + lentefixa + posicao2 + posicao3 ×5 |
 | `rclone move …` | 20:00 diário **+ na partida do container** | `rclone move outbox → ceuazul:Timelapse` |
 
 O upload na partida do container (entrypoint) substitui o `Persistent=true`
