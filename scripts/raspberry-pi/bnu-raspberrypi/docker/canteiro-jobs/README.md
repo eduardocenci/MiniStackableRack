@@ -5,7 +5,7 @@ systemd timers on 2026-08-29 (decisão Eduardo):
 
 | Container | Schedule | What it does |
 |---|---|---|
-| `canteiro-watchdog` | 60 s loop (shell loop, script stays a oneshot) | WhatsApp alert with the last cached frame when the ARA canteiro relay drops; recovery message when it returns |
+| `canteiro-watchdog` | 60 s loop (shell loop, script stays a oneshot) | WhatsApp alert with the last cached frame when the ARA canteiro relay drops; recovery message when it returns. Also auto-heals the /live HLS wedge: relay up + muxer crash-looping → restarts go2rtc then canteiro-hls via the mounted docker socket (`group_add` 984 = host `docker` group), notes to the SmokeTests group (`HEAL_JID`) |
 | `canteiro-presenca` | supercronic, daily 20:00 America/Sao_Paulo | "who was at the obra today" report from ara netoverview `/api/presence` |
 | `canteiro-sunset-compare` | supercronic, Mon–Fri 20:10 America/Sao_Paulo | yesterday-vs-today sunset montage (rclone ⇄ Drive, ffmpeg vstack), archived to Drive + sent to WhatsApp |
 
@@ -56,6 +56,10 @@ python scripts/devtool.py run bnu-raspberrypi "docker exec canteiro-watchdog pyt
 python scripts/devtool.py run bnu-raspberrypi "docker exec canteiro-presenca python3 /app/canteiro-presenca.py --test"
 python scripts/devtool.py run bnu-raspberrypi "docker exec canteiro-sunset-compare python3 /app/canteiro-sunset-compare.py --test"
 ```
+
+`--heal-now` (watchdog) restarts go2rtc + canteiro-hls for real and notes to
+`HEAL_JID` (SmokeTests) — it is the /live wedge remedy as a command, safe to
+run any time at the cost of ~5 s of Frigate reconnect.
 
 (`--test`/`--test-alert` default to the SmokeTests `TEST_JID` for presenca and
 sunset-compare, but the watchdog's flag defaults to the REAL group — always

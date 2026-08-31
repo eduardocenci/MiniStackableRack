@@ -22,10 +22,14 @@ services:
     env_file: env/canteiro-watchdog.env
     environment:
       STATE_DIRECTORY: /var/lib/canteiro-watchdog
+    group_add:
+      - "984"   # host 'docker' group — the /live auto-heal restarts
+                # go2rtc + canteiro-hls through the socket below
     volumes:
       # same state dir the systemd unit used — state.json + lastframe.jpg
       # survive the migration, and rollback to the timer needs no re-seed
       - /var/lib/canteiro-watchdog:/var/lib/canteiro-watchdog
+      - /var/run/docker.sock:/var/run/docker.sock
     # the script stays a oneshot; the 60 s cadence of the old timer lives here
     command: ["/bin/sh", "-c", "while true; do python3 /app/canteiro-watchdog.py; sleep 60; done"]
 

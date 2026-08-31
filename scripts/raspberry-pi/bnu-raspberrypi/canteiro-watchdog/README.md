@@ -23,6 +23,39 @@ TCP connect em `100.66.255.82:8554` (tailnet IP do ara-raspberrypi — o
 MagicDNS não importa aqui; testa Pi + mediamtx de uma vez). Horários das
 mensagens em `America/Sao_Paulo` (o relógio deste Pi está em BST).
 
+## Auto-heal do /live (2026-08-31)
+
+O go2rtc sobrevive às reconexões do produtor (quedas da Starlink) mas o
+restream sai com timestamps que o mediamtx do `canteiro-hls` não engole —
+o muxer entra em crash-loop (`muxer error: sample timestamp is impossible
+to handle`) e **nunca se recupera sozinho** (incidente 29→31/08/2026:
+1658 crashes, `/live` morto 2 dias, Frigate normal o tempo todo — o ffmpeg
+tolera os saltos, o muxer HLS não). Reiniciar só o canteiro-hls NÃO
+destrava (provado 2x); o remédio é reiniciar **go2rtc e DEPOIS
+canteiro-hls**.
+
+O watchdog agora aplica esse remédio: a cada tick com o **relay em pé**,
+considera o /live travado se a playlist
+(`http://127.0.0.1:8888/canteiro/index.m3u8?cookieCheck=1`) não devolver
+`#EXTM3U` **ou** se o log do canteiro-hls tiver ≥3 linhas ERR de crash nos
+últimos 90 s (lidas pelo socket do Docker — a janela nunca olha para trás
+do último heal). Dois ticks travados seguidos (~2 min) → reinicia os dois
+containers pelo socket (`/var/run/docker.sock` montado no compose,
+`group_add: 984` = grupo `docker` do host). No máximo 2 reinícios por
+episódio; se não resolver, escala e para. Interrupção colateral: o Frigate
+perde ~5 s de gravação na reconexão (aceito, decisão Eduardo 31/08).
+
+Notas de heal/escalação vão a `HEAL_JID` (**Casa SmokeTests** — a família
+não vê nada disso; vazio = só stdout). Tunáveis no env: `HLS_URL`,
+`HLS_FAILS_TO_HEAL` (2), `MAX_HEAL_ATTEMPTS` (2), `HEAL_CONTAINERS`
+(`go2rtc,canteiro-hls`), `DOCKER_SOCK`.
+
+Heal manual (o remédio do runbook em um comando):
+
+```bash
+python scripts/devtool.py run bnu-raspberrypi "docker exec canteiro-watchdog python3 /app/canteiro-watchdog.py --heal-now"
+```
+
 ## Por que não é uma automação no Home Assistant
 
 Sensores de rede no HA (`command_line`/`ping`) exigem editar
@@ -40,7 +73,7 @@ rollback por uma onda, depois somem.
 |---|---|
 | [`canteiro-watchdog.py`](canteiro-watchdog.py) | `~/canteiro-jobs/canteiro-watchdog.py` (COPY no build da imagem) |
 | estado | `/var/lib/canteiro-watchdog/` (bind mount — o mesmo dir da era systemd) |
-| credenciais | `~/canteiro-jobs/env/canteiro-watchdog.env` (600 — WAHA_URL/KEY/SESSION, GROUP_JID, ARA_HOST/PORT, FAILS_TO_ALERT; espelho do `.env` `BNU_WAHA_*`) |
+| credenciais | `~/canteiro-jobs/env/canteiro-watchdog.env` (600 — WAHA_URL/KEY/SESSION, GROUP_JID, ARA_HOST/PORT, FAILS_TO_ALERT, HEAL_JID; espelho do `.env` `BNU_WAHA_*` + `SMOKETESTS_WHATSAPP_GROUP_JID`) |
 
 ## Operar
 
