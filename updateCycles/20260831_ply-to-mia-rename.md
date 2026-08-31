@@ -309,14 +309,16 @@ console rename of 6 pinned machines.
   mia-proxmox, last-verified line), raspberry-pi README stale offline note,
   memory files (site order fln→bg→mia→ara→bnu; backup-posture names).
 
-### Remaining
+### Closed out (~02:00 EDT)
 
-1. **Eduardo: run the `.env` one-liner** (renames PLY_→MIA_ keys + 2 hostname
-   values) → then `devtool.py test all` should be 21/25 (win11-only fails).
-2. Dashboard redeploy verification (DockerHub build + Pi cron, ~10–20 min
-   after push): MIA card green at http://bnu-raspberrypi:5001, `/api/wan-quality`
-   includes `mia`.
-3. Optional/cosmetic follow-ups: PVE node rename ply-proxmox→mia-proxmox
+- Eduardo ran the `.env` one-liner (9 MIA_ keys) → final
+  `devtool.py test all` = **21/25, identical to the pre-migration baseline**
+  (mia-nas SSH OK, mia HA API 200; only the 4 known win11 key-auth fails;
+  one transient bg-proxmox paramiko error, OK on single retry).
+- Dashboard redeploy verified LIVE ~7.5 min after push: `/api/wan-quality`
+  on bnu-raspberrypi:5001 serves `mia` alongside bnu/bg/fln/ara.
+
+**MIGRATION COMPLETE.** Remaining items are optional/cosmetic only: PVE node rename ply-proxmox→mia-proxmox
    (attended; procedure in Phase 1 step 7 above — backups already taken);
    restart mia HA Tailscale add-on so it advertises mia-homeassistant;
    2 comment lines on bnu Pi `.env`; WhatsApp group + UniFi display names

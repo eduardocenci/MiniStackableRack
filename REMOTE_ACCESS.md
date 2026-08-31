@@ -5,10 +5,10 @@ If you are an LLM: read this file, then use `scripts/devtool.py`. Do not try
 several methods until one works — every working method is recorded here, and
 every method *not* listed here has already been tried and failed.
 
-Last verified end-to-end: **2026-08-31** (post ply→mia rename) —
-`python scripts/devtool.py test all` → 19/25: the 4 win11 fails are the known
-fleet-wide key-auth breakage (use the guest agent), the 2 mia fails clear once
-the root `.env` PLY_→MIA_ key rename lands. Full 25/25 baseline: 2026-07-30.
+Last verified end-to-end: **2026-08-31** (post ply→mia rename, `.env` renamed)
+— `python scripts/devtool.py test all` → **21/25**, identical to the
+pre-migration baseline: the only fails are the 4 win11 nodes (known fleet-wide
+key-auth breakage — use the guest agent). Full 25/25 baseline: 2026-07-30.
 
 ---
 
