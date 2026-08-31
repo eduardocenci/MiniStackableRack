@@ -6,7 +6,7 @@ reachable **only from devices on the Tailscale network** — never from the LAN 
 the public internet.
 
 > **Status: DEPLOYED & VERIFIED** (2026-07-12) at `/volume1/docker/copyparty/`
-> on `ply-nas-ds918plus`, serving ALL user shares: `/` = dedicated `copyparty`
+> on `mia-nas-ds918plus`, serving ALL user shares: `/` = dedicated `copyparty`
 > share (uploads; created via `synoshare --add`), plus `/shared`, `/homes`,
 > `/video`, `/NetBackup`, `/Plex`, and `/surveillance` (read-only). Excluded:
 > `PlexMediaServer` (app internals) and `docker` (holds this deploy's secrets).
@@ -14,7 +14,7 @@ the public internet.
 > `ed`, PUT/GET/DELETE round-trip, WebDAV on, anonymous denied, surveillance
 > write-blocked (403).
 
-> **Which NAS:** the `ply-nas-ds918plus` (Synology DS918+, DSM 7.1) in the PLY
+> **Which NAS:** the `mia-nas-ds918plus` (Synology DS918+, DSM 7.1) in the MIA
 > rack — the only Synology NAS in the fleet (see `systemarchitecture.excalidraw`).
 > DSM WebUI on `:5000`; Copyparty adds `:3923`, no conflict. The Docker package
 > ships compose **v1** — the command is `docker-compose`, not `docker compose`.
@@ -34,7 +34,7 @@ so `copyparty.local.conf` overrides `[accounts]` from `copyparty.conf`.
 ## Prerequisites
 
 1. **Tailscale on the NAS** — ✅ done: the NAS is on the tailnet as
-   `ply-nas-ds918plus` (100.110.80.51). If it ever needs reinstalling:
+   `mia-nas-ds918plus` (100.110.80.51). If it ever needs reinstalling:
    Package Center → *Tailscale*, sign in, then `tailscale ip -4`.
 2. **Container Manager** installed (Package Center).
 3. A **shared folder** for the files, e.g. create `copyparty` (or reuse an
@@ -64,9 +64,9 @@ EOF
 #      "Why it's tailnet-only" below), else the NAS 100.x Tailscale IP
 #    - PUID/PGID: from `id <the-dsm-user-that-owns-/volume1/copyparty>`
 cat > .env <<'EOF'
-PLY_COPYPARTY_BIND_IP=127.0.0.1
-PLY_COPYPARTY_PUID=1028
-PLY_COPYPARTY_PGID=100
+MIA_COPYPARTY_BIND_IP=127.0.0.1
+MIA_COPYPARTY_PUID=1028
+MIA_COPYPARTY_PGID=100
 EOF
 
 # 3) start it (DSM Docker package = compose v1, hyphenated command)
@@ -87,12 +87,12 @@ sudo docker-compose logs -f copyparty     # watch it come up
 From any device on the tailnet:
 
 ```
-http://ply-nas-ds918plus.<your-tailnet>.ts.net:3923
+http://mia-nas-ds918plus.<your-tailnet>.ts.net:3923
 ```
 
 or `http://100.110.80.51:3923`. Log in as `ed` with the password from
 `copyparty.local.conf` (mirrored in the repo-root `.env` as
-`PLY_COPYPARTY_PASSWORD`).
+`MIA_COPYPARTY_PASSWORD`).
 
 - **WebDAV:** same URL — mount it in Finder / Windows Explorer / mobile apps.
 - **Mobile:** any WebDAV client, or just the web UI (it's mobile-friendly).
@@ -103,13 +103,13 @@ Synology's Tailscale package runs in **userspace-networking mode** by default:
 there is no `tailscale0` interface, the 100.x IP is not assigned to any NIC
 (binding to it fails with `cannot assign requested address`), and `tailscaled`
 instead **proxies inbound tailnet connections to `127.0.0.1`** on the same port.
-So the container binds `${PLY_COPYPARTY_BIND_IP}` = `127.0.0.1:3923`:
+So the container binds `${MIA_COPYPARTY_BIND_IP}` = `127.0.0.1:3923`:
 
 - tailnet client → `100.110.80.51:3923` → tailscaled → `127.0.0.1:3923` ✓
 - LAN/WAN client → `192.168.0.10:3923` → nothing listening ✗ (by design)
 
 If Tailscale is ever switched to TUN mode (a `tailscale0` interface appears),
-set `PLY_COPYPARTY_BIND_IP` to the NAS's 100.x IP instead. If the var is unset,
+set `MIA_COPYPARTY_BIND_IP` to the NAS's 100.x IP instead. If the var is unset,
 `docker-compose up` fails loudly rather than defaulting to `0.0.0.0` — fail safe.
 
 > **Public access?** Not enabled by design. If you ever want it reachable

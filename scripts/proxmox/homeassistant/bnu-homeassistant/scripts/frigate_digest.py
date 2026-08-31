@@ -40,7 +40,7 @@ from waha import WahaClient  # shared WAHA (WhatsApp HTTP API) client, /config/s
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 HA_URL           = "http://localhost:8123"
-OLLAMA_HOST      = "10.1.1.50"  # bnu-proxmox LAN IP — socat proxy forwards to ply-desktop:11434
+OLLAMA_HOST      = "10.1.1.50"  # bnu-proxmox LAN IP — socat proxy forwards to mia-desktop:11434
 OLLAMA_PORT      = 11434
 OLLAMA_MODEL     = "qwen3-vl:8b"
 # gpt-4.1-mini: vision-capable, NON-reasoning (immune to the thinking-runaway failure mode
@@ -71,7 +71,7 @@ LLM_TIMEOUT      = 600   # seconds — generation can be slow on first call
 # Ollama defaults num_ctx to 4096, which would silently truncate the richer prompt (worst case
 # ~24 events × 350 chars + context/continuity ≈ 4-5k tokens + vision tokens). Raised so the
 # prompt AND the thinking budget fit; scales with the num_predict retry ladder. Costs KV-cache
-# VRAM on ply-desktop — D2 debug stats report prompt_tokens for monitoring.
+# VRAM on mia-desktop — D2 debug stats report prompt_tokens for monitoring.
 OLLAMA_NUM_CTX   = 16384
 # qwen3-vl:8b is a thinking model and Ollama 0.17.7 ignores `think: false`. Thinking tokens
 # count against num_predict, so an unlucky long thinking phase can consume the whole budget

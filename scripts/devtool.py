@@ -19,16 +19,16 @@ Usage (run from anywhere):
   python scripts/devtool.py guest <region> <vmid> <command...>  # run INSIDE a VM/LXC
   python scripts/devtool.py lan <region> <ip-or-name> <cmd|url> # reach a LAN-only device
 
-  <region> = bnu | ply | bg | fln
+  <region> = bnu | mia | bg | fln
   <device> = <region>-<component>, component =
              proxmox | homeassistant | raspberrypi | glkvm | win11 | nas
-             (e.g. bnu-proxmox, ply-raspberrypi, bg-win11, ply-nas)
+             (e.g. bnu-proxmox, mia-raspberrypi, bg-win11, mia-nas)
 
 Examples:
   python scripts/devtool.py test all
   python scripts/devtool.py run bnu-proxmox "qm list"
   python scripts/devtool.py run bg-win11 "Get-Service sshd | Format-List"
-  python scripts/devtool.py run ply-nas "sudo -S docker ps"
+  python scripts/devtool.py run mia-nas "sudo -S docker ps"
   python scripts/devtool.py list bnu
   python scripts/devtool.py guest bnu 101 "docker ps"          # LXC -> pct exec
   python scripts/devtool.py guest bnu 103 "Get-Process | select -First 3"  # VM -> guest agent
@@ -42,8 +42,8 @@ Device facts this tool encodes (do not rediscover these):
   - raspberrypi:    ssh eduardocenci - key auth OK, SFTP OK
   - glkvm:          ssh root         - key auth OK (dropbear), SFTP may fail -> auto fallback
   - win11:          ssh eduardocenci - key auth OK, default shell is PowerShell, NO SFTP
-  - nas:            ssh (PLY_NAS_SSH_LOGIN) - key auth OK; docker needs `sudo -S` with
-                    PLY_NAS_SSH_PW piped in; compose v1 binary is /usr/local/bin/docker-compose
+  - nas:            ssh (MIA_NAS_SSH_LOGIN) - key auth OK; docker needs `sudo -S` with
+                    MIA_NAS_SSH_PW piped in; compose v1 binary is /usr/local/bin/docker-compose
   - homeassistant:  prefer REST API (<REGION>_HA_URL + <REGION>_HA_TOKEN).
                     SSH is the "Advanced SSH & Web Terminal" add-on: user hassio
                     (HA_SSH_PW, password only - NO key auth), port 22, NO SFTP
@@ -81,7 +81,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = REPO_ROOT / ".env"
 KEY_FILE = Path.home() / ".ssh" / "id_ed25519"
 
-REGIONS = ["bnu", "ply", "bg", "fln"]
+REGIONS = ["bnu", "mia", "bg", "fln"]
 COMPONENTS = {
     # component: (login_env_key, password_env_key)
     "proxmox": ("PROXMOX_LOGIN", "PROXMOX_PW"),
@@ -89,12 +89,12 @@ COMPONENTS = {
     "glkvm": ("GLKVM_LOGIN", "GLKVM_PW"),
     "homeassistant": ("HA_SSH_LOGIN", "HA_SSH_PW"),
     "win11": (None, None),          # key auth only; user below
-    "nas": ("PLY_NAS_SSH_LOGIN", "PLY_NAS_SSH_PW"),
+    "nas": ("MIA_NAS_SSH_LOGIN", "MIA_NAS_SSH_PW"),
 }
 # Components whose tailnet hostname is not "<region>-<component>".
 HOSTNAME_OVERRIDES = {"nas": "{region}-nas-ds918plus"}
 # Components that exist only at some sites.
-ONLY_AT = {"nas": ["ply"]}
+ONLY_AT = {"nas": ["mia"]}
 STATIC_USER = {"win11": "eduardocenci"}
 NO_SFTP = {"homeassistant", "win11"}
 SSH_TIMEOUT = 12
@@ -121,7 +121,7 @@ def components_for(region):
 def parse_device(name):
     n = name.lower()
     region = comp = None
-    # tolerate the full tailnet name (ply-nas-ds918plus) and the short alias (ply-nas)
+    # tolerate the full tailnet name (mia-nas-ds918plus) and the short alias (mia-nas)
     for c, tmpl in HOSTNAME_OVERRIDES.items():
         for r in REGIONS:
             if n == tmpl.format(region=r):

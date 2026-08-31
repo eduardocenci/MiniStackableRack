@@ -25,7 +25,7 @@ directory.
 | Check everything is reachable | `devtool.py test all` (or `test bnu`, `test bg-win11`) |
 | Run a command on a device | `devtool.py run bnu-proxmox "qm list"` |
 | Copy a file to a device | `devtool.py push bg-win11 ./x.ps1 C:\temp\x.ps1` |
-| Copy a file from a device | `devtool.py pull ply-raspberrypi /etc/hostname ./h.txt` |
+| Copy a file from a device | `devtool.py pull mia-raspberrypi /etc/hostname ./h.txt` |
 | Home Assistant REST call | `devtool.py ha bnu GET /api/states/sun.sun` |
 | Inventory a rack's VMs/LXCs/containers | `devtool.py list bnu` |
 | Run a command **inside** a VM or LXC | `devtool.py guest bnu 101 "docker ps"` |
@@ -37,7 +37,7 @@ Tailscale is the primary network. Tailnet nodes are named exactly
 `<region>-<component>`, and this machine is itself a node, so **those devices are
 reachable by bare name** (MagicDNS) with no VPN or port forwarding.
 
-- Rack sites: **bnu, ply, bg, fln** (four — docs listing only three are stale).
+- Rack sites: **bnu, mia, bg, fln** (four — docs listing only three are stale).
   Home builds use the same naming (`ara-raspberrypi`) but are not rack sites.
   Personal clients (`cenci-surface9`, `cenci-macbook`, `iphone-…`) don't follow
   the pattern.
@@ -91,7 +91,7 @@ fallback AND `waha_send` group replies both hit it) — then run the pipeline
 with `BNU_WAHA_LISTENER_URL=http://127.0.0.1:18788
 BNU_WAHA_API_URL=http://127.0.0.1:13000` (`finance.config.cfg` lets env vars
 override `.env`). Forwarding only 8788 makes every media fetch hang ~2 min in
-the WAHA fallback before failing (seen 2026-08-26 from ply-desktop). Google
+the WAHA fallback before failing (seen 2026-08-26 from mia-desktop). Google
 Sheets/Drive APIs need no tunnel. Note the Drive-for-Desktop mount and the
 ms365 MCP are NOT available on every machine — a run without them files
 sheet+local archive and leaves Drive uploads/share links as checklist items
@@ -118,22 +118,22 @@ on bnu-raspberrypi):
 | Starlink router | `192.168.1.1` | house LAN gateway (DHCP for the whole `192.168.1.0/24`). **Local gRPC API works** (`192.168.1.1:9000`, reflection on): `grpcurl -plaintext -d '{"wifi_get_clients":{}}' 192.168.1.1:9000 SpaceX.API.Device.Device/Handle` → associated clients with **name+MAC+IP** (what the app shows; `wifi_set_client_given_name` also exists). No local roster of DISCONNECTED clients (that list lives in the Starlink cloud — probed 2026-08-26). `grpcurl` v1.9.1 installed at `/usr/local/bin` on the Pi; the `starlink-names` container syncs these names into netoverview nicknames every 5 min |
 | Starlink dish | `192.168.100.1` | behind the router (any LAN client reaches it). **Local gRPC API works** (`192.168.100.1:9200`, plaintext, no auth, reflection on — probed 2026-08-30): `get_status` = instantaneous down/uplink throughput, pop latency, obstruction, alerts; `get_history` = 900 s of 1 Hz ring buffers (throughput, latency, drop rate, **`powerIn` watts**) + outage event log. **Relayed onto the tailnet as `ara-raspberrypi:9200`** by the `starlink-proxy` socat container (since 2026-08-30) — globalnet reads the ARA live WAN ▼▲ + dish ⚡ from it. Same `Device/Handle` service as the router, different RPCs |
 
-### PLY site specifics (learned 2026-08-26)
+### MIA site specifics (learned 2026-08-26)
 
-- **ply has two LANs with no route between them from the desktop side**: the
-  rack LAN `192.168.0.0/24` (ply-proxmox `.21`, HA VM `.11`, plus the media
-  devices below) and the LAN ply-desktop sits on (`192.168.1.0/24`).
-  ply-desktop cannot ping `192.168.0.x` — reach rack-LAN devices through
-  `ply-proxmox` or ply HA.
-- **ply HA cannot originate connections to the tailnet** (Tailscale add-on is
-  inbound-only): `curl http://100.x…` from inside HA times out. When ply HA
+- **mia has two LANs with no route between them from the desktop side**: the
+  rack LAN `192.168.0.0/24` (mia-proxmox `.21`, HA VM `.11`, plus the media
+  devices below) and the LAN mia-desktop sits on (`192.168.1.0/24`).
+  mia-desktop cannot ping `192.168.0.x` — reach rack-LAN devices through
+  `mia-proxmox` or mia HA.
+- **mia HA cannot originate connections to the tailnet** (Tailscale add-on is
+  inbound-only): `curl http://100.x…` from inside HA times out. When mia HA
   must consume a tailnet service, forward it onto the rack LAN from
-  ply-proxmox — pattern: socket-activated `systemd-socket-proxyd` units, see
-  `scripts/proxmox/ply-proxmox/` (`192.168.0.21:8554/:1984` → `bnu-frigate`,
+  mia-proxmox — pattern: socket-activated `systemd-socket-proxyd` units, see
+  `scripts/proxmox/mia-proxmox/` (`192.168.0.21:8554/:1984` → `bnu-frigate`,
   feeds `camera.frigate_birdseye`).
 - **Rack-LAN media devices** (not in HA `.env`, discovered via pyatv scan +
   HA): Apple TV 4K "Entertainment Room" `192.168.0.247` (tvOS 26.6, AirPlay
-  pairing mandatory; paired with ply HA — credential lives in HA
+  pairing mandatory; paired with mia HA — credential lives in HA
   `core.config_entries`, pyatv protocol key `3`); Samsung QN90F 75"
   `192.168.0.228` (**has a Google Cast receiver**, HA
   `media_player.qn90f9745` — casting to it wakes the TV from standby); Sonos
@@ -162,9 +162,9 @@ so plain `ssh` works non-interactively.
 | Proxmox | `<region>-proxmox` | SSH → web `https://<host>:8006` | `root` | **key**, else `PROXMOX_PW` | SFTP OK. Gateway to all guests (§4) |
 | Home Assistant | `<region>-homeassistant` | **REST API** → SSH add-on → web `:8123` | `hassio` | REST: `<REGION>_HA_TOKEN`; SSH: `HA_SSH_PW` **password only** | Add-on SSH has **no key auth** and **no SFTP**; `/config` needs `sudo` → `push` uses `base64 -d \| sudo tee`. **MagicDNS names do NOT resolve inside HA containers** (add-on shell and core alike, seen 2026-08-26: `ara-raspberrypi` → HTTP 000 while `100.66.255.82` → 200) — scripts under `/config` must use tailnet `100.x` IPs. The add-on shell also lacks `requests`; the core container (where `shell_command` runs) has it — test scripts via `shell_command` + `?return_response`, not the SSH shell |
 | Windows 11 VM | `<region>-win11` | ~~SSH~~ → guest agent (§4) → RDP | `eduardocenci` | ~~key~~ **broken** | **SSH key auth REJECTED on all four win11 VMs since ≤2026-08-28** (paramiko AuthenticationException; no password fallback). Use the QEMU guest agent (`devtool.py guest <site> <vmid>`), which works on all four. Default shell is **PowerShell**. No SFTP — `push`/`pull` go through base64 |
-| Raspberry Pi | `<region>-raspberrypi` | SSH | `eduardocenci` | **key**, else `RASPBERRYPI_PW` | SFTP OK. `sudo` is passwordless on bnu/ply/bg but **asks a password on fln** (seen 2026-08-26, ply confirmed 2026-08-29) — plain `docker` works everywhere (user in `docker` group); for root-only cmds on fln pipe the password: `devtool.ssh_run(dev, "sudo -S <cmd>", input_bytes=(ENV["RASPBERRYPI_PW"]+"\n").encode())` |
+| Raspberry Pi | `<region>-raspberrypi` | SSH | `eduardocenci` | **key**, else `RASPBERRYPI_PW` | SFTP OK. `sudo` is passwordless on bnu/mia/bg but **asks a password on fln** (seen 2026-08-26, mia confirmed 2026-08-29) — plain `docker` works everywhere (user in `docker` group); for root-only cmds on fln pipe the password: `devtool.ssh_run(dev, "sudo -S <cmd>", input_bytes=(ENV["RASPBERRYPI_PW"]+"\n").encode())` |
 | GL-KVM | `<region>-glkvm` | SSH → web `http://<host>` | `root` | **key**, else `GLKVM_PW` | Runs **dropbear**: keys live in `/etc/dropbear/authorized_keys`, not just `~/.ssh`. SFTP may fail → devtool falls back to base64 |
-| Synology NAS | `ply-nas-ds918plus` (alias `ply-nas`) | SSH → DSM web `:5000` | `PLY_NAS_SSH_LOGIN` | **key**, else `PLY_NAS_SSH_PW` | Only at ply. Docker still needs root: `echo $PW \| sudo -S docker …`; compose is v1 at `/usr/local/bin/docker-compose` |
+| Synology NAS | `mia-nas-ds918plus` (alias `mia-nas`) | SSH → DSM web `:5000` | `MIA_NAS_SSH_LOGIN` | **key**, else `MIA_NAS_SSH_PW` | Only at mia. Docker still needs root: `echo $PW \| sudo -S docker …`; compose is v1 at `/usr/local/bin/docker-compose` |
 
 **Rule:** use the highest-priority interface that works, and fall back down the
 list. Never open a browser unless every CLI/API option is exhausted.
@@ -173,14 +173,14 @@ list. Never open a browser unless every CLI/API option is exhausted.
 - `plink` and `sshpass` are **not installed** — do not use them.
 - OpenSSH (`ssh`, via Git Bash) works for key auth; **paramiko** (installed) is
   the only way to do non-interactive password auth. `devtool.py` handles both.
-- **Key auth to `bnu-proxmox` AND `bnu-raspberrypi` FAILS from ply-desktop**
+- **Key auth to `bnu-proxmox` AND `bnu-raspberrypi` FAILS from mia-desktop**
   (2026-08-26: plain `ssh` → "Permission denied (publickey,password)" — the
   pubkey is not in their authorized_keys; `ara-raspberrypi` accepts it).
   `devtool.py` still reports OK because paramiko silently falls back to
   `PROXMOX_PW`/`RASPBERRYPI_PW`. Re-authorize the key or keep using the
   password path; `ssh -L` tunnels need the paramiko forwarder (§2).
 - Finance-pipeline Python deps (`gspread`, `google-api-python-client`, `msal`,
-  `faster-whisper`) installed on ply-desktop 2026-08-26 — local finance/ingest
+  `faster-whisper`) installed on mia-desktop 2026-08-26 — local finance/ingest
   runs work here, but this machine has NO Drive-for-Desktop mount (no `G:`)
   and no ms365 MCP: Drive uploads and OneDrive share links defer to a
   mounted/Graph-capable run.
@@ -223,16 +223,16 @@ list. Never open a browser unless every CLI/API option is exhausted.
 - **Parallel devtool SSH to the same Proxmox host** can throw paramiko
   "Error reading SSH protocol banner" — serialize connections per host and
   retry (seen 2026-08-28 on bnu/bg-proxmox).
-- `ply-raspberrypi` and `ply-nas-ds918plus` were powered off earlier on
+- `mia-raspberrypi` and `mia-nas-ds918plus` were powered off earlier on
   2026-08-28 (SSH timeouts); Eduardo turned them back on the same evening and
-  both are reachable again — a ply timeout means power/network at the site,
+  both are reachable again — a mia timeout means power/network at the site,
   not a method regression.
 - **Long-running `ha` CLI ops (core/OS update) outlive the SSH channel** — the
   channel recv-times-out after ~2 min while the Supervisor keeps working.
   Fire-and-poll: launch the op, then poll `ha core info` / Supervisor issues
   from fresh connections. For HAOS specifically, never `ha host reboot` until
   the Supervisor raises its `reboot_required` issue (slow WANs stage the OTA
-  late — seen at ply 2026-08-28). After any HA host reboot the Supervisor
+  late — seen at mia 2026-08-28). After any HA host reboot the Supervisor
   blocks add-on/OS ops for ~5 min ("system is not running - startup").
 - **apt on hosts/Pis: always a detached `systemd-run --unit=...`** so SSH drops
   or an upgraded sshd can't kill dpkg mid-run; monitors must use piped
@@ -287,7 +287,7 @@ Current guest inventory (2026-07-30):
 | Rack | VMs | LXCs |
 |---|---|---|
 | bnu | 100 homeassistant, 102 ubuntu (stopped), 103 Win11 | 101 docker, 104 watchyourlan (stopped), 105 frigate, 106 ollama (stopped) |
-| ply | 100 ply-homeassistant, 101 Win11 | — |
+| mia | 100 mia-homeassistant, 101 Win11 | — |
 | bg | 100 haos, 101 ubuntu, 103 Win11 | 102 plex |
 | fln | 100 haos, 103 Win11 | — |
 
@@ -299,7 +299,7 @@ structure with placeholders and must be kept in sync.
 - **Shared-by-device-type keys are unprefixed** and sit in a `COMMON` section:
   `PROXMOX_LOGIN/PW`, `RASPBERRYPI_LOGIN/PW`, `GLKVM_LOGIN/PW`, `HA_SSH_LOGIN/PW`.
   The same credential works on that device type at every site.
-- **Site-specific keys are region-prefixed**: `BNU_`, `PLY_`, `BG_`, `FLN_`
+- **Site-specific keys are region-prefixed**: `BNU_`, `MIA_`, `BG_`, `FLN_`
   (e.g. `BNU_HA_TOKEN`). ARA (the house build) has its own section.
 - Do not guess key names from the region convention alone — the most basic
   logins are in the unprefixed COMMON section.

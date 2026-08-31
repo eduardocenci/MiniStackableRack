@@ -44,7 +44,7 @@ input_select:
     name: "Digest LLM"
     icon: mdi:robot
     options:
-      - "Ollama (local)"        # ply-desktop qwen3-vl:8b — free
+      - "Ollama (local)"        # mia-desktop qwen3-vl:8b — free
       - "OpenAI (cloud)"        # gpt-4o — billed
       - "Both"                  # run both; log comparison; send Ollama narrative
     # No `initial:` — restores the last selected LLM across restarts.

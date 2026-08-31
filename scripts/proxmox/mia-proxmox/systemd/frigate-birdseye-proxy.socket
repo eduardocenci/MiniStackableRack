@@ -1,0 +1,8 @@
+[Unit]
+Description=Rack-LAN :8554 -> bnu-frigate RTSP (mia HA cannot originate to the tailnet)
+
+[Socket]
+ListenStream=192.168.0.21:8554
+
+[Install]
+WantedBy=sockets.target

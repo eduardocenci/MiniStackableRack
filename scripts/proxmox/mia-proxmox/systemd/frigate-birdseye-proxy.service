@@ -1,0 +1,7 @@
+[Unit]
+Description=Proxy to bnu-frigate RTSP :8554 (birdseye stream for mia HA / Apple TV)
+Requires=frigate-birdseye-proxy.socket
+After=network-online.target
+
+[Service]
+ExecStart=/lib/systemd/systemd-socket-proxyd --exit-idle-time=5min 100.116.190.49:8554

@@ -51,7 +51,7 @@ from waha import WahaClient  # shared WAHA (WhatsApp HTTP API) client, /config/s
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 HA_URL           = "http://localhost:8123"
-OLLAMA_HOST      = "10.1.1.50"  # bnu-proxmox LAN IP — socat proxy forwards to ply-desktop:11434
+OLLAMA_HOST      = "10.1.1.50"  # bnu-proxmox LAN IP — socat proxy forwards to mia-desktop:11434
 OLLAMA_PORT      = 11434
 OLLAMA_MODEL     = "qwen3-vl:8b"
 OPENAI_MODEL     = "gpt-4.1-mini"  # vision-capable, NON-reasoning — immune to the thinking runaway

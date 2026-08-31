@@ -50,3 +50,11 @@ If the crontab is ever rewritten, keep **both** lines: the netoverview pull
 line was found missing on 2026-08-24 (presumably clobbered when the
 globalnet line was installed), which had left the netoverview container
 7 weeks stale.
+
+The user crontab is the **only** auto-update mechanism on this Pi. A legacy
+root-crontab updater (`*/5` → `/usr/local/bin/netoverview-update.sh`, a
+pull + compare-image-id + `docker compose up -d --force-recreate` script
+logging to `/var/log/netoverview-update.log`) duplicated the netoverview
+line above; it was removed on 2026-08-29 (root crontab cleared, script and
+log deleted). If a root crontab ever reappears here, it is not supposed to
+exist.

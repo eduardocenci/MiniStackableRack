@@ -1,0 +1,532 @@
+{
+ "updated": "2026-08-28 23:35",
+ "started": "2026-08-28 19:34",
+ "finished": "2026-08-28 23:34",
+ "goGiven": true,
+ "console": [
+  {
+   "t": "19:34",
+   "host": "run",
+   "cmd": "GO received — starting wave 1 at fln",
+   "out": "unattended mode · log: updateCycles/20260828_wave1.md"
+  },
+  {
+   "t": "19:34",
+   "host": "fln-proxmox",
+   "cmd": "qm snapshot 100 pre-w1",
+   "out": "snapshot created + verified"
+  },
+  {
+   "t": "19:35",
+   "host": "fln-ha",
+   "cmd": "ha backups new --name pre-w1",
+   "out": "full backup ok · slug 3c83ad5a"
+  },
+  {
+   "t": "19:36",
+   "host": "fln-ha",
+   "cmd": "ha core update --version 2026.8.2 --backup",
+   "out": "running…"
+  },
+  {
+   "t": "19:38",
+   "host": "fln-ha",
+   "cmd": "ha core update --version 2026.8.2 --backup",
+   "out": "done in 3m · 20/20 entries loaded · logs clean"
+  },
+  {
+   "t": "19:39",
+   "host": "fln-ha",
+   "cmd": "ha os update --version 18.2",
+   "out": "running… (VM reboots)"
+  },
+  {
+   "t": "19:42",
+   "host": "fln-ha",
+   "cmd": "ha os update 18.2 && ha host reboot",
+   "out": "OS 18.2 active (slot A) · API back 19:42"
+  },
+  {
+   "t": "19:43",
+   "host": "fln-pi",
+   "cmd": "systemd-run w1apt: apt full-upgrade (211 pkgs)",
+   "out": "running detached… reboot follows"
+  },
+  {
+   "t": "19:43",
+   "host": "fln-pi",
+   "cmd": "systemd-run w1apt (attempt 1)",
+   "out": "FAILED: interactive auth required — sudo -S covered only first command"
+  },
+  {
+   "t": "19:47",
+   "host": "fln-pi",
+   "cmd": "systemd-run w1apt (attempt 2, sudo bash -c wrapper)",
+   "out": "apt full-upgrade 211 pkgs running detached… reboot follows"
+  },
+  {
+   "t": "20:05",
+   "host": "fln-pi",
+   "cmd": "apt full-upgrade + reboot",
+   "out": "done: docker 29.7.2 · tailscale 1.102.3 · netoverview up · 0 pkgs left"
+  },
+  {
+   "t": "20:05",
+   "host": "fln-proxmox",
+   "cmd": "systemd-run w1apt: apt dist-upgrade (219 pkgs) → PVE 9.2.11",
+   "out": "reviewing PVE 9.2 notes, then firing detached…"
+  },
+  {
+   "t": "20:07",
+   "host": "dash",
+   "cmd": "per-device SSH feed windows added under each site",
+   "out": "updates at every republish (~1-3 min in active phases; big apt runs report on completion)"
+  },
+  {
+   "t": "20:14",
+   "host": "fln-proxmox",
+   "cmd": "dist-upgrade + reboot",
+   "out": "pve 9.2.11 · kernel 7.0.14-14-pve · guests+HA back — SITE fln COMPLETE 42m"
+  },
+  {
+   "t": "20:16",
+   "host": "fln-pi",
+   "cmd": "2nd reboot",
+   "out": "kernel 6.18.39 active"
+  },
+  {
+   "t": "20:16",
+   "host": "bg-proxmox",
+   "cmd": "qm snapshot 100 pre-w1 + ha backups new",
+   "out": "bg backup gate running…"
+  },
+  {
+   "t": "20:18",
+   "host": "bg-ha",
+   "cmd": "ha core update --version 2026.8.2 --backup",
+   "out": "running… (fire-and-poll)"
+  },
+  {
+   "t": "20:22",
+   "host": "bg-ha",
+   "cmd": "ha os update 18.2 && ha host reboot",
+   "out": "running…"
+  },
+  {
+   "t": "23:34",
+   "host": "run",
+   "cmd": "WAVE 1 COMPLETE — 27/28 done, 1 rolled back (frigate)",
+   "out": "4h00m total · fleet verified: 4x HA 2026.8.2, PVE 9.2.11 x4, all guests/containers up"
+  }
+ ],
+ "steps": {
+  "fln:0": {
+   "status": "done",
+   "actual": 1,
+   "start": "19:34"
+  },
+  "fln:1": {
+   "status": "done",
+   "actual": 3,
+   "start": "19:36"
+  },
+  "fln:2": {
+   "status": "done",
+   "actual": 3,
+   "start": "19:40"
+  },
+  "fln:3": {
+   "status": "fixed",
+   "actual": 22,
+   "start": "19:43",
+   "note": "2 tooling fixes (sudo compound, transient-SSH retry) — apt itself ran clean"
+  },
+  "fln:4": {
+   "status": "done",
+   "actual": 8,
+   "start": "20:06"
+  },
+  "bg:0": {
+   "status": "fixed",
+   "actual": 3,
+   "start": "20:16",
+   "note": "snapshot froze Supervisor; thawed + backup retried OK (slug 51398f1c)"
+  },
+  "bg:1": {
+   "status": "done",
+   "actual": 4,
+   "start": "20:19"
+  },
+  "bg:2": {
+   "status": "done",
+   "actual": 3,
+   "start": "20:22"
+  },
+  "bg:3": {
+   "status": "fixed",
+   "actual": 7,
+   "start": "20:25",
+   "note": "Supervisor still in post-reboot startup — waited, retried OK"
+  },
+  "bg:4": {
+   "status": "done",
+   "actual": 3,
+   "start": "20:32"
+  },
+  "bg:5": {
+   "status": "done",
+   "actual": 6,
+   "start": "20:35"
+  },
+  "bg:6": {
+   "status": "done",
+   "actual": 4,
+   "start": "20:41"
+  },
+  "bg:7": {
+   "status": "fixed",
+   "actual": 39,
+   "start": "20:37",
+   "note": "monitor deadline + sudo pkg upgrade broke passwordless sudo mid-run — both fixed; apt itself clean; kernel 6.18.39 active"
+  },
+  "bg:8": {
+   "status": "done",
+   "actual": 8,
+   "start": "21:16"
+  },
+  "ply:0": {
+   "status": "done",
+   "actual": 1,
+   "start": "21:24"
+  },
+  "ply:1": {
+   "status": "done",
+   "actual": 11,
+   "start": "21:25",
+   "note": "image download ~10 min on ply WAN — no failure, just slow"
+  },
+  "ply:2": {
+   "status": "fixed",
+   "actual": 20,
+   "start": "21:36",
+   "note": "early reboot before slow OTA staged + startup-window block — re-staged, watched for reboot_required, then rebooted"
+  },
+  "ply:3": {
+   "status": "done",
+   "actual": 9,
+   "start": "21:56"
+  },
+  "ply:4": {
+   "status": "done",
+   "actual": 2,
+   "start": "22:05"
+  },
+  "ply:5": {
+   "status": "fixed",
+   "actual": 22,
+   "start": "22:06",
+   "note": "slow WAN download (20m) + monitor SystemExit bug on reconnect — fixed in scripts; host itself upgraded clean"
+  },
+  "ara:0": {
+   "status": "done",
+   "actual": 10,
+   "start": "22:29"
+  },
+  "bnu:0": {
+   "status": "done",
+   "actual": 1,
+   "start": "22:39"
+  },
+  "bnu:1": {
+   "status": "done",
+   "actual": 3,
+   "start": "22:40"
+  },
+  "bnu:2": {
+   "status": "done",
+   "actual": 2,
+   "start": "22:43"
+  },
+  "bnu:3": {
+   "status": "done",
+   "actual": 6,
+   "start": "22:45"
+  },
+  "bnu:4": {
+   "status": "failed",
+   "actual": 11,
+   "start": "22:51",
+   "note": "0.17.2 needs Python >=3.12; LXC has 3.11 — ROLLED BACK to 0.17.1, Frigate healthy. Separate migration needed (security fixes pending)"
+  },
+  "bnu:5": {
+   "status": "done",
+   "actual": 24,
+   "start": "23:02"
+  },
+  "bnu:6": {
+   "status": "done",
+   "actual": 8,
+   "start": "23:26"
+  }
+ },
+ "sitelog": {
+  "fln": [
+   {
+    "t": "19:34",
+    "line": "$ qm snapshot 100 pre-w1 -> snap_vm-100-disk-0/1_pre-w1 created"
+   },
+   {
+    "t": "19:35",
+    "line": "$ ha backups new --name pre-w1 -> ok, slug 3c83ad5a (full)"
+   },
+   {
+    "t": "19:36",
+    "line": "$ ha core update 2026.8.2 --backup -> fired; SSH recv timeout @2m (update continued)"
+   },
+   {
+    "t": "19:38",
+    "line": "poll /api/config -> API up, core 2026.8.2 · entries 20/20 loaded · logs clean"
+   },
+   {
+    "t": "19:40",
+    "line": "$ ha os update 18.2 -> \"applied, reboot to finish\" · $ ha host reboot"
+   },
+   {
+    "t": "19:42",
+    "line": "API back · ha os info -> 18.2, boot slot A"
+   },
+   {
+    "t": "19:44",
+    "line": "$ systemd-run w1apt: apt full-upgrade 211 pkgs (detached) -> active"
+   },
+   {
+    "t": "19:49",
+    "line": "w1apt active ×20 polls · 1 transient SSH reset (retried)"
+   },
+   {
+    "t": "20:04",
+    "line": "w1apt inactive -> $ reboot"
+   },
+   {
+    "t": "20:05",
+    "line": "verify: docker 29.7.2 · tailscale 1.102.3 · netoverview Up · 0 pkgs left · uname 6.18.34 (6.18.39 installed, staged — recheck after host step)"
+   },
+   {
+    "t": "20:11",
+    "line": "w1apt inactive -> pve-manager 9.2.11 · $ reboot"
+   },
+   {
+    "t": "20:14",
+    "line": "host back 85s, kernel 7.0.14-14-pve · guests 100+103 running · HA API up — SITE COMPLETE"
+   },
+   {
+    "t": "20:16",
+    "line": "pi: 2nd reboot -> kernel 6.18.39+rpt-rpi-v8 ✓"
+   }
+  ],
+  "bg": [
+   {
+    "t": "20:16",
+    "line": "prep: onboot VM100/101/103=1, LXC102=1 · $ qm snapshot 100 pre-w1 + ha backups new"
+   },
+   {
+    "t": "20:16",
+    "line": "$ qm snapshot 100 pre-w1 -> created (fsfreeze hook timeout — crash-consistent)"
+   },
+   {
+    "t": "20:17",
+    "line": "$ ha backups new -> ERROR: system frozen (stuck freeze from snapshot hook)"
+   },
+   {
+    "t": "20:19",
+    "line": "$ ha backups thaw -> ok · retry backup -> ok slug 51398f1c (full)"
+   },
+   {
+    "t": "20:18",
+    "line": "$ ha core update 2026.8.2 --backup -> fired, polling /api/config…"
+   },
+   {
+    "t": "20:21",
+    "line": "core 2026.8.2 up · 24/25 loaded (upnp discovering) · smtp services OK after boot race"
+   },
+   {
+    "t": "20:22",
+    "line": "smoketest msg -> SmokeTests group HTTP 200 (bg path via bnu WAHA OK)"
+   },
+   {
+    "t": "20:22",
+    "line": "$ ha os update 18.2 -> staged · $ ha host reboot"
+   },
+   {
+    "t": "20:24",
+    "line": "HAOS 18.2 active (slot B), API back · $ ha addons update core_configurator --backup"
+   },
+   {
+    "t": "20:25",
+    "line": "$ ha addons update core_configurator --backup -> blocked (startup) · waited"
+   },
+   {
+    "t": "20:32",
+    "line": "retry -> ok · File editor 6.1.0 started ✓"
+   },
+   {
+    "t": "20:32",
+    "line": "$ update/install iphone_device_tracker (HACS 2.4.1 -> 2.5.0) + core restart"
+   },
+   {
+    "t": "20:34",
+    "line": "iphonedetect 2.5.0 + core restart -> trackers ok (not_home ×3)"
+   },
+   {
+    "t": "20:34",
+    "line": "$ ha addons update db21ed7f_netalertx_fa --backup (26.6.3-1 -> 26.8.5, caps change)"
+   },
+   {
+    "t": "20:41",
+    "line": "NetAlertX 26.8.5 started, scanning 46 devices, no cap errors ✓"
+   },
+   {
+    "t": "20:36",
+    "line": "$ pct snapshot 102 pre-w1 · apt install plexmediaserver (LXC 102)"
+   },
+   {
+    "t": "20:45",
+    "line": "Plex 1.43.3.10896 installed, :32400/identity OK ✓"
+   },
+   {
+    "t": "20:37",
+    "line": "$ w1apt: apt full-upgrade 417 pkgs + kernel 6.12->6.18 (detached, ~25m) + reboot"
+   },
+   {
+    "t": "21:16",
+    "line": "pi back: kernel 6.18.39 ✓ docker 29.7.2 ✓ tailscale 1.102.3 ✓ netoverview Up ✓ 0 pkgs"
+   },
+   {
+    "t": "21:16",
+    "line": "$ w1apt on bg-proxmox: apt dist-upgrade 215 pkgs -> PVE 9.2.11, then reboot (site-wide ~5m outage)"
+   },
+   {
+    "t": "21:24",
+    "line": "host back on kernel 7.0.14-14-pve · pve 9.2.11 · 4/4 guests running · HA up — SITE COMPLETE"
+   }
+  ],
+  "ply": [
+   {
+    "t": "21:24",
+    "line": "$ ha backups new (FIRST, per bg lesson) then qm snapshot 100 pre-w1"
+   },
+   {
+    "t": "21:25",
+    "line": "gate OK: backup a04b6f58 + snapshot (corrected order, no freeze) ✓"
+   },
+   {
+    "t": "21:24",
+    "line": "$ ha core update 2026.8.2 --backup -> fire-and-poll"
+   },
+   {
+    "t": "21:36",
+    "line": "core 2026.8.2 up · 18/25 loaded, 7 not-loaded == pre-existing baseline exactly ✓"
+   },
+   {
+    "t": "21:36",
+    "line": "$ ha os update 18.2 && ha host reboot"
+   },
+   {
+    "t": "21:40",
+    "line": "HAOS attempt 1 rebooted too early (WAN-slow download) -> still 18.1 · re-firing ha os update, watching supervisor log"
+   },
+   {
+    "t": "21:56",
+    "line": "HAOS 18.2 active (slot A), core 2026.8.2 up ✓"
+   },
+   {
+    "t": "21:56",
+    "line": "$ w1apt on ply-pi (bullseye): 11 pkgs + tailscale 1.98.4->1.102.3, detached + reboot"
+   },
+   {
+    "t": "22:05",
+    "line": "pi: tailscale 1.102.3 ✓ netoverview Up ✓ 0 pkgs (bullseye kept)"
+   },
+   {
+    "t": "22:05",
+    "line": "$ NAS health check: uptime + copyparty container"
+   },
+   {
+    "t": "22:07",
+    "line": "NAS: copyparty Up (healthy) ✓ · load settling · DSM 7.1.1 kept (separate decision)"
+   },
+   {
+    "t": "22:05",
+    "line": "$ w1apt on ply-proxmox: apt dist-upgrade 214 pkgs -> PVE 9.2.11 + reboot"
+   },
+   {
+    "t": "22:28",
+    "line": "host back: pve 9.2.11 · kernel 7.0.14-14-pve · HA up — SITE COMPLETE"
+   }
+  ],
+  "ara": [
+   {
+    "t": "22:38",
+    "line": "kernel 6.18.39 ✓ docker 29.7.2 ✓ tailscale 1.102.3 ✓ netoverview Up ✓ mediamtx active :8554 ✓ — SITE COMPLETE"
+   }
+  ],
+  "bnu": [
+   {
+    "t": "22:38",
+    "line": "$ ha backups new (first) + qm snapshot 100 pre-w1 — final site, heart of the arch"
+   },
+   {
+    "t": "22:40",
+    "line": "gate: backup 36edffa1 + fs-frozen snapshot ✓"
+   },
+   {
+    "t": "22:40",
+    "line": "$ ha core update 2026.8.2 --backup (patch from 2026.8.1)"
+   },
+   {
+    "t": "22:43",
+    "line": "core 2026.8.2 up · verifying entries + frigate/tholz/fr24/zha/mqtt"
+   },
+   {
+    "t": "22:42",
+    "line": "$ ha addons update core_configurator --backup"
+   },
+   {
+    "t": "22:45",
+    "line": "File editor 6.1.0 started ✓ · entries 29/31 (wiz+ipp pre-existing/asleep)"
+   },
+   {
+    "t": "22:45",
+    "line": "$ pct snapshot 101 pre-w1 · docker compose pull waha (-> 2026.8.1) · session + SmokeTests"
+   },
+   {
+    "t": "22:51",
+    "line": "WAHA 2026.8.1 up · SmokeTests delivered on bnu + bg paths ✓"
+   },
+   {
+    "t": "22:48",
+    "line": "$ pct snapshot 105 pre-w1 · recon /opt/frigate install for 0.17.2 path"
+   },
+   {
+    "t": "23:00",
+    "line": "frigate 0.17.2 FAILED (needs py>=3.12, LXC has 3.11) -> rolled back, 0.17.1 active, cams streaming ✓"
+   },
+   {
+    "t": "22:59",
+    "line": "$ w1apt on bnu-pi: apt full-upgrade 217 pkgs (detached) + reboot"
+   },
+   {
+    "t": "23:26",
+    "line": "pi: kernel 6.18.39 ✓ docker 29.7.2 ✓ globalnet+netoverview Up ✓"
+   },
+   {
+    "t": "23:26",
+    "line": "$ FINAL STEP: w1apt on bnu-proxmox (128 pkgs) -> PVE 9.2.11 + reboot + full site verify"
+   },
+   {
+    "t": "23:34",
+    "line": "host: pve 9.2.11 · kernel 7.0.14 · guests+HA+frigate+LXC101 verified — SITE + RUN COMPLETE"
+   }
+  ]
+ }
+}

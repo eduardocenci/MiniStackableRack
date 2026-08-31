@@ -91,11 +91,11 @@ Credentials are stored locally in `.env` (gitignored). All devices are Tailscale
 | Bnu | bnu-win11 | RDP or SSH | VM on bnu-proxmox |
 | Bnu | bnu-glkvm | https://bnu-glkvm/ | |
 | Bnu | bnu-raspberrypi | RealVNC or SSH | |
-| Ply | ply-proxmox | https://ply-proxmox:8006/ | Subnet router for 192.168.0.0/24 |
-| Ply | ply-homeassistant | http://ply-homeassistant:8123/ | VM on ply-proxmox |
-| Ply | ply-win11 | RDP or SSH | VM on ply-proxmox |
-| Ply | ply-glkvm | https://ply-glkvm/ | |
-| Ply | ply-raspberrypi | RealVNC or SSH | |
+| Mia | mia-proxmox | https://mia-proxmox:8006/ | Subnet router for 192.168.0.0/24 |
+| Mia | mia-homeassistant | http://mia-homeassistant:8123/ | VM on mia-proxmox |
+| Mia | mia-win11 | RDP or SSH | VM on mia-proxmox |
+| Mia | mia-glkvm | https://mia-glkvm/ | |
+| Mia | mia-raspberrypi | RealVNC or SSH | |
 | Bg | bg-proxmox | https://bg-proxmox:8006/ | |
 | Bg | bg-homeassistant | http://bg-homeassistant:8123/ | VM on bg-proxmox |
 | Bg | bg-win11 | RDP or SSH | VM on bg-proxmox |
@@ -187,7 +187,7 @@ SSHPASS='<password>' sshpass -e ssh root@<deployment>-glkvm <command>
 
 > **Note (Git Bash / Windows):** `sshpass` may fail with `can't open /dev/tty` in Git Bash. If so, use interactive `ssh` or run from WSL.
 
-**`ply` findings (2026-03-29):** Host key accepted; SSH reachable. Password auth blocked by Git Bash `/dev/tty` limitation — use interactive `ssh root@ply-glkvm` from terminal.
+**`mia` findings (2026-03-29):** Host key accepted; SSH reachable. Password auth blocked by Git Bash `/dev/tty` limitation — use interactive `ssh root@mia-glkvm` from terminal.
 
 #### 4.1.5 Update Firmware
 
@@ -238,7 +238,7 @@ The most reliable method is via Windows Recovery, not timing F7 at POST:
 Advanced → AMD CBS → FCH Common Options → Ac Power Loss Options → Ac Loss Control → [Always On]
 ```
 
-**`ply` findings (2026-03-28):** Unit shipped with Always On already set. No change needed.
+**`mia` findings (2026-03-28):** Unit shipped with Always On already set. No change needed.
 
 ---
 
@@ -270,7 +270,7 @@ Save the key to `.env`.
 4. Target disk: 500 GB M.2 SSD.
 5. Location / timezone: set as appropriate.
 6. Root password: set and save to `.env`.
-7. Network hostname: `<deployment>-proxmox` (e.g. `ply-proxmox.home.local`).
+7. Network hostname: `<deployment>-proxmox` (e.g. `mia-proxmox.home.local`).
 8. Complete install; machine reboots into Proxmox VE.
 9. Verify: **https://\<deployment\>-proxmox:8006/**
 
@@ -308,7 +308,7 @@ Tailscale runs on the Proxmox host itself, making the hypervisor directly reacha
 
 5. In Tailscale admin console → Machines → `<deployment>-proxmox` → **Edit route settings** → approve `192.168.0.0/24`.
 
-**`ply` findings (2026-03-29):** Tailscale 1.96.4 installed; subnet routing active for `192.168.0.0/24`.
+**`mia` findings (2026-03-29):** Tailscale 1.96.4 installed; subnet routing active for `192.168.0.0/24`.
 
 ---
 
@@ -327,7 +327,7 @@ Accept defaults (VM ID 100, 2 cores, 4 GB RAM, 32 GB disk). The script downloads
 Rename VM after creation:
 
 ```bash
-qm set 100 --name <deployment>-homeassistant  # e.g. ply-homeassistant
+qm set 100 --name <deployment>-homeassistant  # e.g. mia-homeassistant
 ```
 
 Reference: [community-scripts/ProxmoxVE HAOS script](https://community-scripts.github.io/ProxmoxVE/scripts?id=haos-vm)
@@ -337,7 +337,7 @@ Reference: [community-scripts/ProxmoxVE HAOS script](https://community-scripts.g
 First user can be created via the HA API from the Proxmox shell (avoids needing local browser access):
 
 ```bash
-HA_IP="<deployment>-homeassistant"  # e.g. ply-homeassistant
+HA_IP="<deployment>-homeassistant"  # e.g. mia-homeassistant
 curl -s -X POST http://${HA_IP}:8123/api/onboarding/users \
   -H "Content-Type: application/json" \
   -d "{\"client_id\":\"http://${HA_IP}:8123/\",\"name\":\"Your Name\",\"username\":\"yourusername\",\"password\":\"$(grep HA_PASSWORD .env | cut -d= -f2)\"}"

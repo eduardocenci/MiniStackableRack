@@ -27,14 +27,14 @@ Root
     ├── raspberry-pi/           Raspberry Pi — independent rack component (not a VM); runs Docker; serves as network monitoring node (device discovery, traffic analysis via ARP spoofing)
     │   └── <site>-raspberrypi/
     │       └── docker/         Docker deployments on that Pi (e.g. globalnet, netoverview)
-    └── synology/               Synology NAS — independent rack component (ply only)
-        └── ply-synology/
+    └── synology/               Synology NAS — independent rack component (mia only)
+        └── mia-synology/
             └── docker/         e.g. copyparty
 ```
 
-Each deployment instance is named `<deployment>-<component>` (e.g. `bnu-homeassistant`, `ply-proxmox`).
+Each deployment instance is named `<deployment>-<component>` (e.g. `bnu-homeassistant`, `mia-proxmox`).
 
-`<site>` is one of **bnu, ply, bg, fln**. Only folders for sites that have
+`<site>` is one of **bnu, mia, bg, fln**. Only folders for sites that have
 site-specific config exist — the absence of a folder does not mean the device is
 absent (fln has a full rack but no folders yet). The authoritative device
 inventory is `globalnet/architecture.yaml`; the authoritative way to reach any of
@@ -86,7 +86,7 @@ as an unfinished deploy, not cosmetics. (Details: `DOCS_WORKFLOW.md`.)
 
 - All credentials live in a single `.env` at the repo root
 - Keys shared by a **device type** across every site are **unprefixed**, in the `COMMON` section (`PROXMOX_LOGIN/PW`, `RASPBERRYPI_LOGIN/PW`, `GLKVM_LOGIN/PW`, `HA_SSH_LOGIN/PW`) — the same credential works on that device type at every site. Do not guess these from the region convention
-- Site-specific keys are prefixed and sectioned by region (`BG_`, `BNU_`, `PLY_`, `FLN_`), plus an `ARA` section for the house build
+- Site-specific keys are prefixed and sectioned by region (`BG_`, `BNU_`, `MIA_`, `FLN_`), plus an `ARA` section for the house build
 - Within each region section, keys are grouped by component (e.g. `# Home Assistant`, `# Raspberry Pi`)
 - Live copies exist outside `.env` (LXC 101 service `.env`s, HA `secrets.yaml`, NAS compose) — the root `.env` is authoritative; see `REMOTE_ACCESS.md` §5 for the drift list
 - `.env` and `.env.*` are gitignored — never committed
@@ -107,11 +107,11 @@ python scripts/devtool.py list bnu       # VMs + LXCs + containers of a rack
 python scripts/devtool.py guest bnu 101 "docker ps"   # inside an LXC/VM
 ```
 
-**Tailscale is the network layer.** Tailnet devices are nodes named exactly after their `<deployment>-<component>` name (e.g. `bnu-proxmox`, `ply-nas-ds918plus`). The machine Claude runs on is itself a tailnet node, so **those devices are directly reachable by their bare name** (MagicDNS) — no VPN setup, no port forwarding. Run `tailscale status` locally to list all nodes and their `100.x` IPs. Services bound to a device's Tailscale IP (e.g. Copyparty on the NAS) are reachable only through the tailnet, by design.
+**Tailscale is the network layer.** Tailnet devices are nodes named exactly after their `<deployment>-<component>` name (e.g. `bnu-proxmox`, `mia-nas-ds918plus`). The machine Claude runs on is itself a tailnet node, so **those devices are directly reachable by their bare name** (MagicDNS) — no VPN setup, no port forwarding. Run `tailscale status` locally to list all nodes and their `100.x` IPs. Services bound to a device's Tailscale IP (e.g. Copyparty on the NAS) are reachable only through the tailnet, by design.
 
 **But not every device is on the tailnet.** The bnu docker LXC (`10.1.1.126` — waha, waha-listener, condfy-bridge, netoverview-agent, psvis-tracker), ollama, the Zigbee gateways, the Hikvision NVR and doorbell, and the routers are **LAN-only**: their bare names do not resolve. Reach them by hopping through the site's Proxmox host — `python scripts/devtool.py lan bnu 10.1.1.132 "curl -sS http://10.1.1.132/"`. Full list in `REMOTE_ACCESS.md` §2. Outside those devices, prefer tailnet names over LAN IPs in new work.
 
-**Sites are `bnu`, `ply`, `bg`, `fln`** — four, not three. `fln` has no folders under `scripts/` yet, but it is a full rack in `.env`, `devtool.py` and `globalnet/architecture.yaml`.
+**Sites are `bnu`, `mia`, `bg`, `fln`** — four, not three. `fln` has no folders under `scripts/` yet, but it is a full rack in `.env`, `devtool.py` and `globalnet/architecture.yaml`.
 
 **SSH tooling:** this machine's `~/.ssh/id_ed25519` is authorized on every device except the Home Assistant SSH add-on, so plain OpenSSH (`ssh`, in PATH via Git Bash) works non-interactively. Password auth (HA add-on, or key-auth fallback) requires Python `paramiko` (installed). `plink` and `sshpass` are **not** installed — do not use them.
 
@@ -124,7 +124,7 @@ Priority-ordered access interfaces — LLM vs human (details, users and auth in 
 | Windows 11 VM | SSH (`eduardocenci`, key; shell is PowerShell) → QEMU guest agent via Proxmox | RDP |
 | Raspberry Pi | SSH (`eduardocenci`, key) | SSH |
 | GL KVM | SSH (`root`, key; dropbear) | Web UI `http://<host>` |
-| Synology NAS | SSH (key, `PLY_NAS_SSH_LOGIN`; see `scripts/synology/README.md`) | Web UI (DSM) `http://<host>:5000` |
+| Synology NAS | SSH (key, `MIA_NAS_SSH_LOGIN`; see `scripts/synology/README.md`) | Web UI (DSM) `http://<host>:5000` |
 | VMs / LXCs / containers | `devtool.py list` + `devtool.py guest` through the Proxmox host | Proxmox web console |
 
 **LLM rule:** prefer the highest-priority interface that works; fall back down the list. Never open a browser unless all CLI/API options are exhausted.
@@ -135,7 +135,7 @@ Priority-ordered access interfaces — LLM vs human (details, users and auth in 
 - If a component runs inside another (VM, container, add-on), its folder goes inside the parent's folder
 - Independent rack components (Raspberry Pi, Remote KVM, Zigbee Gateway) sit at the top level of `scripts/`
 - Keep system architecture representation up-to-date using Excalidraw (`systemarchitecture.excalidraw` at repo root) — use the Excalidraw skill to edit it directly
-- In docs, reference devices by their bare component name (e.g. `proxmox`) when settings are uniform across all regions; list the region-specific names (e.g. `bnu-proxmox`, `ply-proxmox`, `bg-proxmox`, `fln-proxmox`) only when providing per-region context or when settings differ between regions
+- In docs, reference devices by their bare component name (e.g. `proxmox`) when settings are uniform across all regions; list the region-specific names (e.g. `bnu-proxmox`, `mia-proxmox`, `bg-proxmox`, `fln-proxmox`) only when providing per-region context or when settings differ between regions
 - When you learn a new way to reach or manage a device — or find that a documented way no longer works — record it in `REMOTE_ACCESS.md` in the same session. That file is the fleet's memory of what works; leaving it stale is what causes the next session to fail through several methods before finding the right one
 - A home build (`homes/<code>`, e.g. `homes/ara`) uses a region code but is **not** a rack site — its data lives in its own `home-<code>` repo (single-source `house.yaml` + registries), its cockpit is globalnet `/house/<code>`, and its document intake is the `ingest-home-docs` skill inside the home repo (see `homes/ara/CLAUDE.md`). Once it has monitored devices it MAY also be a dashboard site in `globalnet/architecture.yaml` flagged `home: true` (relaxed core-stack test: Pi + netoverview only) — ara is one since 2026-08-26 (decisão Eduardo)
 

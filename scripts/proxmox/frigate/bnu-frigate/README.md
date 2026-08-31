@@ -15,12 +15,12 @@ listens on the LXC).
 | Media | `/media/frigate` on the 24 GB LXC disk (78 % used 2026-08-26) — recordings are event-gated (alerts/detections, 10 days, `mode: all`), no continuous retention |
 | ffmpeg | bundled at `/usr/lib/ffmpeg/7.0/bin` (not in `PATH`) |
 | Detector | CPU tflite `/models/cpu_model.tflite` — its labelmap has **no `truck`** (config warning if tracked; trucks come through as `car`); the OpenVINO CPU plugin fails to load in this LXC |
-| GenAI review | Ollama at `ply-desktop:11434` (`qwen3-vl:8b`), Portuguese descriptions per event |
+| GenAI review | Ollama at `mia-desktop:11434` (`qwen3-vl:8b`), Portuguese descriptions per event |
 | MQTT | `10.1.1.124` (bnu HA VM) — events feed Home Assistant |
 
 ## Config change flow (from this repo)
 
-The ply-desktop ssh key is not authorized on bnu, so everything goes through
+The mia-desktop ssh key is not authorized on bnu, so everything goes through
 `devtool.py` (password fallback), staged via the Proxmox host:
 
 ```bash
@@ -41,6 +41,18 @@ python scripts/devtool.py guest bnu 105 "curl -s http://127.0.0.1:5000/api/stats
 Every camera should sit at ~2 fps (`detect.fps` global). A restart cuts all
 cameras for ~30 s and logs a burst of "Invalid or missing video stream in
 segment … Discarding" for the segments cut mid-write — normal, not a fault.
+
+## Birdseye restream (added 2026-08-26)
+
+`birdseye: restream: true, mode: continuous` exposes the all-cameras composed
+view as `rtsp://10.1.1.160:8554/birdseye` (go2rtc also serves it as HLS/MP4 on
+`:1984`). The go2rtc producer is an on-demand `exec:` ffmpeg — the **first
+consumer waits several seconds** for spawn + keyframe (5 s GOP), so warm it
+with `curl 'http://10.1.1.160:1984/api/frame.jpeg?src=birdseye'` before
+latency-sensitive use. Continuous mode encodes 720p H264 24/7 (small, steady
+CPU cost). Consumer: mia HA `camera.frigate_birdseye` via a forward on
+mia-proxmox → `script.cast_frigate_birdseye` casts it to the mia
+entertainment-room TV (see `scripts/proxmox/mia-proxmox/README.md`).
 
 ## Cameras
 

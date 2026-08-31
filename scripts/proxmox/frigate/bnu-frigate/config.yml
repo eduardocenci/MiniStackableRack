@@ -10,7 +10,16 @@ auth:
 ui:
   timezone: America/Sao_Paulo
 
-go2rtc: # 
+# All-cameras composed live view exposed as a single RTSP stream
+# (rtsp://10.1.1.160:8554/birdseye) so TVs can play it — consumed by the
+# mia HA "Frigate Birdseye" generic camera for AirPlay to the Apple TV.
+# mode continuous = every camera always visible; restream encodes 24/7.
+birdseye:
+  enabled: true
+  restream: true
+  mode: continuous
+
+go2rtc: #
   streams:
     frente_principal:
       - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/801
@@ -544,7 +553,7 @@ classification:
         motion: true
 genai:
   provider: ollama
-  base_url: http://ply-desktop:11434
+  base_url: http://mia-desktop:11434
   model: qwen3-vl:8b
 
 review:

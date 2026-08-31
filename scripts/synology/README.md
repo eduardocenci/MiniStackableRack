@@ -1,35 +1,35 @@
 # Synology NAS
 
-One NAS in the fleet: **`ply-nas-ds918plus`** (Synology DS918+, PLY rack).
+One NAS in the fleet: **`mia-nas-ds918plus`** (Synology DS918+, MIA rack).
 It is a tailnet node — reachable from any tailnet device (including the machine
 Claude runs on) by its bare MagicDNS name:
 
 | Service | Address | Notes |
 |---|---|---|
-| DSM Web UI | `http://ply-nas-ds918plus:5000` | Human interface |
-| SSH | `ply-nas-ds918plus:22` | **LLM interface** — enabled |
-| Copyparty | `http://ply-nas-ds918plus:3923` | See `ply-synology/docker/copyparty/` |
+| DSM Web UI | `http://mia-nas-ds918plus:5000` | Human interface |
+| SSH | `mia-nas-ds918plus:22` | **LLM interface** — enabled |
+| Copyparty | `http://mia-nas-ds918plus:3923` | See `mia-synology/docker/copyparty/` |
 
 ## LLM access — SSH
 
-Credentials live in the repo-root `.env`, PLY section:
+Credentials live in the repo-root `.env`, MIA section:
 
 ```
-PLY_NAS_SSH_LOGIN=...     # DSM user (must be in the administrators group)
-PLY_NAS_SSH_PW=...        # for paramiko password auth
+MIA_NAS_SSH_LOGIN=...     # DSM user (must be in the administrators group)
+MIA_NAS_SSH_PW=...        # for paramiko password auth
 # optional, preferred once set up:
-PLY_NAS_SSH_KEY=gitignore/ply-nas_id_ed25519
+MIA_NAS_SSH_KEY=gitignore/mia-nas_id_ed25519
 ```
 
 - **Password auth (the working path):** use Python `paramiko` — `plink`/`sshpass`
   are NOT installed on the Claude host (see CLAUDE.md → Remote Access). A ready
   helper pattern: connect with `look_for_keys=False`, `exec_command`, and for
   root pipe the password to `sudo -S -p ''`.
-- **Key auth (pending):** a keypair exists at `gitignore/ply-nas_id_ed25519`,
+- **Key auth (pending):** a keypair exists at `gitignore/mia-nas_id_ed25519`,
   but installing the pubkey into `authorized_keys` needs an explicitly-named
   user authorization (the permission classifier blocks it as a persistent
   access grant). Once installed, plain
-  `ssh -i <key> $PLY_NAS_SSH_LOGIN@ply-nas-ds918plus '<cmd>'` is fully
+  `ssh -i <key> $MIA_NAS_SSH_LOGIN@mia-nas-ds918plus '<cmd>'` is fully
   non-interactive.
 - **Docker needs root:** pipe the password to `sudo -S`. The sudoers drop-in
   below (also pending explicit authorization) would make it passwordless.
@@ -50,8 +50,8 @@ Status: **done** (port 22 confirmed open over Tailscale).
 
 ### 2. SSH user
 Status: **done** — the `globalnet` account (uid 1028, `administrators` member)
-is the LLM SSH user; credentials in `.env` (`PLY_NAS_SSH_LOGIN` /
-`PLY_NAS_SSH_PW`).
+is the LLM SSH user; credentials in `.env` (`MIA_NAS_SSH_LOGIN` /
+`MIA_NAS_SSH_PW`).
 
 Background: DSM only permits SSH for users in the **administrators** group. To
 recreate or replace the user: DSM → Control Panel → User & Group → create it,
@@ -62,14 +62,14 @@ does NOT auto-grant share access), and update `.env`.
 
 ```sh
 # a) On the Claude host — generate a key into the gitignored folder:
-ssh-keygen -t ed25519 -f gitignore/ply-nas_id_ed25519 -N "" -C "claude@rack"
+ssh-keygen -t ed25519 -f gitignore/mia-nas_id_ed25519 -N "" -C "claude@rack"
 
 # b) Enable user homes or ~ won't exist:
 #    DSM → Control Panel → User & Group → Advanced → ✓ Enable user home service
 
 # c) On the NAS (ssh in with the password once):
 mkdir -p ~/.ssh
-cat >> ~/.ssh/authorized_keys   # paste gitignore/ply-nas_id_ed25519.pub, Ctrl-D
+cat >> ~/.ssh/authorized_keys   # paste gitignore/mia-nas_id_ed25519.pub, Ctrl-D
 
 # d) Permissions — DSM's sshd silently rejects keys if these are loose:
 chmod 755 "$HOME"               # home must not be group/other-writable
@@ -82,21 +82,21 @@ chmod 600 ~/.ssh/authorized_keys
 #    then restart: DSM → Terminal & SNMP → toggle SSH off/on
 
 # f) Verify from the Claude host:
-ssh -i gitignore/ply-nas_id_ed25519 -o BatchMode=yes \
-    "$PLY_NAS_SSH_LOGIN@ply-nas-ds918plus" 'uname -a && id'
-# then set PLY_NAS_SSH_KEY in .env
+ssh -i gitignore/mia-nas_id_ed25519 -o BatchMode=yes \
+    "$MIA_NAS_SSH_LOGIN@mia-nas-ds918plus" 'uname -a && id'
+# then set MIA_NAS_SSH_KEY in .env
 ```
 
 ### 4. Passwordless docker (optional)
 DSM has no `docker` group; docker requires root. One-time as root:
 
 ```sh
-echo "$PLY_NAS_SSH_LOGIN ALL=(ALL) NOPASSWD: /usr/local/bin/docker" \
+echo "$MIA_NAS_SSH_LOGIN ALL=(ALL) NOPASSWD: /usr/local/bin/docker" \
   > /etc/sudoers.d/docker-llm
 chmod 440 /etc/sudoers.d/docker-llm
 ```
 
-Until then, `echo "$PLY_NAS_SSH_PW" | sudo -S docker ...` works.
+Until then, `echo "$MIA_NAS_SSH_PW" | sudo -S docker ...` works.
 
 ## DSM Web API (fallback only)
 
