@@ -28,7 +28,7 @@ Per-site state of that cron (user crontab of `eduardocenci`):
 | `bnu-raspberrypi` | two cron lines (`~/globalnet` + `~/netoverview`) — see [`bnu-raspberrypi/README.md`](bnu-raspberrypi/README.md) | 2026-08-26 |
 | `bg-raspberrypi` | one cron line (`~/netoverview`), exactly as above | 2026-08-26 (cron was missing entirely before) |
 | `fln-raspberrypi` | cron runs `~/netoverview/update.sh` (logs to `update.log`); prune is the script's last line | 2026-08-26 |
-| `mia-raspberrypi` | **unknown — offline since ~2026-08-04**; audit + add prune when it comes back | pending |
+| `mia-raspberrypi` | back online since 2026-08-28 (was off ~2026-08-04→28 during the Plymouth→Miami move); audit + add prune | pending |
 | `ara-raspberrypi` | one cron line (`~/netoverview`), exactly as above | 2026-08-26 (deployed with prune from day one) |
 
 `docker system df` shows the image bloat; the bytes live under

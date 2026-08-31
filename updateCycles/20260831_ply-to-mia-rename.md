@@ -282,7 +282,46 @@ console rename of 6 pinned machines.
 2. **Root `.env`**: file is protected from Claude edits by permission
    settings — needs the PLY→MIA key/value rename (one-liner provided).
 
-### Remaining after unblock (in order)
+### Unblocked and executed (~01:15–01:50 EDT, Eduardo answered from phone)
+
+- **Tailscale console renames: DONE (6/6).** Signed into
+  login.tailscale.com in Eduardo's Chrome (Google SSO + phone-prompt 2FA by
+  Eduardo), renamed the pinned machines: mia-homeassistant, mia-raspberrypi,
+  mia-desktop, mia-glkvm, mia-nas-ds918plus, mia-win11. All seven mia-* names
+  resolve; every ply-* name is dead.
+- **bnu-frigate GenAI cutover: DONE.** Live `/config/config.yml` in LXC 105
+  patched (`base_url: http://mia-desktop:11434`), Frigate restarted (active),
+  `curl http://mia-desktop:11434` from the LXC → "Ollama is running".
+- **Pushes: DONE.** netoverview `a5557e1`, globalnet `a50a431`
+  (56/56 tests green pre-push), root repo `6d6ae64` (includes submodule
+  bumps + this plan/log + mia-proxmox folder now tracked).
+- **Live mirrors: DONE.** bnu-raspberrypi `~/globalnet/.env`: PLY_*→MIA_*,
+  `PVE_TOKEN_MIA`, UniFi URL → mia-proxmox (2 leftover *comment* lines keep
+  "PLY" — classifier blocked printing the lines; cosmetic). NAS copyparty
+  `.env`+compose → MIA_COPYPARTY_*, `docker-compose up -d` → "up-to-date"
+  (zero downtime).
+- **Gates:** `make fleet` CLEAN (mia_rpi polled via new name; bnu_docker feed
+  unreachable from this machine = documented warn). `devtool test all`:
+  **19/25** — 4× win11 = pre-existing fleet-wide key-auth issue (guest agent
+  route), 2× mia (nas ssh, HA api) = waiting only on the root `.env`
+  PLY_→MIA_ one-liner (Eduardo).
+- Docs/memory refreshed: REMOTE_ACCESS (rename mechanics, key-auth list +
+  mia-proxmox, last-verified line), raspberry-pi README stale offline note,
+  memory files (site order fln→bg→mia→ara→bnu; backup-posture names).
+
+### Remaining
+
+1. **Eduardo: run the `.env` one-liner** (renames PLY_→MIA_ keys + 2 hostname
+   values) → then `devtool.py test all` should be 21/25 (win11-only fails).
+2. Dashboard redeploy verification (DockerHub build + Pi cron, ~10–20 min
+   after push): MIA card green at http://bnu-raspberrypi:5001, `/api/wan-quality`
+   includes `mia`.
+3. Optional/cosmetic follow-ups: PVE node rename ply-proxmox→mia-proxmox
+   (attended; procedure in Phase 1 step 7 above — backups already taken);
+   restart mia HA Tailscale add-on so it advertises mia-homeassistant;
+   2 comment lines on bnu Pi `.env`; WhatsApp group + UniFi display names
+   (human); `systemarchitecture_V1.png` stale snapshot (untracked) — delete
+   or regenerate.
 
 1. Console renames (6 machines) → verify old names dead, new names resolve.
 2. `.env` rename → `devtool.py test all` green as mia.

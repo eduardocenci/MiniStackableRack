@@ -5,8 +5,10 @@ If you are an LLM: read this file, then use `scripts/devtool.py`. Do not try
 several methods until one works — every working method is recorded here, and
 every method *not* listed here has already been tried and failed.
 
-Last verified end-to-end: **2026-07-30** — `python scripts/devtool.py test all`
-→ **25/25 OK**.
+Last verified end-to-end: **2026-08-31** (post ply→mia rename) —
+`python scripts/devtool.py test all` → 19/25: the 4 win11 fails are the known
+fleet-wide key-auth breakage (use the guest agent), the 2 mia fails clear once
+the root `.env` PLY_→MIA_ key rename lands. Full 25/25 baseline: 2026-07-30.
 
 ---
 
@@ -118,7 +120,18 @@ on bnu-raspberrypi):
 | Starlink router | `192.168.1.1` | house LAN gateway (DHCP for the whole `192.168.1.0/24`). **Local gRPC API works** (`192.168.1.1:9000`, reflection on): `grpcurl -plaintext -d '{"wifi_get_clients":{}}' 192.168.1.1:9000 SpaceX.API.Device.Device/Handle` → associated clients with **name+MAC+IP** (what the app shows; `wifi_set_client_given_name` also exists). No local roster of DISCONNECTED clients (that list lives in the Starlink cloud — probed 2026-08-26). `grpcurl` v1.9.1 installed at `/usr/local/bin` on the Pi; the `starlink-names` container syncs these names into netoverview nicknames every 5 min |
 | Starlink dish | `192.168.100.1` | behind the router (any LAN client reaches it). **Local gRPC API works** (`192.168.100.1:9200`, plaintext, no auth, reflection on — probed 2026-08-30): `get_status` = instantaneous down/uplink throughput, pop latency, obstruction, alerts; `get_history` = 900 s of 1 Hz ring buffers (throughput, latency, drop rate, **`powerIn` watts**) + outage event log. **Relayed onto the tailnet as `ara-raspberrypi:9200`** by the `starlink-proxy` socat container (since 2026-08-30) — globalnet reads the ARA live WAN ▼▲ + dish ⚡ from it. Same `Device/Handle` service as the router, different RPCs |
 
-### MIA site specifics (learned 2026-08-26)
+### MIA site specifics (learned 2026-08-26 as PLY; site renamed 2026-08-31)
+
+- **mia is the former ply** (rack migrated Plymouth → Miami, renamed 2026-08-31).
+  The `<site>-*` tailnet names at this site are **admin-console name pins**, not
+  OS hostnames (OS hostnames are generic: `desktop`, `raspberrypi`,
+  `NAS_DS918plus`, `glkvm`, `DESKTOP-82PM8U0`) — renaming was done in the
+  Tailscale admin console, plus `tailscale set --hostname mia-*` on each device
+  so the advertised hostname matches. **Exception: mia-proxmox's OS/PVE node
+  name is still `ply-proxmox`** (its tailnet name was never pinned, so the CLI
+  rename flipped MagicDNS instantly; the /etc/pve node rename was deliberately
+  deferred — cosmetic in the PVE UI only, procedure in
+  `updateCycles/20260831_ply-to-mia-rename.md`).
 
 - **mia has two LANs with no route between them from the desktop side**: the
   rack LAN `192.168.0.0/24` (mia-proxmox `.21`, HA VM `.11`, plus the media
@@ -173,9 +186,12 @@ list. Never open a browser unless every CLI/API option is exhausted.
 - `plink` and `sshpass` are **not installed** — do not use them.
 - OpenSSH (`ssh`, via Git Bash) works for key auth; **paramiko** (installed) is
   the only way to do non-interactive password auth. `devtool.py` handles both.
-- **Key auth to `bnu-proxmox` AND `bnu-raspberrypi` FAILS from mia-desktop**
-  (2026-08-26: plain `ssh` → "Permission denied (publickey,password)" — the
-  pubkey is not in their authorized_keys; `ara-raspberrypi` accepts it).
+- **Key auth to `bnu-proxmox`, `bnu-raspberrypi` AND `mia-proxmox` FAILS from
+  mia-desktop** (2026-08-26 for bnu, 2026-08-31 for mia-proxmox: plain `ssh` →
+  "Permission denied (publickey,password)" — the pubkey is not in their
+  authorized_keys; `ara-raspberrypi` accepts it). The NAS also rejects this
+  machine's key via raw paramiko (2026-08-31) — devtool's password fallback
+  covers all of them silently.
   `devtool.py` still reports OK because paramiko silently falls back to
   `PROXMOX_PW`/`RASPBERRYPI_PW`. Re-authorize the key or keep using the
   password path; `ssh -L` tunnels need the paramiko forwarder (§2).
