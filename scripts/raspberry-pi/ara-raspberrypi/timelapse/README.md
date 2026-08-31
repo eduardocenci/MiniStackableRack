@@ -89,9 +89,10 @@ outbox acumula (SD de 58 GB ≈ anos) e o próximo upload drena.
 
 Consumidor downstream: o container seg–sex das 20:10 no bnu-raspberrypi
 ([`../../bnu-raspberrypi/canteiro-sunset-compare/`](../../bnu-raspberrypi/canteiro-sunset-compare/))
-compara o `posicao1/por-do-sol` do último dia útil vs hoje no WhatsApp e
-arquiva cada montagem em `posicao1/DiaDeTrabalho/YYYY-MM-DD.jpg` —
-mudanças na estrutura do Drive precisam acompanhar lá.
+monta a grade 2×3 do pôr do sol (último dia útil × hoje, colunas
+pos3|pos1|pos2) no WhatsApp e arquiva cada grade em
+`DiaDeTrabalho/YYYY-MM-DD.jpg` no topo do Timelapse — mudanças na
+estrutura do Drive precisam acompanhar lá.
 
 ## Operação
 
