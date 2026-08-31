@@ -51,6 +51,15 @@ Subcommands
   pos2test / pos3test
              recipe -> snap to /tmp/pos<N>test.jpg -> reverse, no outbox
              writes — health/re-calibration check.
+  reanchor [--dry]
+             visual re-anchor of the guard: correlates the shed's Y-post ROI
+             of a fresh snap against /var/lib/timelapse/ref/posicao1-ref.jpg
+             and nudges the lens until the offset is within tolerance
+             (--dry only measures). Runs automatically ~90 s before the
+             first window of every sunrise/sunset sequence — the firmware's
+             guard baseline WALKS on busy days (chained auto-tracking
+             re-baselines mid-track; observed 31/08/2026), and this closes
+             the loop the hardware doesn't offer.
 """
 import math
 import os
@@ -91,6 +100,21 @@ RECIPES = [
     ("posicao2", [(0.4, 0.0, 0.5), (0.4, 0.0, 0.5), (0.0, 0.4, 0.2)]),
     ("posicao3", [(-0.4, 0.0, 0.5), (-0.4, 0.0, 0.5), (0.0, 0.4, 0.2)]),
 ]
+
+# --- Re-âncora visual da guarda (posição 1) --------------------------------
+# Elemento de referência: o pilar em Y do galpão (decisão Eduardo 31/08/2026
+# — a obra evolui, o pilar não). ROI no frame de referência; a correlação de
+# fase roda sobre magnitude de gradiente, então o pilar (bordas fortes)
+# domina mesmo com o fundo mudando.
+REF_PATH = "/var/lib/timelapse/ref/posicao1-ref.jpg"
+ROI = (300, 50, 500, 850)        # x, y, w, h do pilar no frame de referência
+SEARCH_MARGIN = 350              # px de busca ao redor da ROI no frame atual
+DOWNSCALE = 4                    # correlação em 1/4 da resolução
+PAN_PX_PER_S = 1600.0            # px de pan por s de burst @ vel 0.4 (aprox)
+TILT_PX_PER_S = 1000.0           # idem para tilt
+REANCHOR_TOL_PX = 80             # |offset| aceitável (~3.5% do FOV)
+REANCHOR_MAX_ITER = 3
+REANCHOR_CONF_MIN = 0.04         # pico da correlação abaixo disso = não confiar
 SECONDARY_DELAY_S = 30   # wait after the main shots before moving
 SETTLE_S = 2             # settle after arriving, before shooting
 
@@ -200,6 +224,94 @@ def back_to_guard(done):
         time.sleep(1)
 
 
+def _measure_offset(ref_path, cur_path):
+    """(sx, sy, conf): deslocamento do conteúdo atual vs referência, em px
+    full-res, medido na ROI do pilar. sx>0 = conteúdo à direita (câmera
+    pan-esquerda); sy>0 = conteúdo abaixo (câmera tilt-acima)."""
+    import numpy as np
+    from PIL import Image
+
+    x, y, w, h = ROI
+    m = SEARCH_MARGIN
+    ref = Image.open(ref_path).convert("L")
+    cur = Image.open(cur_path).convert("L")
+    W, H = ref.size
+    wx0, wy0 = max(0, x - m), max(0, y - m)
+    wx1, wy1 = min(W, x + w + m), min(H, y + h + m)
+    ref_roi = ref.crop((x, y, x + w, y + h))
+    cur_win = cur.crop((wx0, wy0, wx1, wy1))
+
+    def prep(img):
+        img = img.resize((img.width // DOWNSCALE, img.height // DOWNSCALE))
+        a = np.asarray(img, dtype=np.float64)
+        gy, gx = np.gradient(a)
+        g = np.hypot(gx, gy)
+        return g - g.mean()
+
+    g_ref = prep(ref_roi)
+    g_cur = prep(cur_win)
+    canvas = np.zeros_like(g_cur)
+    ox, oy = (x - wx0) // DOWNSCALE, (y - wy0) // DOWNSCALE
+    canvas[oy:oy + g_ref.shape[0], ox:ox + g_ref.shape[1]] = g_ref
+
+    F1 = np.fft.fft2(g_cur)
+    F2 = np.fft.fft2(canvas)
+    R = F1 * np.conj(F2)
+    R /= np.abs(R) + 1e-9
+    r = np.real(np.fft.ifft2(R))
+    peak = np.unravel_index(np.argmax(r), r.shape)
+    conf = float(r[peak])   # pico da correlação de fase (match nítido ≳0.04)
+    sy, sx = peak
+    if sy > r.shape[0] // 2:
+        sy -= r.shape[0]
+    if sx > r.shape[1] // 2:
+        sx -= r.shape[1]
+    return sx * DOWNSCALE, sy * DOWNSCALE, conf
+
+
+def _burst_for(px, px_per_s):
+    dur = round(abs(px) / px_per_s, 1)
+    return max(0.1, min(0.6, dur))
+
+
+def cmd_reanchor(dry=False):
+    """Mede o offset da guarda vs referência e corrige com nudges."""
+    if not os.path.exists(REF_PATH):
+        print("sem referencia em", REF_PATH)
+        return 2
+    prev_mag = None
+    for it in range(1, REANCHOR_MAX_ITER + 1):
+        if not _grab_abs(RELAY_PT, "/tmp/reanchor.jpg"):
+            print("reanchor: snap falhou", file=sys.stderr)
+            return 1
+        sx, sy, conf = _measure_offset(REF_PATH, "/tmp/reanchor.jpg")
+        mag = max(abs(sx), abs(sy))
+        print(f"reanchor it{it}: offset=({sx:+.0f},{sy:+.0f})px conf={conf:.3f}")
+        if conf < REANCHOR_CONF_MIN:
+            print("reanchor: confianca baixa, nao vou mexer", file=sys.stderr)
+            return 1
+        if mag <= REANCHOR_TOL_PX:
+            print("reanchor: dentro da tolerancia")
+            return 0
+        if dry:
+            print("reanchor: dry-run, sem correcao")
+            return 0
+        if prev_mag is not None and mag >= prev_mag:
+            print("reanchor: offset nao diminuiu — abortando p/ nao vagar",
+                  file=sys.stderr)
+            return 1
+        prev_mag = mag
+        if abs(sx) > REANCHOR_TOL_PX:
+            ptz_move(0.4 if sx > 0 else -0.4, 0, _burst_for(sx, PAN_PX_PER_S))
+            time.sleep(1)
+        if abs(sy) > REANCHOR_TOL_PX:
+            ptz_move(0, -0.4 if sy > 0 else 0.4, _burst_for(sy, TILT_PX_PER_S))
+            time.sleep(1)
+        time.sleep(SETTLE_S)
+    print("reanchor: max iteracoes atingido", file=sys.stderr)
+    return 1
+
+
 def cmd_trabalho():
     now = datetime.now()
     mins = now.hour * 60 + now.minute
@@ -213,6 +325,17 @@ def cmd_trabalho():
 
 def run_windows(T, windows, label):
     print(f"{label} today: {int(T // 60):02d}:{int(T % 60):02d}")
+    # re-ancora a guarda ~90 s antes da primeira janela (a baseline do
+    # firmware anda em dias de tracking encadeado — 31/08/2026)
+    first_target = (T + windows[0][0]) * 60 - 90
+    now = datetime.now()
+    now_s = now.hour * 3600 + now.minute * 60 + now.second
+    if now_s < first_target:
+        time.sleep(first_target - now_s)
+    try:
+        cmd_reanchor()
+    except Exception as e:  # numpy/PIL ausentes ou erro inesperado: segue sem
+        print(f"reanchor indisponivel: {e}", file=sys.stderr)
     failures = 0
     for off, folder in windows:
         target = (T + off) * 60  # seconds after midnight
@@ -264,6 +387,8 @@ def main():
         return cmd_postest("posicao2")
     if cmd == "pos3test":
         return cmd_postest("posicao3")
+    if cmd == "reanchor":
+        return cmd_reanchor(dry="--dry" in sys.argv[2:])
     print(__doc__)
     return 2
 

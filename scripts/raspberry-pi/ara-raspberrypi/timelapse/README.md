@@ -112,6 +112,33 @@ tracking ativo (domingo) acumulou ~5% de tilt após 3 vai-e-voltas — sempre
 encerrar comparando um snap com a referência da guarda e corrigindo com
 nudge antes de sair (o guard-return só zera com gente rastreada na obra).
 
+## Re-âncora visual da guarda (desde 31/08/2026)
+
+Descoberta de 31/08 (dia de instalação das telas colada na câmera): **a
+"guarda" do firmware não é um preset absoluto — é "volte para onde estava
+quando o tracking começou", e essa baseline ANDA quando trackings se
+encadeiam** (o pré-track do evento B é o meio do track do A). Em dias de
+trabalho intenso perto da câmera a posição 1 pode migrar (aconteceu:
+~6–10% à esquerda entre 12:00 e 15:00; lente fixa intacta provou que não
+foi esbarrão físico).
+
+Correção: `timelapse-capture reanchor [--dry]` — correlação de fase
+(numpy/Pillow, na imagem do container) entre um snap atual e a
+**referência dourada** `/var/lib/timelapse/ref/posicao1-ref.jpg` (backup
+em `ceuazul:Timelapse/ref/`), medindo o offset na **ROI do pilar em Y do
+galpão** (constante `ROI`; o pilar é estrutura da câmera — a obra evolui,
+ele não — decisão Eduardo 31/08/2026). Converte px→bursts, corrige e
+re-mede (até 3 iterações, tolerância 80 px, gate de confiança 0.04 — pico
+sobe quando alinha: 0.040→0.102 na validação noturna, que terminou a
+(+0,+16) px). Roda automaticamente ~90 s antes da primeira janela de cada
+sequência solar; falha de importação/confiança nunca bloqueia as fotos
+(prossegue sem corrigir e loga).
+
+Manutenção da referência: quando a guarda for deliberadamente REPOSICIONADA
+(nova posição desejada), gravar novo dourado — `cp` de um frame bom de
+posicao1 para `/var/lib/timelapse/ref/posicao1-ref.jpg` + `rclone copyto`
+para `ceuazul:Timelapse/ref/` — e conferir se a `ROI` do pilar ainda vale.
+
 Premissas a vigiar nas primeiras semanas: (1) enquadramento estável entre
 dias em `posicao1/` — se variar, o guard-return não está confiável e o
 fallback é montar com `lentefixa/`; (2) acúmulo de resíduo nas principais de

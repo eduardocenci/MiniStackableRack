@@ -13,6 +13,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg rclone tzdata ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
+# numpy + pillow: re-âncora visual da guarda (correlação de fase na ROI do
+# pilar — timelapse-capture reanchor)
+RUN pip install --no-cache-dir numpy pillow
+
 ARG SUPERCRONIC_VERSION=v0.2.34
 ADD https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-arm64 /usr/local/bin/supercronic
 
