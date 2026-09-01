@@ -7,9 +7,10 @@ Usage: python3 frigate_scene_check.py [night|rain|away|manual]   # run a check p
        python3 frigate_scene_check.py capture [cam ...]     # snapshot current scene as ground truth
        python3 frigate_scene_check.py selftest [cam]        # box+gate+draw one cam → SmokeTests only
 
-On a positive verdict the pipeline locates each finding (grounding call), re-checks it with a
-focused crop compare (the bbox verification gate — rejects weather/lighting false positives the
-whole-scene verdict lets through) and draws the surviving box on the alert image. Grounding and
+On a positive verdict the pipeline locates each finding (grounding call): a finding the
+grounding call says is NOT in the frame is dropped there, and one it locates is re-checked with
+a focused crop compare (the bbox verification gate — rejects weather/lighting false positives
+the whole-scene verdict lets through) before its box is drawn on the alert image. Grounding and
 gate use the same OpenAI-primary / Ollama-fallback policy as the verdict; image ops use ffmpeg
 (no Pillow dependency) and fail open.
 
@@ -103,6 +104,8 @@ SEND_ATTEMPTS    = 3     # WhatsApp send retries
 # On a positive verdict, locate the finding (grounding call) and re-check it with a
 # focused crop compare before alerting; the surviving box is drawn on the alert image.
 # Same OpenAI-primary / Ollama-fallback policy as the verdict (no model mixing).
+# A grounding call that answers present:false REFUTES the finding outright — only an
+# UNUSABLE grounding answer (no/!bad JSON) fails open into the alert. See parse_bbox.
 ENABLE_BBOX_GATE = True
 BBOX_PAD_FRAC    = 0.45  # crop padding around the located box (fraction of box size)
 REGION_PAD_FRAC  = 0.15  # smaller pad for configured region anchors (already generous)
@@ -690,35 +693,47 @@ def _crop(img: bytes, box: list[float], pad: float = BBOX_PAD_FRAC) -> bytes | N
     return _ffmpeg_pipe(["-vf", f"crop={cx1 - cx0}:{cy1 - cy0}:{cx0}:{cy0}"], img)
 
 
-def parse_bbox(text: str) -> list[float] | None:
-    """0-1000 box from a grounding reply; None if absent or present:false."""
+def parse_bbox(text: str) -> tuple[list[float] | None, bool]:
+    """(box 0-1000, refuted) from a grounding reply.
+
+    `refuted` is True ONLY for an explicit {"present": false} — BBOX_PROMPT asks for
+    exactly that answer when the anomaly is not in the frame, so it is a VERDICT and
+    must kill the finding. Every other miss (no JSON, bad JSON, malformed box) is an
+    unusable answer, not a denial: (None, False), and the caller fails open.
+
+    Collapsing the two into a bare None is what let a nonexistent "bicicleta deixada no
+    gramado" reach the family group on 2026-09-01 13:46 — the grounding call had already
+    answered present:false, and the caller read that as "could not locate → keep".
+    """
     m = _JSON_RE.search(text or "")
     if not m:
-        return None
+        return None, False
     try:
         obj = json.loads(m.group(0))
     except ValueError:
-        return None
+        return None, False
     if obj.get("present") is False:
-        return None
+        return None, True
     box = obj.get("box_2d") or obj.get("box") or obj.get("bbox")
     if not (isinstance(box, list) and len(box) == 4):
-        return None
+        return None, False
     try:
         vals = [float(v) for v in box]
     except (TypeError, ValueError):
-        return None
+        return None, False
     if max(vals) <= 1.5:            # model answered in 0-1 fractions
         vals = [v * 1000 for v in vals]
-    return vals
+    return vals, False
 
 
-def request_bbox(current: bytes, description: str, secrets: dict) -> list[float] | None:
+def request_bbox(current: bytes, description: str,
+                 secrets: dict) -> tuple[list[float] | None, bool]:
+    """Locate the finding in the current frame. Returns (box, refuted) — see parse_bbox."""
     text, backend = ask_llm(BBOX_PROMPT.replace("__DESC__", description), [current],
                             secrets, detail="high")
-    box = parse_bbox(text or "")
-    log.info("bbox(%s): %s", backend, box)
-    return box
+    box, refuted = parse_bbox(text or "")
+    log.info("bbox(%s): %s", backend, "REFUTADO (present:false)" if refuted else box)
+    return box, refuted
 
 
 def parse_gate(text: str) -> bool | None:
@@ -1012,7 +1027,10 @@ def selftest(cam: str, secrets: dict) -> None:
                                       exemplars=exemplars, cues=cues_by_check.get(cid, ""))
             note = f"região configurada{' + exemplar' if exemplars else ''}: {note}"
         else:
-            box = request_bbox(current, desc, secrets)
+            box, refuted = request_bbox(current, desc, secrets)
+            if refuted:
+                lines.append(f"• [{cid}] 🚫 grounding: objeto não está na imagem → suprimiria")
+                continue
             if box is None:
                 lines.append(f"• [{cid}] sem bbox → manteria (sem verificação)")
                 continue
@@ -1147,9 +1165,21 @@ def _run_inner(profile: str, secrets: dict, debug: bool) -> None:
                     note = f"região configurada: {note}"
                     box = region
                 else:
-                    box = request_bbox(current, desc, secrets)
+                    box, refuted = request_bbox(current, desc, secrets)
+                    if refuted:
+                        # "Não está na imagem" is a VERDICT, not an infra hiccup: the
+                        # object the whole-scene pass claimed simply is not in the frame.
+                        # Drop it here — with no box the crop gate can never run, so this
+                        # is the only place the claim can be refuted. (2026-09-01 13:46:
+                        # a "bicicleta no gramado" that did not exist was alerted to the
+                        # family group after exactly this answer was read as "unlocated".)
+                        log.info("%s: [%s] SUPPRESSED by grounding — objeto não está na "
+                                 "imagem (present:false)", cam, cid)
+                        debug_lines.append(
+                            f"    ↳ [{cid}] 🚫 grounding: objeto não está na imagem")
+                        continue
                     if box is None:
-                        kept.append((cid, desc))      # no localization → keep, don't draw
+                        kept.append((cid, desc))      # unusable answer → fail open, don't draw
                         debug_lines.append(f"    ↳ [{cid}] sem bbox → mantido")
                         continue
                     keep, note = gate_finding(ref_img, current, box, desc, secrets)
