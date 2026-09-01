@@ -138,17 +138,19 @@ mais parecida com a de agora (uma só referência de madrugada caía a
 conf≈0.02 no crepúsculo e bloqueava a correção quando mais precisava).
 Offset medido na **ROI do pilar em Y do galpão** (constante `ROI`; o
 pilar é estrutura da câmera — a obra evolui, ele não — decisão Eduardo
-31/08/2026). **Lei de controle** (medida 01/09/2026 à noite): abaixo de
-~0.25 s a *duração* do burst não controla nada — a latência HTTP
-`ContinuousMove`→`Stop` domina e a câmera anda ~400 px de pan a vel 0.4
-tanto com 0.1 s quanto com 0.2 s; o grau de liberdade fino é a
-**velocidade** (vel 0.2 → ~160 px). Por isso os bursts de correção têm
-duração fixa (0.2 s) e velocidade proporcional ao offset (0.1–0.4; ~400 px
-de pan e ~180 px de tilt por burst a 0.4); offsets abaixo de 100 px são
-aceitos (o menor burst pioraria). Corrige e re-mede (até 4 iterações,
-tolerância 80 px, gate de confiança 0.02), avaliando **por eixo**: o eixo
-que piorou tem a correção desfeita, o outro fica; os dois piorando =
-aborta — nunca vaga. Roda ~60 s **antes de CADA janela** e **após cada
+31/08/2026). **Lei de controle** (mapeada 01/09/2026 à noite, ~40 bursts
+medidos): o motor de pan tem um **quantum mínimo de ~280 px por comando**
+— v≤0.12 não move; v=0.15–0.25 → ~280–380 px; v=0.4 → ~400 px; duração
+<0.25 s não modula (latência HTTP `ContinuousMove`→`Stop` + rampa dominam)
+e o `<Timeout>` do ONVIF, embora honrado, é errático abaixo de 0.2 s e
+dá o mesmo quantum a 0.2 s. Tilt: quantum ~180 px (0.2 s a 0.4). Logo a
+precisão fisicamente possível é **±140 px** e a lei é: corrigir só acima
+de 150 px (pan) / 100 px (tilt) — abaixo disso o quantum pioraria —, com
+v 0.4 para erros ≥350 px e v 0.2 para os demais; bursts de 0.2 s.
+Corrige e re-mede (até 4 iterações, tolerância 80 px, gate de confiança
+0.02, janela de busca ±500 px), avaliando **por eixo**: eixo que piorou
+tem a correção desfeita, o outro fica; eixo que não se moveu (<20 px,
+stall) é aceito sem insistir; os dois piorando = aborta — nunca vaga. Roda ~60 s **antes de CADA janela** e **após cada
 volta** de pos2 e de pos3 (a última volta da sequência deixa a câmera na
 guarda para `trabalho/` e para a noite); falha de importação/confiança
 nunca bloqueia as fotos (prossegue sem corrigir e loga). Logs em tempo

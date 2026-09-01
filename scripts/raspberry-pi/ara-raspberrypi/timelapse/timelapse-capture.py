@@ -112,21 +112,24 @@ RECIPES = [
 REF_DIR = "/var/lib/timelapse/ref"   # posicao1-*.jpg: madrugada/dia/crepúsculo —
                                      # usa-se a de maior pico (casa a iluminação)
 ROI = (300, 50, 500, 850)        # x, y, w, h do pilar no frame de referência
-SEARCH_MARGIN = 350              # px de busca ao redor da ROI no frame atual
+SEARCH_MARGIN = 500              # px de busca ao redor da ROI (um quantum de 280 px + folga)
 DOWNSCALE = 4                    # correlação em 1/4 da resolução
-# Lei de controle (medida 01/09/2026): abaixo de ~0.25 s a DURAÇÃO do burst
-# não controla nada — a latência HTTP ContinuousMove→Stop domina e a câmera
-# anda ~400 px de pan a vel 0.4 tanto com 0.1 s quanto com 0.2 s. O grau de
-# liberdade fino é a VELOCIDADE (vel 0.2 → ~160 px). Bursts de correção têm
-# duração fixa e velocidade proporcional ao offset.
+# Lei de controle (medida 01/09/2026, ~40 bursts): o motor tem um QUANTUM
+# minimo de ~280 px de pan por comando — v<=0.12 nao move; v=0.15..0.25 ->
+# ~280-380 px; v=0.4 -> ~400 px; duracao <0.25 s e <Timeout> do ONVIF nao
+# modulam (latencia/rampa dominam). Precisao possivel: +-140 px. Por isso
+# so corrige acima de ~150 px (pan) / 100 px (tilt, quantum ~180) e usa
+# velocidade alta (0.4) so para erros grandes.
 CORR_BURST_S = 0.2
-PAN_PX_AT_V04 = 400.0            # px de pan num burst de 0.2 s a vel 0.4
-TILT_PX_AT_V04 = 180.0           # idem tilt (0.2 s a 0.4 → ~160-200 px)
-CORR_V_MIN, CORR_V_MAX = 0.1, 0.4
+PAN_QUANTUM_PX = 280.0           # menor passo de pan executavel (v 0.15-0.2)
+PAN_BIG_PX = 350.0               # acima disso usa v 0.4 (~400 px)
+TILT_QUANTUM_PX = 180.0          # tilt a v 0.4, 0.2 s
 REANCHOR_TOL_PX = 80             # |offset| aceitável (~3.5% do FOV)
-CORRECT_MIN_PX = 80              # = tolerancia: acima dela sempre tenta o menor burst (desfaz por eixo se piorar)
+PAN_CORRECT_MIN_PX = 150         # abaixo disso o quantum de 280 px pioraria
+TILT_CORRECT_MIN_PX = 100
 REANCHOR_MAX_ITER = 4
 REANCHOR_CONF_MIN = 0.02         # pico abaixo disso = não confiar (crepúsculo ~0.02–0.05)
+STALL_PX = 20                    # eixo que se moveu menos que isso apos um burst = stall; aceita e nao insiste
 SECONDARY_DELAY_S = 30   # wait after the main shots before moving
 SETTLE_S = 2             # settle after arriving, before shooting
 
@@ -281,10 +284,16 @@ def _measure_offset(ref_path, cur_path):
     return sx * DOWNSCALE, sy * DOWNSCALE, conf
 
 
-def _corr_velocity(px, px_at_v04):
-    """Velocidade (0.1..0.4) para um burst de CORR_BURST_S que mova ~|px|."""
-    v = 0.4 * abs(px) / px_at_v04
-    return round(max(CORR_V_MIN, min(CORR_V_MAX, v)), 2)
+def _corr_moves(sx, sy):
+    """Bursts de correcao (vx, vy, dur) para o offset medido — um por eixo,
+    respeitando o quantum minimo do motor (ver constantes)."""
+    moves = {}
+    if abs(sx) >= PAN_CORRECT_MIN_PX:
+        v = 0.4 if abs(sx) >= PAN_BIG_PX else 0.2
+        moves["pan"] = (v if sx > 0 else -v, 0, CORR_BURST_S)
+    if abs(sy) >= TILT_CORRECT_MIN_PX:
+        moves["tilt"] = (0, -0.4 if sy > 0 else 0.4, CORR_BURST_S)
+    return moves
 
 
 def _measure_best(cur_path):
@@ -303,7 +312,7 @@ def cmd_reanchor(dry=False, tag=""):
     """Mede o offset da guarda vs referência e corrige com bursts de
     velocidade proporcional. Avalia POR EIXO: um eixo que piorou tem a sua
     correção desfeita (o outro fica); dois eixos piorando = aborta."""
-    prev, last_moves = None, {}
+    prev, last_moves, stalled = None, {}, set()
     for it in range(1, REANCHOR_MAX_ITER + 1):
         if not _grab_abs(RELAY_PT, "/tmp/reanchor.jpg"):
             print("reanchor: snap falhou", file=sys.stderr)
@@ -324,13 +333,19 @@ def cmd_reanchor(dry=False, tag=""):
             print("reanchor: dry-run, sem correcao")
             return 0
         if prev is not None:
-            worse = [ax for ax, cur, old in (("pan", sx, prev[0]), ("tilt", sy, prev[1]))
-                     if ax in last_moves and abs(cur) > abs(old) + 40]
-            for ax in worse:  # desfaz só o eixo que piorou
-                vx, vy, dur = last_moves[ax]
-                ptz_move(-vx, -vy, dur)
-                time.sleep(1)
-                print(f"reanchor: {ax} piorou, correcao desfeita", file=sys.stderr)
+            worse = []
+            for ax, cur, old in (("pan", sx, prev[0]), ("tilt", sy, prev[1])):
+                if ax not in last_moves:
+                    continue
+                if abs(cur - old) < STALL_PX:       # burst nao moveu o motor
+                    stalled.add(ax)
+                    print(f"reanchor: {ax} nao se moveu (stall), aceito como esta", file=sys.stderr)
+                elif abs(cur) > abs(old) + 40:      # piorou: desfaz so este eixo
+                    worse.append(ax)
+                    vx, vy, dur = last_moves[ax]
+                    ptz_move(-vx, -vy, dur)
+                    time.sleep(1)
+                    print(f"reanchor: {ax} piorou, correcao desfeita", file=sys.stderr)
             if len(worse) == 2 or (worse and len(last_moves) == 1):
                 print("reanchor: nao converge — abortando", file=sys.stderr)
                 return 1
@@ -338,20 +353,14 @@ def cmd_reanchor(dry=False, tag=""):
                 time.sleep(SETTLE_S)
                 continue  # re-mede antes de tentar de novo
         prev, last_moves = (sx, sy), {}
-        if abs(sx) >= CORRECT_MIN_PX:
-            v = _corr_velocity(sx, PAN_PX_AT_V04)
-            mv = (v if sx > 0 else -v, 0, CORR_BURST_S)
+        for ax, mv in _corr_moves(sx, sy).items():
+            if ax in stalled:
+                continue
             ptz_move(*mv)
-            last_moves["pan"] = mv
+            last_moves[ax] = mv
             time.sleep(1)
-        if abs(sy) >= CORRECT_MIN_PX:
-            v = _corr_velocity(sy, TILT_PX_AT_V04)
-            mv = (0, -v if sy > 0 else v, CORR_BURST_S)
-            ptz_move(*mv)
-            last_moves["tilt"] = mv
-            time.sleep(1)
-        if not last_moves:  # residuo abaixo do menor burst util: aceita
-            print("reanchor: residuo abaixo do passo minimo, aceito")
+        if not last_moves:  # nada corrigivel (abaixo do passo minimo ou stall): aceita
+            print("reanchor: residuo nao corrigivel com o passo minimo, aceito")
             return 0
         time.sleep(SETTLE_S)
     print("reanchor: max iteracoes atingido", file=sys.stderr)
