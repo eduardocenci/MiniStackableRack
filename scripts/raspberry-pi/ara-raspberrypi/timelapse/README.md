@@ -87,12 +87,12 @@ outbox acumula (SD de 58 GB ≈ anos) e o próximo upload drena.
 | [`../ptz/canteiro-ptz.py`](../ptz/canteiro-ptz.py) | idem (`/usr/local/bin/canteiro-ptz` na imagem); credenciais em `~/canteiro-timelapse/env/canteiro-ptz.env`, montado ro em `/etc/canteiro-ptz.env` |
 | remote rclone `ceuazul` | `~eduardocenci/.config/rclone/rclone.conf` (600, montado rw no container — uid 1000 preserva o dono no refresh do token) — OAuth Google de eduardocenci@gmail.com, `root_folder_id` apontando para a pasta **CeuAzul**; backup do conf em `gitignore/ara-rclone.conf` no repo raiz |
 
-Consumidor downstream: o container seg–sex das 20:10 no bnu-raspberrypi
+Consumidor downstream: o container diário das 20:10 no bnu-raspberrypi
 ([`../../bnu-raspberrypi/canteiro-sunset-compare/`](../../bnu-raspberrypi/canteiro-sunset-compare/))
-monta a grade 2×3 do pôr do sol (último dia útil × hoje, colunas
-pos3|pos1|pos2) no WhatsApp e arquiva cada grade em
-`DiaDeTrabalho/YYYY-MM-DD.jpg` no topo do Timelapse — mudanças na
-estrutura do Drive precisam acompanhar lá.
+monta as grades 2×3 do pôr do sol (Dia seg–sex, Semana às sextas, Mês no
+dia 25; colunas pos3|pos1|pos2) no WhatsApp e arquiva em
+`DiaDeTrabalho/`, `SemanaDeTrabalho/` e `MesDeTrabalho/` no topo do
+Timelapse — mudanças na estrutura do Drive precisam acompanhar lá.
 
 ## Operação
 
