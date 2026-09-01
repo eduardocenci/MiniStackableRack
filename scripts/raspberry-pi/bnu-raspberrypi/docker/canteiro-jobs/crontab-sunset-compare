@@ -1,4 +1,6 @@
-# canteiro-sunset-compare — Mon-Fri 20:10 America/Sao_Paulo (container TZ
-# env), 10 min after the ara Pi's 20:00 upload. The script itself still
-# skips Sat/Sun as a second guard.
-10 20 * * 1-5 python3 /app/canteiro-sunset-compare.py
+# canteiro-sunset-compare — DIÁRIO 20:10 America/Sao_Paulo (container TZ
+# env), 10 min após o upload das 20:00 do ara Pi. O script decide o que
+# emitir: Dia de Trabalho (seg–sex), + Semana de Trabalho (sexta),
+# + Mês de Trabalho (dia 25, qualquer dia da semana — janela de medição
+# da empreiteira, 26→25). Fim de semana sem produto = sai quieto.
+10 20 * * * python3 /app/canteiro-sunset-compare.py

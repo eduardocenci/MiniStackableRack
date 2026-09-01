@@ -1,26 +1,27 @@
-# canteiro-sunset-compare — "Dia de Trabalho": grade do pôr do sol (WhatsApp)
+# canteiro-sunset-compare — grades do pôr do sol: Dia/Semana/Mês de Trabalho (WhatsApp)
 
-Toda **segunda–sexta às 20:10 America/Sao_Paulo** (dias de trabalho —
-decisão Eduardo 27/08/2026; o script ainda pula sáb/dom por garantia) o
-container `canteiro-sunset-compare` no bnu-raspberrypi (supercronic — ver
+**Todo dia às 20:10 America/Sao_Paulo** o container `canteiro-sunset-compare`
+no bnu-raspberrypi (supercronic — ver
 [`../docker/canteiro-jobs/`](../docker/canteiro-jobs/); systemd timer até
-2026-08-29) baixa do Google Drive as fotos do pôr do sol nas TRÊS posições
-da lente PT (timelapse do ara Pi, upload às 20:00 — ver
-[`../../ara-raspberrypi/timelapse/`](../../ara-raspberrypi/timelapse/)) e
-monta a **grade 2×3** (layout Eduardo 31/08/2026):
+2026-08-29) decide o que emitir. Cada produto é uma **grade 2×3** com as
+fotos do pôr do sol nas TRÊS posições da lente PT (timelapse do ara Pi,
+upload às 20:00 — ver
+[`../../ara-raspberrypi/timelapse/`](../../ara-raspberrypi/timelapse/)):
+linha 1 = baseline, linha 2 = hoje; colunas posicao3 | posicao1 | posicao2
+(esquerda→centro→direita da obra); 800 px/célula → 2400×900 (ffmpeg
+hstack+vstack).
 
-|  | esquerda | centro | direita |
+| Produto | Quando | Baseline (linha 1) | Exceção de estreia |
 |---|---|---|---|
-| **linha 1 — dia anterior** | posicao3 | posicao1 | posicao2 |
-| **linha 2 — dia corrente** | posicao3 | posicao1 | posicao2 |
+| 🌇 `Dia de Trabalho (DD/MM)` | seg–sex | ontem; segunda usa SEXTA | 31/08/2026 → domingo 30/08 |
+| 🏗️ `Semana de Trabalho (seg - sex)` | sexta, após o Dia | sexta anterior | 04/09/2026 → domingo 30/08 |
+| 📆 `Mês de Trabalho (26/MM - 25/MM)` | **dia 25, qualquer dia da semana** (janela de medição da empreiteira, 26→25) | dia 26 do mês anterior | 25/09/2026 → 31/08 (decisão Eduardo — sem imagens de 26/08) |
 
-800 px por célula (2400×900, ffmpeg hstack+vstack). Dia anterior = ontem;
-**segunda compara com sexta** (exceção única 31/08/2026: usou domingo
-30/08, primeiro dia com as três posições). Envio no grupo via WAHA
-`sendImage` com a legenda `🌇 Dia de Trabalho (DD/MM)` (funciona neste
-Core build; mesmo padrão do
+Envio via WAHA `sendImage` (funciona neste Core build; mesmo padrão do
 [`../canteiro-watchdog/`](../canteiro-watchdog/)). A câmera queima
-data/hora em cada frame, então a grade dispensa legenda por célula.
+data/hora em cada frame, então as grades dispensam legenda por célula.
+Produtos do mesmo dia saem em sequência (Dia → Semana → Mês) e reusam os
+downloads entre si.
 
 Pedido Eduardo 27/08/2026. Roda em bnu (e não no ara Pi) porque o WAHA
 (LXC 101, `10.1.1.126`) é LAN-only de bnu; o Drive é o ponto de encontro.
@@ -37,10 +38,10 @@ Pedido Eduardo 27/08/2026. Roda em bnu (e não no ara Pi) porque o WAHA
 - Última montagem enviada fica em `/tmp/ultima-comparacao.jpg` **dentro do
   container** (inspeção: `docker exec canteiro-sunset-compare ls -la /tmp`;
   some quando o container é recriado).
-- Cada grade também é **arquivada no Drive** em
-  `Timelapse/DiaDeTrabalho/YYYY-MM-DD.jpg` — topo do Timelapse (série
-  diária pronta para consulta/IA, além do envio no WhatsApp; movida de
-  `posicao1/DiaDeTrabalho/` em 31/08/2026, arquivos antigos migrados).
+- Cada grade também é **arquivada no Drive** no topo do Timelapse:
+  `DiaDeTrabalho/`, `SemanaDeTrabalho/` e `MesDeTrabalho/` +
+  `YYYY-MM-DD.jpg` (séries prontas para consulta/IA, além do envio no
+  WhatsApp; DiaDeTrabalho movida de `posicao1/` em 31/08/2026).
 - **Destino de produção ATIVO desde 27/08/2026** (comando do Eduardo):
   grupo **Cenci Céu Azul Casa-Hangar** (`120363402090094156@g.us`). O JID
   do Casa SmokeTests fica comentado no env como rollback/staging.
@@ -63,8 +64,9 @@ upload do ara Pi). Diferente do timer (`Persistent=true`), o supercronic
 ## Teste sem pingar a família
 
 ```
-docker exec canteiro-sunset-compare python3 /app/canteiro-sunset-compare.py --test            # → TEST_JID (Casa SmokeTests)
-docker exec canteiro-sunset-compare python3 /app/canteiro-sunset-compare.py --test <chatId>   # → qualquer chat
+docker exec canteiro-sunset-compare python3 /app/canteiro-sunset-compare.py --test                    # → TEST_JID, produtos de hoje
+docker exec canteiro-sunset-compare python3 /app/canteiro-sunset-compare.py --test all                # força os 3 produtos
+docker exec canteiro-sunset-compare python3 /app/canteiro-sunset-compare.py --test mes <chatId>       # um produto, chat específico
 ```
 
 A mensagem sai prefixada com `[TESTE]`. Smoke tests: 27/08/2026 (systemd,

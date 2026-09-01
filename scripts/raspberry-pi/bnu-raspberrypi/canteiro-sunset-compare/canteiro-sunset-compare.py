@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
-"""canteiro-sunset-compare — "Dia de Trabalho": grade diária do pôr do sol da obra ARA.
+"""canteiro-sunset-compare — grades do pôr do sol da obra ARA (WhatsApp).
 
-Toda segunda–sexta às 20:10 America/Sao_Paulo (container canteiro-sunset-compare
-no bnu-raspberrypi, supercronic com TZ=America/Sao_Paulo — ver
+Todo dia às 20:10 America/Sao_Paulo (container canteiro-sunset-compare no
+bnu-raspberrypi, supercronic com TZ=America/Sao_Paulo — ver
 docker/canteiro-jobs/; o "dia" é calculado aqui com ZoneInfo, nunca com a
-hora local) baixa do Google Drive as fotos do pôr do sol nas TRÊS posições
-da lente PT e monta a grade 2×3 (layout decidido por Eduardo 31/08/2026):
+hora local) o script decide o que emitir — cada produto é uma grade 2×3
+(linha 1 = baseline, linha 2 = hoje; colunas posicao3 | posicao1 |
+posicao2 = esquerda→centro→direita da obra; 800 px/célula → 2400×900):
 
-  linha 1 (dia anterior):  posicao3 | posicao1 | posicao2
-  linha 2 (dia corrente):  posicao3 | posicao1 | posicao2
+  🌇 Dia de Trabalho (seg–sex)    baseline = ontem; segunda usa SEXTA
+                                  (exceção 31/08/2026: domingo 30/08)
+  🏗️ Semana de Trabalho (sexta)   baseline = sexta anterior; legenda mostra
+                                  seg–sex da semana (exceção 04/09/2026:
+                                  domingo 30/08)
+  📆 Mês de Trabalho (dia 25,     baseline = dia 26 do mês anterior —
+     qualquer dia da semana)      janela de medição da empreiteira 26→25
+                                  (exceção 25/09/2026: 31/08, decisão
+                                  Eduardo — não há imagens de 26/08)
 
-Colunas em ordem esquerda→centro→direita da obra (pos3 = rua/estoque,
-pos1 = guarda/fundação, pos2 = bancada/pátio), 800 px por célula →
-2400×900. Dia anterior = ontem; segunda compara com SEXTA (exceção única
-31/08/2026: usa domingo 30/08, primeiro dia com as três posições). Fotos
-vêm do timelapse do ara Pi (upload às 20:00 — daí a folga de 10 min +
-retries). A grade é arquivada em `DiaDeTrabalho/YYYY-MM-DD.jpg` no topo do
-Timelapse (movido de posicao1/DiaDeTrabalho em 31/08/2026) e enviada no
-WhatsApp via WAHA `sendImage` (base64 — funciona neste Core build, mesmo
-padrão do canteiro-watchdog).
+Fotos vêm do timelapse do ara Pi (upload às 20:00 — daí a folga de 10 min
++ retries; cache local reusa downloads entre produtos da mesma execução).
+Cada grade é arquivada no topo do Timelapse em
+`<DiaDeTrabalho|SemanaDeTrabalho|MesDeTrabalho>/YYYY-MM-DD.jpg` e enviada
+no WhatsApp via WAHA `sendImage` (base64 — funciona neste Core build,
+mesmo padrão do canteiro-watchdog).
 
 A câmera grava data/hora dentro de cada frame, então a própria grade
 carrega os carimbos dos dois dias em cada célula.
@@ -30,7 +35,8 @@ RCLONE_REMOTE (default ceuazul:Timelapse; remote no rclone.conf de
 do ara Pi).
 
 Teste manual (vai ao TEST_JID — grupo Casa SmokeTests):
-  docker exec canteiro-sunset-compare python3 /app/canteiro-sunset-compare.py --test
+  docker exec canteiro-sunset-compare python3 /app/canteiro-sunset-compare.py --test [all|daily|semana|mes] [chatId]
+  (sem filtro: testa os produtos que valeriam hoje; com filtro, força-os)
 """
 import base64
 import json
@@ -58,21 +64,31 @@ RETRY_WAIT_S = 180
 
 
 def rclone_fetch(pos, day, dest_dir, retries=1):
-    """Baixa o pôr do sol de `pos` no dia `day`; retorna caminho local ou None."""
+    """Baixa o pôr do sol de `pos` no dia `day`; retorna caminho local ou None.
+    Checa o cache local primeiro — vários produtos na mesma execução reusam
+    o que já foi baixado."""
     sub = os.path.join(dest_dir, f"{pos}-{day:%Y%m%d}")
     os.makedirs(sub, exist_ok=True)
     pat = day.strftime("%Y-%m-%d") + "_*.jpg"
+
+    def found():
+        hits = sorted(f for f in os.listdir(sub)
+                      if f.startswith(day.strftime("%Y-%m-%d")))
+        return os.path.join(sub, hits[-1]) if hits else None
+
     for i in range(retries):
+        f = found()
+        if f:
+            return f
         r = subprocess.run(["rclone", "copy", f"{REMOTE}/{pos}/por-do-sol",
                             sub, "--include", pat],
                            capture_output=True, timeout=180)
         if r.returncode != 0:
             print(f"rclone copy {pos} rc={r.returncode}: "
                   f"{r.stderr.decode(errors='replace')[-300:]}", file=sys.stderr)
-        found = sorted(f for f in os.listdir(sub)
-                       if f.startswith(day.strftime("%Y-%m-%d")))
-        if found:
-            return os.path.join(sub, found[-1])
+        f = found()
+        if f:
+            return f
         if i + 1 < retries:
             print(f"{pos} de {day:%d/%m} ainda nao esta no Drive; aguardando {RETRY_WAIT_S}s")
             time.sleep(RETRY_WAIT_S)
@@ -124,53 +140,98 @@ def previous_workday(today):
     return today - timedelta(days=3 if today.weekday() == 0 else 1)
 
 
+def week_baseline(today):
+    if today == date(2026, 9, 4):    # 1ª semana: sexta 28/08 não tem pos2/pos3
+        return date(2026, 8, 30)
+    return today - timedelta(days=7)  # sexta anterior
+
+
+def month_baseline(today):
+    # Mês de medição da empreiteira: 26 do mês anterior → 25 do atual.
+    if today == date(2026, 9, 25):   # 1º mês: sem imagens de 26/08 (Eduardo: usar 31/08)
+        return date(2026, 8, 31)
+    prev_last = today.replace(day=1) - timedelta(days=1)
+    return prev_last.replace(day=26)
+
+
+def month_caption_range(today):
+    prev_last = today.replace(day=1) - timedelta(days=1)
+    return f"26/{prev_last:%m} - 25/{today:%m}"
+
+
+def make_grid_cells(day_top, day_bottom, tmp, retries_bottom):
+    cells, faltam = [], []
+    for day, retries in ((day_top, 1), (day_bottom, retries_bottom)):
+        for pos in POSITIONS:
+            f = rclone_fetch(pos, day, tmp, retries)
+            if f:
+                cells.append(f)
+            else:
+                faltam.append(f"{pos} {day:%d/%m}")
+    return cells, faltam
+
+
 def main():
-    test = len(sys.argv) > 1 and sys.argv[1] == "--test"
-    chat = (sys.argv[2] if len(sys.argv) > 2 else TEST_JID) if test else GROUP_JID
+    argv = sys.argv[1:]
+    test = bool(argv) and argv[0] == "--test"
+    rest = argv[1:] if test else []
+    which = rest[0] if rest and rest[0] in ("all", "daily", "semana", "mes") else None
+    chat_arg = (rest[1] if len(rest) > 1 else None) if which else (rest[0] if rest else None)
+    chat = (chat_arg or TEST_JID) if test else GROUP_JID
     prefix = "[TESTE] " if test else ""
     now = datetime.now(TZ)
-    if not test and now.weekday() >= 5:  # recuperações de fim de semana não enviam
-        print("fim de semana, sem comparacao")
-        return 0
     today = now.date()
-    yesterday = previous_workday(today)
+    wd = now.weekday()
 
+    # (nome, dia_de_cima, legenda, pasta de arquivo no Drive)
+    products = []
+    if wd < 5 or (test and which in ("all", "daily")):
+        products.append(("daily", previous_workday(today),
+                         f"🌇 *Dia de Trabalho ({today:%d/%m})*", "DiaDeTrabalho"))
+    if wd == 4 or (test and which in ("all", "semana")):
+        monday = today - timedelta(days=wd if wd < 5 else 0)
+        products.append(("semana", week_baseline(today),
+                         f"🏗️ *Semana de Trabalho ({monday:%d/%m} - {today:%d/%m})*",
+                         "SemanaDeTrabalho"))
+    if today.day == 25 or (test and which in ("all", "mes")):
+        products.append(("mes", month_baseline(today),
+                         f"📆 *Mês de Trabalho ({month_caption_range(today)})*",
+                         "MesDeTrabalho"))
+    if not products:
+        print("nada a enviar hoje (fim de semana sem dia 25)")
+        return 0
+
+    rc = 0
     with tempfile.TemporaryDirectory(prefix="sunset-compare-") as tmp:
-        cells, faltam = [], []
-        for day, retries in ((yesterday, 1), (today, 1 if test else RETRIES)):
-            for pos in POSITIONS:
-                f = rclone_fetch(pos, day, tmp, retries)
-                if f:
-                    cells.append(f)
-                else:
-                    faltam.append(f"{pos} {day:%d/%m}")
-        if faltam:
-            st = send_text(chat, prefix + "⚠️ Grade do Dia de Trabalho não saiu hoje — "
-                           f"faltando no Drive: {', '.join(faltam)}.")
-            print(f"fotos faltando ({', '.join(faltam)}), aviso enviado, HTTP {st}")
-            return 1
-        out = os.path.join(tmp, "grade.jpg")
-        if not montage_grid(cells, out):
-            st = send_text(chat, prefix + "⚠️ Grade do Dia de Trabalho falhou na montagem (ffmpeg).")
-            print(f"montagem falhou, aviso enviado, HTTP {st}")
-            return 1
-        try:  # cópia de inspeção, sobrescrita a cada envio
-            import shutil
-            shutil.copyfile(out, "/tmp/ultima-comparacao.jpg")
-        except OSError:
-            pass
-        # arquivo permanente da grade no Drive (topo do Timelapse)
-        r = subprocess.run(
-            ["rclone", "copyto", out,
-             f"{REMOTE}/DiaDeTrabalho/{today:%Y-%m-%d}.jpg"],
-            capture_output=True, timeout=180)
-        if r.returncode != 0:
-            print("rclone copyto DiaDeTrabalho falhou: "
-                  + r.stderr.decode(errors="replace")[-200:], file=sys.stderr)
-        caption = prefix + f"🌇 *Dia de Trabalho ({today:%d/%m})*"
-        st = send_image(chat, out, caption)
-        print(f"grade {yesterday:%d/%m} vs {today:%d/%m} enviada, HTTP {st} -> {chat}")
-    return 0
+        for nome, day_top, caption, pasta in products:
+            titulo = caption.split("*")[1]
+            cells, faltam = make_grid_cells(day_top, today, tmp, 1 if test else RETRIES)
+            if faltam:
+                st = send_text(chat, prefix + f"⚠️ {titulo} não saiu — "
+                               f"faltando no Drive: {', '.join(faltam)}.")
+                print(f"{nome}: fotos faltando ({', '.join(faltam)}), aviso enviado, HTTP {st}")
+                rc = 1
+                continue
+            out = os.path.join(tmp, f"{nome}.jpg")
+            if not montage_grid(cells, out):
+                st = send_text(chat, prefix + f"⚠️ {titulo} falhou na montagem (ffmpeg).")
+                print(f"{nome}: montagem falhou, aviso enviado, HTTP {st}")
+                rc = 1
+                continue
+            try:  # cópia de inspeção, sobrescrita a cada envio
+                import shutil
+                shutil.copyfile(out, f"/tmp/ultima-{nome}.jpg")
+            except OSError:
+                pass
+            r = subprocess.run(["rclone", "copyto", out,
+                                f"{REMOTE}/{pasta}/{today:%Y-%m-%d}.jpg"],
+                               capture_output=True, timeout=180)
+            if r.returncode != 0:
+                print(f"rclone copyto {pasta} falhou: "
+                      + r.stderr.decode(errors="replace")[-200:], file=sys.stderr)
+            st = send_image(chat, out, prefix + caption)
+            print(f"{nome}: {day_top:%d/%m} vs {today:%d/%m} enviada, HTTP {st} -> {chat}")
+    return rc
 
 
 if __name__ == "__main__":
