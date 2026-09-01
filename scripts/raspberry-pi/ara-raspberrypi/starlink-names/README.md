@@ -22,6 +22,22 @@ Notes:
   not on the router — probed 2026-08-26: no local roster RPC).
 - The `Controller` entry (the router itself) is skipped; router and camera
   were hand-nicknamed ("Roteador Starlink", "Câmera do canteiro (iM9)").
+- **MAC de cliente vem mascarado** (achado 2026-08-31): o firmware
+  (apiVersion 131) redige o `macAddress` de toda entrada `role: CLIENT` até
+  o OUI — `54:ba:d9:XX:XX:XX` para a câmera, cujo MAC real é
+  `54:ba:d9:bd:34:e3`. Só `Controller` e `upstreamMacAddress` vêm inteiros.
+  A primeira versão casava direto por `by_mac[macAddress]` e por isso
+  **nunca apelidou nada** entre 26/08 e 31/08/2026 (0 `nicknamed` no
+  journal e em 390 iterações do container; os 2 apelidos existentes são
+  manuais). Desde 31/08 o MAC real é resolvido em 3 tentativas — MAC não
+  mascarado → link-local EUI-64 em `ipv6Addresses` → `ipAddress` casado com
+  o `ip` do netoverview — e as duas últimas exigem que o OUI mascarado
+  bata, para um lease DHCP velho não colar nome errado (nome errado gruda:
+  o script nunca sobrescreve).
+- Um celular só ganha nome se **reportar** um ao roteador. MAC randomizado
+  não impede (o netoverview vê o mesmo MAC randomizado por ARP), mas
+  aparelho que suprime o hostname DHCP chega como `unknown`/vazio e cai no
+  `SKIP_NAMES` — nenhum casamento de MAC resolve isso.
 - `grpcurl` v1.9.1 (official fullstorydev release, linux_arm64) is baked
   into the container image (a host copy from 2026-08-26 remains at
   `/usr/local/bin/grpcurl`).
@@ -32,3 +48,7 @@ deliberately separate from the camera stack; supercronic every 5 min; the
 old service+timer stay on the Pi disabled, one wave, as rollback). Test:
 `docker exec starlink-names python3 /app/starlink-names.py` (prints
 `done: N nickname(s) set`; never overwrites, so re-runs are safe).
+Diagnóstico: `docker exec starlink-names python3 /app/starlink-names.py
+--dry-run` — mostra, por cliente associado, como o MAC foi resolvido
+(`via eui64`/`ip`/`mac`) ou por que não foi (`no-name`, `ip-oui-mismatch`,
+`no-mac-in-netoverview`, `unseen-by-netoverview`), sem gravar nada.
