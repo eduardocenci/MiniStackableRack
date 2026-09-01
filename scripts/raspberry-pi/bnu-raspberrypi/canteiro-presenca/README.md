@@ -13,7 +13,11 @@ laptop, so after excluding the fixed MACs/hostnames (Starlink router,
 Intelbras iM9+ camera, the ara Pi itself) the device count approximates
 **how many people were at the obra today**; each line shows first→last
 sighting of the day ("00:00" = already online at midnight, "agora" =
-still online at report time).
+still online at report time). Devices outside `LAN_CIDR`
+(default `192.168.1.0/24`) are dropped too — defense in depth against
+the Docker-bridge `172.17.0.x` ghosts the netoverview scanner used to
+register during a `docker build` on the ara Pi (root-fixed in
+netoverview `d7f312a`, 31/08/2026).
 
 ## Install (container since 2026-08-29)
 

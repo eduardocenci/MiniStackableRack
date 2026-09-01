@@ -120,15 +120,22 @@ on bnu-raspberrypi):
 | Starlink router | `192.168.1.1` | house LAN gateway (DHCP for the whole `192.168.1.0/24`). **Local gRPC API works** (`192.168.1.1:9000`, reflection on): `grpcurl -plaintext -d '{"wifi_get_clients":{}}' 192.168.1.1:9000 SpaceX.API.Device.Device/Handle` → associated clients with **name+MAC+IP** (what the app shows; `wifi_set_client_given_name` also exists). No local roster of DISCONNECTED clients (that list lives in the Starlink cloud — probed 2026-08-26). `grpcurl` v1.9.1 installed at `/usr/local/bin` on the Pi; the `starlink-names` container syncs these names into netoverview nicknames every 5 min |
 | Starlink dish | `192.168.100.1` | behind the router (any LAN client reaches it). **Local gRPC API works** (`192.168.100.1:9200`, plaintext, no auth, reflection on — probed 2026-08-30): `get_status` = instantaneous down/uplink throughput, pop latency, obstruction, alerts; `get_history` = 900 s of 1 Hz ring buffers (throughput, latency, drop rate, **`powerIn` watts**) + outage event log. **Relayed onto the tailnet as `ara-raspberrypi:9200`** by the `starlink-proxy` socat container (since 2026-08-30) — globalnet reads the ARA live WAN ▼▲ + dish ⚡ from it. Same `Device/Handle` service as the router, different RPCs |
 
-> **Presence-report phantom (learned 2026-08-31):** a `docker build`/first run
-> on the Pi briefly attaches a container to Docker's default bridge — docker0
-> comes UP and netoverview logs `172.17.0.1` + `172.17.0.2` (random MAC → the
-> 20:00 WhatsApp report renders it `aparelho …<mac-suffix>`, e.g. `…c4:b4:79`
-> on 31/08) for one 5-min scan cycle, then both vanish. Any `172.17.0.x` row
-> is the Pi's own Docker, never a person on site — all production containers
-> are `network_mode: host` (blips so far: 29/08 19:07 dockerization wave,
-> 31/08 18:45 canteiro-timelapse deploy; a plain `docker run` of a pulled
-> image with `--network host` — starlink-proxy, 30/08 — leaves no blip).
+> **Presence-report phantom (learned 2026-08-31, FIXED same day):** a
+> `docker build`/first run on the Pi briefly attaches a container to Docker's
+> default bridge — docker0 comes UP and netoverview logged `172.17.0.1` +
+> `172.17.0.2` (random MAC → the 20:00 WhatsApp report rendered it
+> `aparelho …<mac-suffix>`, e.g. `…c4:b4:79` on 31/08) for one 5-min scan
+> cycle, then both vanished. Any `172.17.0.x` row is the Pi's own Docker,
+> never a person on site — all production containers are `network_mode: host`.
+> Fixed at the root in netoverview `d7f312a` (IPv4 scan now skips
+> docker0/veth/br-*/VPN interfaces, all sites) plus a `LAN_CIDR`
+> (192.168.1.0/24) filter in canteiro-presenca.py as defense in depth; the
+> ghost rows were deleted from the ara netoverview DB (`devices` +
+> `device_events`, via `docker exec -i netoverview python3 -` + sqlite3 —
+> the `DELETE /api/device/<ip>` endpoint leaves events behind). Same pair
+> wiped from the bnu DB (29/08 canteiro-jobs build blip); bg/fln were
+> clean; mia was offline 31/08 — if its dashboard ever shows `172.17.0.x`,
+> delete the rows the same way.
 
 ### MIA site specifics (learned 2026-08-26 as PLY; site renamed 2026-08-31)
 
@@ -196,8 +203,9 @@ list. Never open a browser unless every CLI/API option is exhausted.
 - `plink` and `sshpass` are **not installed** — do not use them.
 - OpenSSH (`ssh`, via Git Bash) works for key auth; **paramiko** (installed) is
   the only way to do non-interactive password auth. `devtool.py` handles both.
-- **Key auth to `bnu-proxmox`, `bnu-raspberrypi` AND `mia-proxmox` FAILS from
-  mia-desktop** (2026-08-26 for bnu, 2026-08-31 for mia-proxmox: plain `ssh` →
+- **Key auth to `bnu-proxmox`, `bnu-raspberrypi`, `bg-raspberrypi` AND
+  `mia-proxmox` FAILS from mia-desktop** (2026-08-26 for bnu, 2026-08-31 for
+  mia-proxmox and bg-raspberrypi: plain `ssh` →
   "Permission denied (publickey,password)" — the pubkey is not in their
   authorized_keys; `ara-raspberrypi` accepts it). The NAS also rejects this
   machine's key via raw paramiko (2026-08-31) — devtool's password fallback

@@ -14,10 +14,11 @@ docker/canteiro-jobs/ (até 2026-08-29 era um systemd timer).
 
 Config: ~/canteiro-jobs/env/canteiro-presenca.env (env_file do compose) —
 WAHA_URL, WAHA_KEY, WAHA_SESSION, GROUP_JID, TEST_JID, ARA_NTO_URL,
-EXCLUDE_MACS, EXCLUDE_HOSTNAMES.
+EXCLUDE_MACS, EXCLUDE_HOSTNAMES, LAN_CIDR.
 Teste manual: canteiro-presenca.py --test [chatId]  (por padrão manda ao
 TEST_JID — grupo Casa SmokeTests — para não incomodar a família).
 """
+import ipaddress
 import json
 import os
 import sys
@@ -37,6 +38,7 @@ ARA_NTO_URL  = os.environ.get("ARA_NTO_URL", "http://ara-raspberrypi:5000")
 EXCLUDE_MACS = {m.strip().lower() for m in os.environ.get("EXCLUDE_MACS", "").split(",") if m.strip()}
 EXCLUDE_HOSTNAMES = [h.strip().lower() for h in
                      os.environ.get("EXCLUDE_HOSTNAMES", "ara-raspberrypi").split(",") if h.strip()]
+LAN_CIDR = ipaddress.ip_network(os.environ.get("LAN_CIDR", "192.168.1.0/24"))
 
 WEEKDAYS = ["segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
 
@@ -53,6 +55,16 @@ def is_fixed(dev):
         return True
     host = (dev.get("hostname") or "").lower()
     return any(x in host for x in EXCLUDE_HOSTNAMES)
+
+
+def in_lan(dev):
+    # fora da LAN do canteiro nunca é pessoa (ex.: 172.17.0.x da bridge Docker
+    # do próprio Pi, que já poluiu o relatório em 31/08/2026) — defesa em
+    # profundidade além do filtro de interfaces virtuais no scanner netoverview
+    try:
+        return ipaddress.ip_address(dev.get("ip") or "") in LAN_CIDR
+    except ValueError:
+        return False
 
 
 def label(dev):
@@ -73,7 +85,7 @@ def hhmm(iso):
 def build_report(now):
     t_from = datetime.combine(now.date(), dtime(0, 0), tzinfo=TZ).astimezone(timezone.utc)
     data = fetch_presence(t_from, now.astimezone(timezone.utc))
-    people = [d for d in data["devices"] if not is_fixed(d)]
+    people = [d for d in data["devices"] if in_lan(d) and not is_fixed(d)]
 
     date_str = now.strftime("%d/%m") + f" ({WEEKDAYS[now.weekday()]})"
     lines = [f"👷 *Obra ARA — presença de {date_str}*", ""]
