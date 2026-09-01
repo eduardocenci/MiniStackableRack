@@ -8,11 +8,13 @@ Consumer: **globalnet** on bnu-raspberrypi (`ARA_STARLINK_GRPC=
 ara-raspberrypi:9200` in `~/globalnet/.env`). One `get_history` call gives
 900 s of 1 Hz ring buffers — downlink/uplink throughput and `powerIn` —
 which the dashboard renders as the ARA WAN card's "live ▼ ▲ Mbps" line and
-the `ara_dish` ⚡ W badge (globalnet `docs/runbooks/monitoring.md`).
+the `ara_starlink` ⚡ W badge (globalnet `docs/runbooks/monitoring.md`) —
+one kit on one plug, so `powerIn` is dish + router together.
 
-Note this is the **dish**, not the router: `starlink-names/` talks to the
-router (`192.168.1.1:9000`) for Wi-Fi client names; throughput and power
-telemetry live only on the dish.
+Note the gRPC endpoint here is the **dish**, not the router: dish and router
+are a single node on the dashboard, but the two APIs stay distinct —
+`starlink-names/` talks to the router (`192.168.1.1:9000`) for Wi-Fi client
+names; throughput and power telemetry live only on the dish.
 
 Test (from the Pi — a grpcurl host copy sits at `/usr/local/bin/grpcurl`):
 
