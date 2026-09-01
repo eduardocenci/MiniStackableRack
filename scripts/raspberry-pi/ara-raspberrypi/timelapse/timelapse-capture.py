@@ -53,13 +53,16 @@ Subcommands
              writes — health/re-calibration check.
   reanchor [--dry]
              visual re-anchor of the guard: correlates the shed's Y-post ROI
-             of a fresh snap against /var/lib/timelapse/ref/posicao1-ref.jpg
-             and nudges the lens until the offset is within tolerance
-             (--dry only measures). Runs automatically ~90 s before the
-             first window of every sunrise/sunset sequence — the firmware's
-             guard baseline WALKS on busy days (chained auto-tracking
-             re-baselines mid-track; observed 31/08/2026), and this closes
-             the loop the hardware doesn't offer.
+             of a fresh snap against the reference library
+             /var/lib/timelapse/ref/posicao1-*.jpg (dawn/day/dusk — the one
+             with the sharpest peak wins, i.e. the closest lighting) and
+             nudges the lens until the offset is within tolerance (--dry
+             only measures; a correction that does not shrink the offset is
+             undone). Runs automatically ~60 s before EVERY window and at
+             the end of each sequence: the excursions drift 150-300 px per
+             window (tilt always downwards — gravity; pan by gear backlash
+             on reversal — measured 01/09/2026) and the firmware's guard
+             baseline walks on busy days (chained auto-tracking, 31/08).
 """
 import math
 import os
@@ -106,15 +109,24 @@ RECIPES = [
 # — a obra evolui, o pilar não). ROI no frame de referência; a correlação de
 # fase roda sobre magnitude de gradiente, então o pilar (bordas fortes)
 # domina mesmo com o fundo mudando.
-REF_PATH = "/var/lib/timelapse/ref/posicao1-ref.jpg"
+REF_DIR = "/var/lib/timelapse/ref"   # posicao1-*.jpg: madrugada/dia/crepúsculo —
+                                     # usa-se a de maior pico (casa a iluminação)
 ROI = (300, 50, 500, 850)        # x, y, w, h do pilar no frame de referência
 SEARCH_MARGIN = 350              # px de busca ao redor da ROI no frame atual
 DOWNSCALE = 4                    # correlação em 1/4 da resolução
-PAN_PX_PER_S = 1600.0            # px de pan por s de burst @ vel 0.4 (aprox)
-TILT_PX_PER_S = 1000.0           # idem para tilt
+# Lei de controle (medida 01/09/2026): abaixo de ~0.25 s a DURAÇÃO do burst
+# não controla nada — a latência HTTP ContinuousMove→Stop domina e a câmera
+# anda ~400 px de pan a vel 0.4 tanto com 0.1 s quanto com 0.2 s. O grau de
+# liberdade fino é a VELOCIDADE (vel 0.2 → ~160 px). Bursts de correção têm
+# duração fixa e velocidade proporcional ao offset.
+CORR_BURST_S = 0.2
+PAN_PX_AT_V04 = 400.0            # px de pan num burst de 0.2 s a vel 0.4
+TILT_PX_AT_V04 = 180.0           # idem tilt (0.2 s a 0.4 → ~160-200 px)
+CORR_V_MIN, CORR_V_MAX = 0.1, 0.4
 REANCHOR_TOL_PX = 80             # |offset| aceitável (~3.5% do FOV)
-REANCHOR_MAX_ITER = 3
-REANCHOR_CONF_MIN = 0.04         # pico da correlação abaixo disso = não confiar
+CORRECT_MIN_PX = 100             # abaixo disso o menor burst (vel 0.1) pioraria
+REANCHOR_MAX_ITER = 4
+REANCHOR_CONF_MIN = 0.02         # pico abaixo disso = não confiar (crepúsculo ~0.02–0.05)
 SECONDARY_DELAY_S = 30   # wait after the main shots before moving
 SETTLE_S = 2             # settle after arriving, before shooting
 
@@ -269,44 +281,78 @@ def _measure_offset(ref_path, cur_path):
     return sx * DOWNSCALE, sy * DOWNSCALE, conf
 
 
-def _burst_for(px, px_per_s):
-    dur = round(abs(px) / px_per_s, 1)
-    return max(0.1, min(0.6, dur))
+def _corr_velocity(px, px_at_v04):
+    """Velocidade (0.1..0.4) para um burst de CORR_BURST_S que mova ~|px|."""
+    v = 0.4 * abs(px) / px_at_v04
+    return round(max(CORR_V_MIN, min(CORR_V_MAX, v)), 2)
 
 
-def cmd_reanchor(dry=False):
-    """Mede o offset da guarda vs referência e corrige com nudges."""
-    if not os.path.exists(REF_PATH):
-        print("sem referencia em", REF_PATH)
-        return 2
-    prev_mag = None
+def _measure_best(cur_path):
+    """Mede contra todas as referências posicao1-*.jpg e fica com o pico
+    mais alto — a referência cuja iluminação mais se parece com a de agora."""
+    import glob
+    best = None
+    for ref in sorted(glob.glob(os.path.join(REF_DIR, "posicao1-*.jpg"))):
+        sx, sy, conf = _measure_offset(ref, cur_path)
+        if best is None or conf > best[2]:
+            best = (sx, sy, conf, os.path.basename(ref))
+    return best
+
+
+def cmd_reanchor(dry=False, tag=""):
+    """Mede o offset da guarda vs referência e corrige com bursts de
+    velocidade proporcional. Avalia POR EIXO: um eixo que piorou tem a sua
+    correção desfeita (o outro fica); dois eixos piorando = aborta."""
+    prev, last_moves = None, {}
     for it in range(1, REANCHOR_MAX_ITER + 1):
         if not _grab_abs(RELAY_PT, "/tmp/reanchor.jpg"):
             print("reanchor: snap falhou", file=sys.stderr)
             return 1
-        sx, sy, conf = _measure_offset(REF_PATH, "/tmp/reanchor.jpg")
-        mag = max(abs(sx), abs(sy))
-        print(f"reanchor it{it}: offset=({sx:+.0f},{sy:+.0f})px conf={conf:.3f}")
+        best = _measure_best("/tmp/reanchor.jpg")
+        if best is None:
+            print("reanchor: sem referencias em", REF_DIR, file=sys.stderr)
+            return 2
+        sx, sy, conf, ref_name = best
+        print(f"reanchor{tag} it{it}: offset=({sx:+.0f},{sy:+.0f})px conf={conf:.3f} ref={ref_name}")
         if conf < REANCHOR_CONF_MIN:
             print("reanchor: confianca baixa, nao vou mexer", file=sys.stderr)
             return 1
-        if mag <= REANCHOR_TOL_PX:
+        if max(abs(sx), abs(sy)) <= REANCHOR_TOL_PX:
             print("reanchor: dentro da tolerancia")
             return 0
         if dry:
             print("reanchor: dry-run, sem correcao")
             return 0
-        if prev_mag is not None and mag >= prev_mag:
-            print("reanchor: offset nao diminuiu — abortando p/ nao vagar",
-                  file=sys.stderr)
-            return 1
-        prev_mag = mag
-        if abs(sx) > REANCHOR_TOL_PX:
-            ptz_move(0.4 if sx > 0 else -0.4, 0, _burst_for(sx, PAN_PX_PER_S))
+        if prev is not None:
+            worse = [ax for ax, cur, old in (("pan", sx, prev[0]), ("tilt", sy, prev[1]))
+                     if ax in last_moves and abs(cur) > abs(old) + 40]
+            for ax in worse:  # desfaz só o eixo que piorou
+                vx, vy, dur = last_moves[ax]
+                ptz_move(-vx, -vy, dur)
+                time.sleep(1)
+                print(f"reanchor: {ax} piorou, correcao desfeita", file=sys.stderr)
+            if len(worse) == 2 or (worse and len(last_moves) == 1):
+                print("reanchor: nao converge — abortando", file=sys.stderr)
+                return 1
+            if worse:
+                time.sleep(SETTLE_S)
+                continue  # re-mede antes de tentar de novo
+        prev, last_moves = (sx, sy), {}
+        if abs(sx) >= CORRECT_MIN_PX:
+            v = _corr_velocity(sx, PAN_PX_AT_V04)
+            mv = (v if sx > 0 else -v, 0, CORR_BURST_S)
+            ptz_move(*mv)
+            last_moves["pan"] = mv
             time.sleep(1)
-        if abs(sy) > REANCHOR_TOL_PX:
-            ptz_move(0, -0.4 if sy > 0 else 0.4, _burst_for(sy, TILT_PX_PER_S))
+        if abs(sy) >= CORRECT_MIN_PX:
+            v = _corr_velocity(sy, TILT_PX_AT_V04)
+            mv = (0, -v if sy > 0 else v, CORR_BURST_S)
+            ptz_move(*mv)
+            last_moves["tilt"] = mv
             time.sleep(1)
+        if not last_moves:  # residuo abaixo do menor burst util: aceita
+            print("reanchor: residuo abaixo do passo minimo, aceito")
+            return 0
         time.sleep(SETTLE_S)
     print("reanchor: max iteracoes atingido", file=sys.stderr)
     return 1
@@ -325,20 +371,24 @@ def cmd_trabalho():
 
 def run_windows(T, windows, label):
     print(f"{label} today: {int(T // 60):02d}:{int(T % 60):02d}")
-    # re-ancora a guarda ~90 s antes da primeira janela (a baseline do
-    # firmware anda em dias de tracking encadeado — 31/08/2026)
-    first_target = (T + windows[0][0]) * 60 - 90
-    now = datetime.now()
-    now_s = now.hour * 3600 + now.minute * 60 + now.second
-    if now_s < first_target:
-        time.sleep(first_target - now_s)
-    try:
-        cmd_reanchor()
-    except Exception as e:  # numpy/PIL ausentes ou erro inesperado: segue sem
-        print(f"reanchor indisponivel: {e}", file=sys.stderr)
+    def reanchor_safely(tag):
+        try:
+            cmd_reanchor(tag=tag)
+        except Exception as e:  # numpy/PIL ausentes ou erro inesperado: segue sem
+            print(f"reanchor indisponivel: {e}", file=sys.stderr)
+
     failures = 0
     for off, folder in windows:
         target = (T + off) * 60  # seconds after midnight
+        # re-ancora ~60 s antes de CADA janela: as excursoes derivam ~150-300 px
+        # por janela (tilt sempre p/ baixo — gravidade; pan por backlash) e a
+        # baseline do firmware anda com tracking encadeado (medido 01/09/2026)
+        now = datetime.now()
+        now_s = now.hour * 3600 + now.minute * 60 + now.second
+        if now_s < target - 60:
+            time.sleep(target - 60 - now_s)
+        if now_s <= target + 300:
+            reanchor_safely(f"[{folder}]")
         now = datetime.now()
         now_s = now.hour * 3600 + now.minute * 60 + now.second
         if now_s < target:
@@ -363,6 +413,9 @@ def run_windows(T, windows, label):
                 print(f"{pos_name} {folder} skipped (incomplete move)", file=sys.stderr)
                 failures += 1
             back_to_guard(done)
+    # deixa a camera na guarda ao final da sequencia (trabalho/ e a noite)
+    time.sleep(SETTLE_S)
+    reanchor_safely("[fim]")
     return 0 if failures == 0 else 1
 
 
