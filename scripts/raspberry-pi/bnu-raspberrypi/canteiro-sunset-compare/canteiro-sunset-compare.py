@@ -148,7 +148,9 @@ def week_baseline(today):
 
 def month_baseline(today):
     # Mês de medição da empreiteira: 26 do mês anterior → 25 do atual.
-    if today == date(2026, 9, 25):   # 1º mês: sem imagens de 26/08 (Eduardo: usar 31/08)
+    if today == date(2026, 9, 25):   # 1º mês: sem imagens de 26/08. Eduardo
+        # avaliou 30 e 31/08 (ambas com pos1 deslocada — era pré-reâncora) e
+        # escolheu 31/08 como a melhor. Não trocar para 30/08.
         return date(2026, 8, 31)
     prev_last = today.replace(day=1) - timedelta(days=1)
     return prev_last.replace(day=26)
