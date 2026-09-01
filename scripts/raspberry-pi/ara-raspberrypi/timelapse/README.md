@@ -45,9 +45,13 @@ compartilhada** no Drive (uso interno de gestão da obra).
 Este firmware não tem preset ONVIF ([`../ptz/README.md`](../ptz/README.md)),
 mas toda excursão parte da guarda — replayar a MESMA sequência de bursts
 reproduz o enquadramento. Receitas calibradas por Eduardo (`RECIPES` no
-script): **posição 2** (27/08/2026) `direita 0.4×0.5s ×2 → cima 0.4×0.2s`;
-**posição 3** (30/08/2026) = espelho para o outro lado, `esquerda 0.4×0.5s
-×2 → cima 0.4×0.2s`; volta = espelho com sinais invertidos. Fluxo por
+script): **posição 2** (27/08/2026) `direita 0.4×1.1s → cima 0.4×0.2s`;
+**posição 3** (30/08/2026) = espelho para o outro lado, `esquerda 0.4×1.1s
+→ cima 0.4×0.2s`; volta = espelho com sinais invertidos. (Eram 2 bursts
+de 0.5 s de pan; fundidos em 01/09/2026 — menos eventos de `Stop`, menos
+folga/latência. 1.1 s e não 1.0 porque cada burst carrega um "quantum de
+latência": medido contra o enquadramento 2×0.5 s, 1.0 s ficava ~1 quantum
+aquém e 1.1 s casou — pos2 (−24,−24) px, pos3 (−84,−56) px.) Fluxo por
 janela solar: principal (posicao1 + lentefixa) → 30 s → receita 2 → foto →
 reverso → receita 3 → foto → reverso. Resíduo ±3–4% por ciclo; o
 guard-return do firmware zera no primeiro trabalhador rastreado do dia (o
@@ -145,7 +149,8 @@ medidos): o motor de pan tem um **quantum mínimo de ~280 px por comando**
 e o `<Timeout>` do ONVIF, embora honrado, é errático abaixo de 0.2 s e
 dá o mesmo quantum a 0.2 s. Tilt: quantum ~180 px (0.2 s a 0.4). Logo a
 precisão fisicamente possível é **±140 px** e a lei é: corrigir só acima
-de 150 px (pan) / 100 px (tilt) — abaixo disso o quantum pioraria —, com
+de 200 px (pan; o quantum varia 280–400, abaixo de 200 é cara-ou-coroa)
+/ 100 px (tilt) — abaixo disso o quantum pioraria —, com
 v 0.4 para erros ≥350 px e v 0.2 para os demais; bursts de 0.2 s.
 Corrige e re-mede (até 4 iterações, tolerância 80 px, gate de confiança
 0.02, janela de busca ±500 px), avaliando **por eixo**: eixo que piorou

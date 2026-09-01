@@ -96,12 +96,15 @@ SUNRISE_WINDOWS = [
 ]
 
 # Burst recipes from the guard (pos2 calibrated 27/08/2026, pos3 = mirror to
-# the other side 30/08/2026 — Eduardo). Replayed as the EXACT sequence —
-# motor ramps make 2x0.5s != 1x1.0s. The reverse is the mirrored sequence
-# with inverted signs. +vx pans right, +vy tilts up.
+# the other side 30/08/2026 — Eduardo). Originally 2 x 0.5 s of pan; merged
+# into ONE 1.1 s burst on 01/09/2026 (Eduardo): fewer Stop events = fewer
+# backlash/latency glitches, and 1.1 s (not 1.0) compensates the one
+# "latency quantum" the second burst used to add — measured against the
+# 2x0.5 s framing: pos2 (-24,-24) px, pos3 (-84,-56) px. The reverse is the
+# mirrored sequence with inverted signs. +vx pans right, +vy tilts up.
 RECIPES = [
-    ("posicao2", [(0.4, 0.0, 0.5), (0.4, 0.0, 0.5), (0.0, 0.4, 0.2)]),
-    ("posicao3", [(-0.4, 0.0, 0.5), (-0.4, 0.0, 0.5), (0.0, 0.4, 0.2)]),
+    ("posicao2", [(0.4, 0.0, 1.1), (0.0, 0.4, 0.2)]),
+    ("posicao3", [(-0.4, 0.0, 1.1), (0.0, 0.4, 0.2)]),
 ]
 
 # --- Re-âncora visual da guarda (posição 1) --------------------------------
@@ -125,7 +128,7 @@ PAN_QUANTUM_PX = 280.0           # menor passo de pan executavel (v 0.15-0.2)
 PAN_BIG_PX = 350.0               # acima disso usa v 0.4 (~400 px)
 TILT_QUANTUM_PX = 180.0          # tilt a v 0.4, 0.2 s
 REANCHOR_TOL_PX = 80             # |offset| aceitável (~3.5% do FOV)
-PAN_CORRECT_MIN_PX = 150         # abaixo disso o quantum de 280 px pioraria
+PAN_CORRECT_MIN_PX = 200         # quantum varia 280-400 px: abaixo de 200 a correcao e cara ou coroa
 TILT_CORRECT_MIN_PX = 100
 REANCHOR_MAX_ITER = 4
 REANCHOR_CONF_MIN = 0.02         # pico abaixo disso = não confiar (crepúsculo ~0.02–0.05)
