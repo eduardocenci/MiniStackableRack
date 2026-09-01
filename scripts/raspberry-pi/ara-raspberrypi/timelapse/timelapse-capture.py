@@ -124,7 +124,7 @@ PAN_PX_AT_V04 = 400.0            # px de pan num burst de 0.2 s a vel 0.4
 TILT_PX_AT_V04 = 180.0           # idem tilt (0.2 s a 0.4 → ~160-200 px)
 CORR_V_MIN, CORR_V_MAX = 0.1, 0.4
 REANCHOR_TOL_PX = 80             # |offset| aceitável (~3.5% do FOV)
-CORRECT_MIN_PX = 100             # abaixo disso o menor burst (vel 0.1) pioraria
+CORRECT_MIN_PX = 80              # = tolerancia: acima dela sempre tenta o menor burst (desfaz por eixo se piorar)
 REANCHOR_MAX_ITER = 4
 REANCHOR_CONF_MIN = 0.02         # pico abaixo disso = não confiar (crepúsculo ~0.02–0.05)
 SECONDARY_DELAY_S = 30   # wait after the main shots before moving
@@ -413,9 +413,13 @@ def run_windows(T, windows, label):
                 print(f"{pos_name} {folder} skipped (incomplete move)", file=sys.stderr)
                 failures += 1
             back_to_guard(done)
-    # deixa a camera na guarda ao final da sequencia (trabalho/ e a noite)
-    time.sleep(SETTLE_S)
-    reanchor_safely("[fim]")
+            # malha fechada apos CADA volta: a coreografia e reproduzivel ao
+            # pixel na maioria dos ciclos, mas ~40% deles perdem um quantum
+            # (~150-360 px) na inversao de sentido do pan — backlash
+            # intermitente, medido 01/09/2026 (10 ciclos). Medir+corrigir aqui
+            # garante o proximo ponto de partida (e a proxima pos1) na guarda.
+            time.sleep(SETTLE_S)
+            reanchor_safely(f"[{folder}:{pos_name}->guarda]")
     return 0 if failures == 0 else 1
 
 

@@ -148,10 +148,29 @@ de pan e ~180 px de tilt por burst a 0.4); offsets abaixo de 100 px são
 aceitos (o menor burst pioraria). Corrige e re-mede (até 4 iterações,
 tolerância 80 px, gate de confiança 0.02), avaliando **por eixo**: o eixo
 que piorou tem a correção desfeita, o outro fica; os dois piorando =
-aborta — nunca vaga. Roda ~60 s **antes de CADA janela** e **ao final** de cada
-sequência; falha de importação/confiança nunca bloqueia as fotos
-(prossegue sem corrigir e loga). Logs em tempo real (`PYTHONUNBUFFERED=1`
-no compose — antes só apareciam no fim do processo).
+aborta — nunca vaga. Roda ~60 s **antes de CADA janela** e **após cada
+volta** de pos2 e de pos3 (a última volta da sequência deixa a câmera na
+guarda para `trabalho/` e para a noite); falha de importação/confiança
+nunca bloqueia as fotos (prossegue sem corrigir e loga). Logs em tempo
+real (`PYTHONUNBUFFERED=1` no compose — antes só apareciam no fim do
+processo).
+
+Calibração noturna de 01/09/2026 (10 ciclos completos 1→2→1→3→1 sem
+re-âncora, medidos ciclo a ciclo): **6 voltaram com erro (0,0)** — a
+coreografia é reproduzível ao pixel — e 4 tiveram um **salto discreto**
+de ~150–360 px de pan (sinal constante dentro de cada run, nunca
+fracionário), assinatura de **backlash intermitente na inversão de
+sentido**. Não é viés acumulativo: as velocidades das receitas NÃO devem
+ser "compensadas" (errariam nos ciclos que já dão zero) — a resposta é a
+malha fechada após cada volta. Hipótese para o futuro, se sobrar
+apetite: "pousar" sempre pelo mesmo lado (overshoot + burst final na
+direção canônica), o truque clássico de CNC contra folga.
+
+Referências precisam ser **mutuamente consistentes**: a noturna gravada
+com a câmera a (+60,−68) da madrugada viciou as medições até ser
+regravada; a diurna de domingo (−80,+68) foi removida — gravar uma nova
+só com a câmera confirmada na guarda (`reanchor --dry` ≈ 0 contra a
+madrugada).
 
 Manutenção das referências: quando a guarda for deliberadamente
 REPOSICIONADA, gravar novos dourados (frames bons de posicao1 nas três
