@@ -115,7 +115,7 @@ RECIPES = [
 REF_DIR = "/var/lib/timelapse/ref"   # posicao1-*.jpg: madrugada/dia/crepúsculo —
                                      # usa-se a de maior pico (casa a iluminação)
 ROI = (300, 50, 500, 850)        # x, y, w, h do pilar no frame de referência
-SEARCH_MARGIN = 500              # px de busca ao redor da ROI (um quantum de 280 px + folga)
+SEARCH_MARGIN = 700              # px de busca ao redor da ROI (pilar ainda inteiro a +-600 px)
 DOWNSCALE = 4                    # correlação em 1/4 da resolução
 # Lei de controle (medida 01/09/2026, ~40 bursts): o motor tem um QUANTUM
 # minimo de ~280 px de pan por comando — v<=0.12 nao move; v=0.15..0.25 ->
@@ -130,8 +130,13 @@ TILT_QUANTUM_PX = 180.0          # tilt a v 0.4, 0.2 s
 REANCHOR_TOL_PX = 80             # |offset| aceitável (~3.5% do FOV)
 PAN_CORRECT_MIN_PX = 200         # quantum varia 280-400 px: abaixo de 200 a correcao e cara ou coroa
 TILT_CORRECT_MIN_PX = 100
-REANCHOR_MAX_ITER = 4
-REANCHOR_CONF_MIN = 0.02         # pico abaixo disso = não confiar (crepúsculo ~0.02–0.05)
+REANCHOR_MAX_ITER = 5
+PSR_MIN = 12.0                   # PSR minimo p/ uma ref entrar na votacao (bons: 22-113; lixo: 6-17)
+PSR_STRONG = 30.0                # uma unica ref acima disso ja vale sozinha
+AGREE_PX = 80                    # duas refs concordando dentro disso = medicao valida
+PAN_LONG_PX = 600                # a partir daqui a correcao e um burst longo proporcional
+SWEEP_WAIT_S = 75                # antes de varrer: o firmware devolve a camera ~1 min apos perder o alvo
+SWEEP_NETS = (0.3, -0.3, 0.6, -0.6, 0.9, -0.9, 1.2, -1.2)   # deslocamento liquido (s a vel 0.4) de cada passo da varredura
 STALL_PX = 20                    # eixo que se moveu menos que isso apos um burst = stall; aceita e nao insiste
 SECONDARY_DELAY_S = 30   # wait after the main shots before moving
 SETTLE_S = 2             # settle after arriving, before shooting
@@ -243,9 +248,10 @@ def back_to_guard(done):
 
 
 def _measure_offset(ref_path, cur_path):
-    """(sx, sy, conf): deslocamento do conteúdo atual vs referência, em px
-    full-res, medido na ROI do pilar. sx>0 = conteúdo à direita (câmera
-    pan-esquerda); sy>0 = conteúdo abaixo (câmera tilt-acima)."""
+    """(sx, sy, peak, psr): deslocamento do conteúdo atual vs referência, em
+    px full-res, medido na ROI do pilar. sx>0 = conteúdo à direita (câmera
+    pan-esquerda); sy>0 = conteúdo abaixo (câmera tilt-acima). psr = pico
+    sobre o desvio dos sidelobes — confiança invariante à iluminação."""
     import numpy as np
     from PIL import Image
 
@@ -278,20 +284,50 @@ def _measure_offset(ref_path, cur_path):
     R /= np.abs(R) + 1e-9
     r = np.real(np.fft.ifft2(R))
     peak = np.unravel_index(np.argmax(r), r.shape)
-    conf = float(r[peak])   # pico da correlação de fase (match nítido ≳0.04)
+    mask = np.ones_like(r, dtype=bool)
+    py, px = peak
+    mask[max(0, py - 3):py + 4, max(0, px - 3):px + 4] = False
+    psr = float((r[peak] - r[mask].mean()) / (r[mask].std() + 1e-9))
     sy, sx = peak
     if sy > r.shape[0] // 2:
         sy -= r.shape[0]
     if sx > r.shape[1] // 2:
         sx -= r.shape[1]
-    return sx * DOWNSCALE, sy * DOWNSCALE, conf
+    return sx * DOWNSCALE, sy * DOWNSCALE, float(r[peak]), psr
+
+
+def _measure_valid(cur_path):
+    """Mede contra todas as referências posicao1-*.jpg e só aceita quando
+    pelo menos duas referências com PSR razoável CONCORDAM (<= AGREE_PX):
+    numa medição boa as refs concordam em <30 px; numa ruim divergem por
+    centenas (02/09/2026). Retorna (sx, sy, psr, ref) ou None."""
+    import glob
+    cands = []
+    for ref in sorted(glob.glob(os.path.join(REF_DIR, "posicao1-*.jpg"))):
+        sx, sy, pk, psr = _measure_offset(ref, cur_path)
+        if psr >= PSR_MIN:
+            cands.append((psr, sx, sy, os.path.basename(ref)))
+    cands.sort(reverse=True)
+    for i, (psr, sx, sy, name) in enumerate(cands):
+        for psr2, sx2, sy2, _ in cands[i + 1:]:
+            if abs(sx - sx2) <= AGREE_PX and abs(sy - sy2) <= AGREE_PX:
+                return sx, sy, psr, name
+    if cands and cands[0][0] >= PSR_STRONG:   # uma ref so, mas inequivoca
+        psr, sx, sy, name = cands[0]
+        return sx, sy, psr, name
+    return None
 
 
 def _corr_moves(sx, sy):
     """Bursts de correcao (vx, vy, dur) para o offset medido — um por eixo,
-    respeitando o quantum minimo do motor (ver constantes)."""
+    respeitando o quantum minimo do motor; erros grandes (>= PAN_LONG_PX)
+    usam burst longo proporcional (acima de ~0.3 s a duracao volta a
+    controlar: ~1250 px/s + quantum)."""
     moves = {}
-    if abs(sx) >= PAN_CORRECT_MIN_PX:
+    if abs(sx) >= PAN_LONG_PX:
+        dur = round(0.3 + (abs(sx) - 400) / 1250.0, 2)
+        moves["pan"] = (0.4 if sx > 0 else -0.4, 0, max(0.3, min(1.5, dur)))
+    elif abs(sx) >= PAN_CORRECT_MIN_PX:
         v = 0.4 if abs(sx) >= PAN_BIG_PX else 0.2
         moves["pan"] = (v if sx > 0 else -v, 0, CORR_BURST_S)
     if abs(sy) >= TILT_CORRECT_MIN_PX:
@@ -299,36 +335,63 @@ def _corr_moves(sx, sy):
     return moves
 
 
-def _measure_best(cur_path):
-    """Mede contra todas as referências posicao1-*.jpg e fica com o pico
-    mais alto — a referência cuja iluminação mais se parece com a de agora."""
-    import glob
-    best = None
-    for ref in sorted(glob.glob(os.path.join(REF_DIR, "posicao1-*.jpg"))):
-        sx, sy, conf = _measure_offset(ref, cur_path)
-        if best is None or conf > best[2]:
-            best = (sx, sy, conf, os.path.basename(ref))
-    return best
+def _snap_measure():
+    if not _grab_abs(RELAY_PT, "/tmp/reanchor.jpg"):
+        print("reanchor: snap falhou", file=sys.stderr)
+        return "fail"
+    return _measure_valid("/tmp/reanchor.jpg")
+
+
+def _recover_sweep(tag):
+    """Pilar fora da janela de busca (excursao falhada, tracking...). 1) espera
+    o guard-return do firmware (~1 min apos perder o alvo) e re-mede; 2) se
+    ainda invalido, varre em pan com deslocamento liquido crescente e
+    alternado (SWEEP_NETS, ate +-1.2 s = uma excursao inteira) medindo a
+    cada passo; sem sucesso, volta ao ponto de partida."""
+    print(f"reanchor{tag}: aguardando {SWEEP_WAIT_S}s (guard-return do firmware) antes de varrer")
+    time.sleep(SWEEP_WAIT_S)
+    meas = _snap_measure()
+    if meas not in (None, "fail"):
+        print(f"reanchor{tag}: pilar de volta sem varredura")
+        return meas
+    net = 0.0
+    for target in SWEEP_NETS:
+        step = target - net
+        ptz_move(0.4 if step > 0 else -0.4, 0, round(abs(step), 2))
+        net = target
+        time.sleep(1 + SETTLE_S)
+        meas = _snap_measure()
+        if meas not in (None, "fail"):
+            print(f"reanchor{tag}: pilar reencontrado apos varredura (liq. {net:+.2f}s)")
+            return meas
+        print(f"reanchor{tag}: varredura liq. {net:+.2f}s sem pilar", file=sys.stderr)
+    if net:
+        ptz_move(-0.4 if net > 0 else 0.4, 0, round(abs(net), 2))   # desfaz a varredura
+        time.sleep(1 + SETTLE_S)
+    print(f"reanchor{tag}: varredura falhou, posicao restaurada", file=sys.stderr)
+    return None
 
 
 def cmd_reanchor(dry=False, tag=""):
-    """Mede o offset da guarda vs referência e corrige com bursts de
-    velocidade proporcional. Avalia POR EIXO: um eixo que piorou tem a sua
-    correção desfeita (o outro fica); dois eixos piorando = aborta."""
+    """Mede o offset da guarda vs referências (com concordância entre refs)
+    e corrige com bursts; pilar perdido -> varredura de recuperacao.
+    Avalia POR EIXO: eixo que piorou tem a correcao desfeita; eixo que nao
+    se moveu (stall) e aceito; dois eixos piorando = aborta."""
     prev, last_moves, stalled = None, {}, set()
     for it in range(1, REANCHOR_MAX_ITER + 1):
-        if not _grab_abs(RELAY_PT, "/tmp/reanchor.jpg"):
-            print("reanchor: snap falhou", file=sys.stderr)
+        meas = _snap_measure()
+        if meas == "fail":
             return 1
-        best = _measure_best("/tmp/reanchor.jpg")
-        if best is None:
-            print("reanchor: sem referencias em", REF_DIR, file=sys.stderr)
-            return 2
-        sx, sy, conf, ref_name = best
-        print(f"reanchor{tag} it{it}: offset=({sx:+.0f},{sy:+.0f})px conf={conf:.3f} ref={ref_name}")
-        if conf < REANCHOR_CONF_MIN:
-            print("reanchor: confianca baixa, nao vou mexer", file=sys.stderr)
-            return 1
+        if meas is None:
+            print(f"reanchor{tag} it{it}: medicao invalida (refs discordam / PSR baixo)")
+            if dry:
+                return 1
+            meas = _recover_sweep(tag)
+            if meas is None:
+                return 1
+            prev, last_moves = None, {}
+        sx, sy, psr, ref_name = meas
+        print(f"reanchor{tag} it{it}: offset=({sx:+.0f},{sy:+.0f})px psr={psr:.1f} ref={ref_name}")
         if max(abs(sx), abs(sy)) <= REANCHOR_TOL_PX:
             print("reanchor: dentro da tolerancia")
             return 0

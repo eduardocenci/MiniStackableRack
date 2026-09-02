@@ -152,10 +152,30 @@ precisão fisicamente possível é **±140 px** e a lei é: corrigir só acima
 de 200 px (pan; o quantum varia 280–400, abaixo de 200 é cara-ou-coroa)
 / 100 px (tilt) — abaixo disso o quantum pioraria —, com
 v 0.4 para erros ≥350 px e v 0.2 para os demais; bursts de 0.2 s.
-Corrige e re-mede (até 4 iterações, tolerância 80 px, gate de confiança
-0.02, janela de busca ±500 px), avaliando **por eixo**: eixo que piorou
-tem a correção desfeita, o outro fica; eixo que não se moveu (<20 px,
-stall) é aceito sem insistir; os dois piorando = aborta — nunca vaga. Roda ~60 s **antes de CADA janela** e **após cada
+Corrige e re-mede (até 5 iterações, tolerância 80 px, janela de busca
+±700 px), avaliando **por eixo**: eixo que piorou tem a correção
+desfeita, o outro fica; eixo que não se moveu (<20 px, stall) é aceito
+sem insistir; os dois piorando = aborta — nunca vaga.
+
+**Validade da medição** (lição de 02/09/2026): o nascer daquele dia teve
+um `ContinuousMove` atrasado que encurtou a ida a pos2 em ~650 px; a
+volta inteira deixou a câmera ~600 px à esquerda, o pilar saiu da janela
+de busca e o gate por altura de pico (0.02) recusou corrigir por três
+janelas — pos1 das 06:36 e 06:46 saíram no flanco esquerdo. Registro
+global do quadro inteiro também não recupera deslocamentos grandes
+(fisheye + pilares próximos quebram a translação pura). Por isso: a
+confiança é **PSR** (pico ÷ desvio dos sidelobes — bons 22–113, lixo
+6–17) e uma medição só vale se **duas referências concordam** em ≤80 px
+(ou uma com PSR ≥30) — nas boas as refs concordam em <30 px, nas ruins
+divergem por centenas. Medição inválida ⇒ primeiro **espera 75 s** (o
+firmware devolve a câmera à baseline ~1 min após perder um alvo de
+tracking — em horário de obra é o caso mais comum) e re-mede; se ainda
+inválida, **varredura de recuperação** em pan com deslocamento líquido
+alternado e crescente (±0.3, ±0.6, ±0.9, ±1.2 s a vel 0.4 — até uma
+excursão inteira), medindo a cada passo até o pilar voltar; se falhar,
+desfaz a varredura. Erros ≥600 px usam burst
+longo proporcional (~1250 px/s + quantum; acima de ~0.3 s a duração volta
+a controlar). Roda ~60 s **antes de CADA janela** e **após cada
 volta** de pos2 e de pos3 (a última volta da sequência deixa a câmera na
 guarda para `trabalho/` e para a noite); falha de importação/confiança
 nunca bloqueia as fotos (prossegue sem corrigir e loga). Logs em tempo
