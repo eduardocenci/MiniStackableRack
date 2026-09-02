@@ -45,9 +45,13 @@ compartilhada** no Drive (uso interno de gestão da obra).
 Este firmware não tem preset ONVIF ([`../ptz/README.md`](../ptz/README.md)),
 mas toda excursão parte da guarda — replayar a MESMA sequência de bursts
 reproduz o enquadramento. Receitas calibradas por Eduardo (`RECIPES` no
-script): **posição 2** (27/08/2026) `direita 0.4×0.5s ×2 → cima 0.4×0.2s`;
-**posição 3** (30/08/2026) = espelho para o outro lado, `esquerda 0.4×0.5s
-×2 → cima 0.4×0.2s`; volta = espelho com sinais invertidos. Fluxo por
+script): **posição 2** (27/08/2026) `direita 0.4×1.1s → cima 0.4×0.2s`;
+**posição 3** (30/08/2026) = espelho para o outro lado, `esquerda 0.4×1.1s
+→ cima 0.4×0.2s`; volta = espelho com sinais invertidos. (Eram 2 bursts
+de 0.5 s de pan; fundidos em 01/09/2026 — menos eventos de `Stop`, menos
+folga/latência. 1.1 s e não 1.0 porque cada burst carrega um "quantum de
+latência": medido contra o enquadramento 2×0.5 s, 1.0 s ficava ~1 quantum
+aquém e 1.1 s casou — pos2 (−24,−24) px, pos3 (−84,−56) px.) Fluxo por
 janela solar: principal (posicao1 + lentefixa) → 30 s → receita 2 → foto →
 reverso → receita 3 → foto → reverso. Resíduo ±3–4% por ciclo; o
 guard-return do firmware zera no primeiro trabalhador rastreado do dia (o
@@ -122,22 +126,84 @@ trabalho intenso perto da câmera a posição 1 pode migrar (aconteceu:
 ~6–10% à esquerda entre 12:00 e 15:00; lente fixa intacta provou que não
 foi esbarrão físico).
 
+Medição de 01/09/2026 (sequência limpa, sem gente): a própria coreografia
+deriva — nascer 06:27 (+4,+16) px → +10 min (+156,**−136**) → +20 min
+(+468,**−168**). **Tilt sempre para baixo** (gravidade a favor na descida,
+contra na subida — o mesmo 0.2 s não rende o mesmo ângulo) e **pan por
+backlash** na inversão de sentido: ~150–300 px por janela (2 excursões).
+Re-ancorar só antes da 1ª janela não bastava.
+
 Correção: `timelapse-capture reanchor [--dry]` — correlação de fase
 (numpy/Pillow, na imagem do container) entre um snap atual e a
-**referência dourada** `/var/lib/timelapse/ref/posicao1-ref.jpg` (backup
-em `ceuazul:Timelapse/ref/`), medindo o offset na **ROI do pilar em Y do
-galpão** (constante `ROI`; o pilar é estrutura da câmera — a obra evolui,
-ele não — decisão Eduardo 31/08/2026). Converte px→bursts, corrige e
-re-mede (até 3 iterações, tolerância 80 px, gate de confiança 0.04 — pico
-sobe quando alinha: 0.040→0.102 na validação noturna, que terminou a
-(+0,+16) px). Roda automaticamente ~90 s antes da primeira janela de cada
-sequência solar; falha de importação/confiança nunca bloqueia as fotos
-(prossegue sem corrigir e loga).
+**biblioteca de referências** `/var/lib/timelapse/ref/posicao1-*.jpg`
+(`-dawn` 31/08 06:28, `-day` 30/08 14:46, `-dusk` 01/09 17:42; backup em
+`ceuazul:Timelapse/ref/`) — usa a de **maior pico**, i.e. a iluminação
+mais parecida com a de agora (uma só referência de madrugada caía a
+conf≈0.02 no crepúsculo e bloqueava a correção quando mais precisava).
+Offset medido na **ROI do pilar em Y do galpão** (constante `ROI`; o
+pilar é estrutura da câmera — a obra evolui, ele não — decisão Eduardo
+31/08/2026). **Lei de controle** (mapeada 01/09/2026 à noite, ~40 bursts
+medidos): o motor de pan tem um **quantum mínimo de ~280 px por comando**
+— v≤0.12 não move; v=0.15–0.25 → ~280–380 px; v=0.4 → ~400 px; duração
+<0.25 s não modula (latência HTTP `ContinuousMove`→`Stop` + rampa dominam)
+e o `<Timeout>` do ONVIF, embora honrado, é errático abaixo de 0.2 s e
+dá o mesmo quantum a 0.2 s. Tilt: quantum ~180 px (0.2 s a 0.4). Logo a
+precisão fisicamente possível é **±140 px** e a lei é: corrigir só acima
+de 200 px (pan; o quantum varia 280–400, abaixo de 200 é cara-ou-coroa)
+/ 100 px (tilt) — abaixo disso o quantum pioraria —, com
+v 0.4 para erros ≥350 px e v 0.2 para os demais; bursts de 0.2 s.
+Corrige e re-mede (até 5 iterações, tolerância 80 px, janela de busca
+±700 px), avaliando **por eixo**: eixo que piorou tem a correção
+desfeita, o outro fica; eixo que não se moveu (<20 px, stall) é aceito
+sem insistir; os dois piorando = aborta — nunca vaga.
 
-Manutenção da referência: quando a guarda for deliberadamente REPOSICIONADA
-(nova posição desejada), gravar novo dourado — `cp` de um frame bom de
-posicao1 para `/var/lib/timelapse/ref/posicao1-ref.jpg` + `rclone copyto`
-para `ceuazul:Timelapse/ref/` — e conferir se a `ROI` do pilar ainda vale.
+**Validade da medição** (lição de 02/09/2026): o nascer daquele dia teve
+um `ContinuousMove` atrasado que encurtou a ida a pos2 em ~650 px; a
+volta inteira deixou a câmera ~600 px à esquerda, o pilar saiu da janela
+de busca e o gate por altura de pico (0.02) recusou corrigir por três
+janelas — pos1 das 06:36 e 06:46 saíram no flanco esquerdo. Registro
+global do quadro inteiro também não recupera deslocamentos grandes
+(fisheye + pilares próximos quebram a translação pura). Por isso: a
+confiança é **PSR** (pico ÷ desvio dos sidelobes — bons 22–113, lixo
+6–17) e uma medição só vale se **duas referências concordam** em ≤80 px
+(ou uma com PSR ≥30) — nas boas as refs concordam em <30 px, nas ruins
+divergem por centenas. Medição inválida ⇒ primeiro **espera 75 s** (o
+firmware devolve a câmera à baseline ~1 min após perder um alvo de
+tracking — em horário de obra é o caso mais comum) e re-mede; se ainda
+inválida, **varredura de recuperação** em pan com deslocamento líquido
+alternado e crescente (±0.3, ±0.6, ±0.9, ±1.2 s a vel 0.4 — até uma
+excursão inteira), medindo a cada passo até o pilar voltar; se falhar,
+desfaz a varredura. Erros ≥600 px usam burst
+longo proporcional (~1250 px/s + quantum; acima de ~0.3 s a duração volta
+a controlar). Roda ~60 s **antes de CADA janela** e **após cada
+volta** de pos2 e de pos3 (a última volta da sequência deixa a câmera na
+guarda para `trabalho/` e para a noite); falha de importação/confiança
+nunca bloqueia as fotos (prossegue sem corrigir e loga). Logs em tempo
+real (`PYTHONUNBUFFERED=1` no compose — antes só apareciam no fim do
+processo).
+
+Calibração noturna de 01/09/2026 (10 ciclos completos 1→2→1→3→1 sem
+re-âncora, medidos ciclo a ciclo): **6 voltaram com erro (0,0)** — a
+coreografia é reproduzível ao pixel — e 4 tiveram um **salto discreto**
+de ~150–360 px de pan (sinal constante dentro de cada run, nunca
+fracionário), assinatura de **backlash intermitente na inversão de
+sentido**. Não é viés acumulativo: as velocidades das receitas NÃO devem
+ser "compensadas" (errariam nos ciclos que já dão zero) — a resposta é a
+malha fechada após cada volta. Hipótese para o futuro, se sobrar
+apetite: "pousar" sempre pelo mesmo lado (overshoot + burst final na
+direção canônica), o truque clássico de CNC contra folga.
+
+Referências precisam ser **mutuamente consistentes**: a noturna gravada
+com a câmera a (+60,−68) da madrugada viciou as medições até ser
+regravada; a diurna de domingo (−80,+68) foi removida — gravar uma nova
+só com a câmera confirmada na guarda (`reanchor --dry` ≈ 0 contra a
+madrugada).
+
+Manutenção das referências: quando a guarda for deliberadamente
+REPOSICIONADA, gravar novos dourados (frames bons de posicao1 nas três
+iluminações) em `/var/lib/timelapse/ref/posicao1-<tag>.jpg` +
+`rclone sync` para `ceuazul:Timelapse/ref/` — e conferir se a `ROI` do
+pilar ainda vale.
 
 Premissas a vigiar nas primeiras semanas: (1) enquadramento estável entre
 dias em `posicao1/` — se variar, o guard-return não está confiável e o

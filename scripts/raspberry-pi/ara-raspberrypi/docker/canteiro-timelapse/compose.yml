@@ -11,6 +11,7 @@ services:
     init: true
     environment:
       TZ: America/Sao_Paulo
+      PYTHONUNBUFFERED: "1"   # logs das sequencias em tempo real (senao so no fim do processo)
       RCLONE_CONFIG: /config/rclone/rclone.conf
     volumes:
       - /var/lib/timelapse:/var/lib/timelapse   # outbox — same dir the timers used

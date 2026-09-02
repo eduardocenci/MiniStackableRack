@@ -53,13 +53,16 @@ Subcommands
              writes — health/re-calibration check.
   reanchor [--dry]
              visual re-anchor of the guard: correlates the shed's Y-post ROI
-             of a fresh snap against /var/lib/timelapse/ref/posicao1-ref.jpg
-             and nudges the lens until the offset is within tolerance
-             (--dry only measures). Runs automatically ~90 s before the
-             first window of every sunrise/sunset sequence — the firmware's
-             guard baseline WALKS on busy days (chained auto-tracking
-             re-baselines mid-track; observed 31/08/2026), and this closes
-             the loop the hardware doesn't offer.
+             of a fresh snap against the reference library
+             /var/lib/timelapse/ref/posicao1-*.jpg (dawn/day/dusk — the one
+             with the sharpest peak wins, i.e. the closest lighting) and
+             nudges the lens until the offset is within tolerance (--dry
+             only measures; a correction that does not shrink the offset is
+             undone). Runs automatically ~60 s before EVERY window and at
+             the end of each sequence: the excursions drift 150-300 px per
+             window (tilt always downwards — gravity; pan by gear backlash
+             on reversal — measured 01/09/2026) and the firmware's guard
+             baseline walks on busy days (chained auto-tracking, 31/08).
 """
 import math
 import os
@@ -93,12 +96,15 @@ SUNRISE_WINDOWS = [
 ]
 
 # Burst recipes from the guard (pos2 calibrated 27/08/2026, pos3 = mirror to
-# the other side 30/08/2026 — Eduardo). Replayed as the EXACT sequence —
-# motor ramps make 2x0.5s != 1x1.0s. The reverse is the mirrored sequence
-# with inverted signs. +vx pans right, +vy tilts up.
+# the other side 30/08/2026 — Eduardo). Originally 2 x 0.5 s of pan; merged
+# into ONE 1.1 s burst on 01/09/2026 (Eduardo): fewer Stop events = fewer
+# backlash/latency glitches, and 1.1 s (not 1.0) compensates the one
+# "latency quantum" the second burst used to add — measured against the
+# 2x0.5 s framing: pos2 (-24,-24) px, pos3 (-84,-56) px. The reverse is the
+# mirrored sequence with inverted signs. +vx pans right, +vy tilts up.
 RECIPES = [
-    ("posicao2", [(0.4, 0.0, 0.5), (0.4, 0.0, 0.5), (0.0, 0.4, 0.2)]),
-    ("posicao3", [(-0.4, 0.0, 0.5), (-0.4, 0.0, 0.5), (0.0, 0.4, 0.2)]),
+    ("posicao2", [(0.4, 0.0, 1.1), (0.0, 0.4, 0.2)]),
+    ("posicao3", [(-0.4, 0.0, 1.1), (0.0, 0.4, 0.2)]),
 ]
 
 # --- Re-âncora visual da guarda (posição 1) --------------------------------
@@ -106,15 +112,32 @@ RECIPES = [
 # — a obra evolui, o pilar não). ROI no frame de referência; a correlação de
 # fase roda sobre magnitude de gradiente, então o pilar (bordas fortes)
 # domina mesmo com o fundo mudando.
-REF_PATH = "/var/lib/timelapse/ref/posicao1-ref.jpg"
+REF_DIR = "/var/lib/timelapse/ref"   # posicao1-*.jpg: madrugada/dia/crepúsculo —
+                                     # usa-se a de maior pico (casa a iluminação)
 ROI = (300, 50, 500, 850)        # x, y, w, h do pilar no frame de referência
-SEARCH_MARGIN = 350              # px de busca ao redor da ROI no frame atual
+SEARCH_MARGIN = 700              # px de busca ao redor da ROI (pilar ainda inteiro a +-600 px)
 DOWNSCALE = 4                    # correlação em 1/4 da resolução
-PAN_PX_PER_S = 1600.0            # px de pan por s de burst @ vel 0.4 (aprox)
-TILT_PX_PER_S = 1000.0           # idem para tilt
+# Lei de controle (medida 01/09/2026, ~40 bursts): o motor tem um QUANTUM
+# minimo de ~280 px de pan por comando — v<=0.12 nao move; v=0.15..0.25 ->
+# ~280-380 px; v=0.4 -> ~400 px; duracao <0.25 s e <Timeout> do ONVIF nao
+# modulam (latencia/rampa dominam). Precisao possivel: +-140 px. Por isso
+# so corrige acima de ~150 px (pan) / 100 px (tilt, quantum ~180) e usa
+# velocidade alta (0.4) so para erros grandes.
+CORR_BURST_S = 0.2
+PAN_QUANTUM_PX = 280.0           # menor passo de pan executavel (v 0.15-0.2)
+PAN_BIG_PX = 350.0               # acima disso usa v 0.4 (~400 px)
+TILT_QUANTUM_PX = 180.0          # tilt a v 0.4, 0.2 s
 REANCHOR_TOL_PX = 80             # |offset| aceitável (~3.5% do FOV)
-REANCHOR_MAX_ITER = 3
-REANCHOR_CONF_MIN = 0.04         # pico da correlação abaixo disso = não confiar
+PAN_CORRECT_MIN_PX = 200         # quantum varia 280-400 px: abaixo de 200 a correcao e cara ou coroa
+TILT_CORRECT_MIN_PX = 100
+REANCHOR_MAX_ITER = 5
+PSR_MIN = 12.0                   # PSR minimo p/ uma ref entrar na votacao (bons: 22-113; lixo: 6-17)
+PSR_STRONG = 30.0                # uma unica ref acima disso ja vale sozinha
+AGREE_PX = 80                    # duas refs concordando dentro disso = medicao valida
+PAN_LONG_PX = 600                # a partir daqui a correcao e um burst longo proporcional
+SWEEP_WAIT_S = 75                # antes de varrer: o firmware devolve a camera ~1 min apos perder o alvo
+SWEEP_NETS = (0.3, -0.3, 0.6, -0.6, 0.9, -0.9, 1.2, -1.2)   # deslocamento liquido (s a vel 0.4) de cada passo da varredura
+STALL_PX = 20                    # eixo que se moveu menos que isso apos um burst = stall; aceita e nao insiste
 SECONDARY_DELAY_S = 30   # wait after the main shots before moving
 SETTLE_S = 2             # settle after arriving, before shooting
 
@@ -225,9 +248,10 @@ def back_to_guard(done):
 
 
 def _measure_offset(ref_path, cur_path):
-    """(sx, sy, conf): deslocamento do conteúdo atual vs referência, em px
-    full-res, medido na ROI do pilar. sx>0 = conteúdo à direita (câmera
-    pan-esquerda); sy>0 = conteúdo abaixo (câmera tilt-acima)."""
+    """(sx, sy, peak, psr): deslocamento do conteúdo atual vs referência, em
+    px full-res, medido na ROI do pilar. sx>0 = conteúdo à direita (câmera
+    pan-esquerda); sy>0 = conteúdo abaixo (câmera tilt-acima). psr = pico
+    sobre o desvio dos sidelobes — confiança invariante à iluminação."""
     import numpy as np
     from PIL import Image
 
@@ -260,53 +284,150 @@ def _measure_offset(ref_path, cur_path):
     R /= np.abs(R) + 1e-9
     r = np.real(np.fft.ifft2(R))
     peak = np.unravel_index(np.argmax(r), r.shape)
-    conf = float(r[peak])   # pico da correlação de fase (match nítido ≳0.04)
+    mask = np.ones_like(r, dtype=bool)
+    py, px = peak
+    mask[max(0, py - 3):py + 4, max(0, px - 3):px + 4] = False
+    psr = float((r[peak] - r[mask].mean()) / (r[mask].std() + 1e-9))
     sy, sx = peak
     if sy > r.shape[0] // 2:
         sy -= r.shape[0]
     if sx > r.shape[1] // 2:
         sx -= r.shape[1]
-    return sx * DOWNSCALE, sy * DOWNSCALE, conf
+    return sx * DOWNSCALE, sy * DOWNSCALE, float(r[peak]), psr
 
 
-def _burst_for(px, px_per_s):
-    dur = round(abs(px) / px_per_s, 1)
-    return max(0.1, min(0.6, dur))
+def _measure_valid(cur_path):
+    """Mede contra todas as referências posicao1-*.jpg e só aceita quando
+    pelo menos duas referências com PSR razoável CONCORDAM (<= AGREE_PX):
+    numa medição boa as refs concordam em <30 px; numa ruim divergem por
+    centenas (02/09/2026). Retorna (sx, sy, psr, ref) ou None."""
+    import glob
+    cands = []
+    for ref in sorted(glob.glob(os.path.join(REF_DIR, "posicao1-*.jpg"))):
+        sx, sy, pk, psr = _measure_offset(ref, cur_path)
+        if psr >= PSR_MIN:
+            cands.append((psr, sx, sy, os.path.basename(ref)))
+    cands.sort(reverse=True)
+    for i, (psr, sx, sy, name) in enumerate(cands):
+        for psr2, sx2, sy2, _ in cands[i + 1:]:
+            if abs(sx - sx2) <= AGREE_PX and abs(sy - sy2) <= AGREE_PX:
+                return sx, sy, psr, name
+    if cands and cands[0][0] >= PSR_STRONG:   # uma ref so, mas inequivoca
+        psr, sx, sy, name = cands[0]
+        return sx, sy, psr, name
+    return None
 
 
-def cmd_reanchor(dry=False):
-    """Mede o offset da guarda vs referência e corrige com nudges."""
-    if not os.path.exists(REF_PATH):
-        print("sem referencia em", REF_PATH)
-        return 2
-    prev_mag = None
+def _corr_moves(sx, sy):
+    """Bursts de correcao (vx, vy, dur) para o offset medido — um por eixo,
+    respeitando o quantum minimo do motor; erros grandes (>= PAN_LONG_PX)
+    usam burst longo proporcional (acima de ~0.3 s a duracao volta a
+    controlar: ~1250 px/s + quantum)."""
+    moves = {}
+    if abs(sx) >= PAN_LONG_PX:
+        dur = round(0.3 + (abs(sx) - 400) / 1250.0, 2)
+        moves["pan"] = (0.4 if sx > 0 else -0.4, 0, max(0.3, min(1.5, dur)))
+    elif abs(sx) >= PAN_CORRECT_MIN_PX:
+        v = 0.4 if abs(sx) >= PAN_BIG_PX else 0.2
+        moves["pan"] = (v if sx > 0 else -v, 0, CORR_BURST_S)
+    if abs(sy) >= TILT_CORRECT_MIN_PX:
+        moves["tilt"] = (0, -0.4 if sy > 0 else 0.4, CORR_BURST_S)
+    return moves
+
+
+def _snap_measure():
+    if not _grab_abs(RELAY_PT, "/tmp/reanchor.jpg"):
+        print("reanchor: snap falhou", file=sys.stderr)
+        return "fail"
+    return _measure_valid("/tmp/reanchor.jpg")
+
+
+def _recover_sweep(tag):
+    """Pilar fora da janela de busca (excursao falhada, tracking...). 1) espera
+    o guard-return do firmware (~1 min apos perder o alvo) e re-mede; 2) se
+    ainda invalido, varre em pan com deslocamento liquido crescente e
+    alternado (SWEEP_NETS, ate +-1.2 s = uma excursao inteira) medindo a
+    cada passo; sem sucesso, volta ao ponto de partida."""
+    print(f"reanchor{tag}: aguardando {SWEEP_WAIT_S}s (guard-return do firmware) antes de varrer")
+    time.sleep(SWEEP_WAIT_S)
+    meas = _snap_measure()
+    if meas not in (None, "fail"):
+        print(f"reanchor{tag}: pilar de volta sem varredura")
+        return meas
+    net = 0.0
+    for target in SWEEP_NETS:
+        step = target - net
+        ptz_move(0.4 if step > 0 else -0.4, 0, round(abs(step), 2))
+        net = target
+        time.sleep(1 + SETTLE_S)
+        meas = _snap_measure()
+        if meas not in (None, "fail"):
+            print(f"reanchor{tag}: pilar reencontrado apos varredura (liq. {net:+.2f}s)")
+            return meas
+        print(f"reanchor{tag}: varredura liq. {net:+.2f}s sem pilar", file=sys.stderr)
+    if net:
+        ptz_move(-0.4 if net > 0 else 0.4, 0, round(abs(net), 2))   # desfaz a varredura
+        time.sleep(1 + SETTLE_S)
+    print(f"reanchor{tag}: varredura falhou, posicao restaurada", file=sys.stderr)
+    return None
+
+
+def cmd_reanchor(dry=False, tag=""):
+    """Mede o offset da guarda vs referências (com concordância entre refs)
+    e corrige com bursts; pilar perdido -> varredura de recuperacao.
+    Avalia POR EIXO: eixo que piorou tem a correcao desfeita; eixo que nao
+    se moveu (stall) e aceito; dois eixos piorando = aborta."""
+    prev, last_moves, stalled = None, {}, set()
     for it in range(1, REANCHOR_MAX_ITER + 1):
-        if not _grab_abs(RELAY_PT, "/tmp/reanchor.jpg"):
-            print("reanchor: snap falhou", file=sys.stderr)
+        meas = _snap_measure()
+        if meas == "fail":
             return 1
-        sx, sy, conf = _measure_offset(REF_PATH, "/tmp/reanchor.jpg")
-        mag = max(abs(sx), abs(sy))
-        print(f"reanchor it{it}: offset=({sx:+.0f},{sy:+.0f})px conf={conf:.3f}")
-        if conf < REANCHOR_CONF_MIN:
-            print("reanchor: confianca baixa, nao vou mexer", file=sys.stderr)
-            return 1
-        if mag <= REANCHOR_TOL_PX:
+        if meas is None:
+            print(f"reanchor{tag} it{it}: medicao invalida (refs discordam / PSR baixo)")
+            if dry:
+                return 1
+            meas = _recover_sweep(tag)
+            if meas is None:
+                return 1
+            prev, last_moves = None, {}
+        sx, sy, psr, ref_name = meas
+        print(f"reanchor{tag} it{it}: offset=({sx:+.0f},{sy:+.0f})px psr={psr:.1f} ref={ref_name}")
+        if max(abs(sx), abs(sy)) <= REANCHOR_TOL_PX:
             print("reanchor: dentro da tolerancia")
             return 0
         if dry:
             print("reanchor: dry-run, sem correcao")
             return 0
-        if prev_mag is not None and mag >= prev_mag:
-            print("reanchor: offset nao diminuiu — abortando p/ nao vagar",
-                  file=sys.stderr)
-            return 1
-        prev_mag = mag
-        if abs(sx) > REANCHOR_TOL_PX:
-            ptz_move(0.4 if sx > 0 else -0.4, 0, _burst_for(sx, PAN_PX_PER_S))
+        if prev is not None:
+            worse = []
+            for ax, cur, old in (("pan", sx, prev[0]), ("tilt", sy, prev[1])):
+                if ax not in last_moves:
+                    continue
+                if abs(cur - old) < STALL_PX:       # burst nao moveu o motor
+                    stalled.add(ax)
+                    print(f"reanchor: {ax} nao se moveu (stall), aceito como esta", file=sys.stderr)
+                elif abs(cur) > abs(old) + 40:      # piorou: desfaz so este eixo
+                    worse.append(ax)
+                    vx, vy, dur = last_moves[ax]
+                    ptz_move(-vx, -vy, dur)
+                    time.sleep(1)
+                    print(f"reanchor: {ax} piorou, correcao desfeita", file=sys.stderr)
+            if len(worse) == 2 or (worse and len(last_moves) == 1):
+                print("reanchor: nao converge — abortando", file=sys.stderr)
+                return 1
+            if worse:
+                time.sleep(SETTLE_S)
+                continue  # re-mede antes de tentar de novo
+        prev, last_moves = (sx, sy), {}
+        for ax, mv in _corr_moves(sx, sy).items():
+            if ax in stalled:
+                continue
+            ptz_move(*mv)
+            last_moves[ax] = mv
             time.sleep(1)
-        if abs(sy) > REANCHOR_TOL_PX:
-            ptz_move(0, -0.4 if sy > 0 else 0.4, _burst_for(sy, TILT_PX_PER_S))
-            time.sleep(1)
+        if not last_moves:  # nada corrigivel (abaixo do passo minimo ou stall): aceita
+            print("reanchor: residuo nao corrigivel com o passo minimo, aceito")
+            return 0
         time.sleep(SETTLE_S)
     print("reanchor: max iteracoes atingido", file=sys.stderr)
     return 1
@@ -325,20 +446,24 @@ def cmd_trabalho():
 
 def run_windows(T, windows, label):
     print(f"{label} today: {int(T // 60):02d}:{int(T % 60):02d}")
-    # re-ancora a guarda ~90 s antes da primeira janela (a baseline do
-    # firmware anda em dias de tracking encadeado — 31/08/2026)
-    first_target = (T + windows[0][0]) * 60 - 90
-    now = datetime.now()
-    now_s = now.hour * 3600 + now.minute * 60 + now.second
-    if now_s < first_target:
-        time.sleep(first_target - now_s)
-    try:
-        cmd_reanchor()
-    except Exception as e:  # numpy/PIL ausentes ou erro inesperado: segue sem
-        print(f"reanchor indisponivel: {e}", file=sys.stderr)
+    def reanchor_safely(tag):
+        try:
+            cmd_reanchor(tag=tag)
+        except Exception as e:  # numpy/PIL ausentes ou erro inesperado: segue sem
+            print(f"reanchor indisponivel: {e}", file=sys.stderr)
+
     failures = 0
     for off, folder in windows:
         target = (T + off) * 60  # seconds after midnight
+        # re-ancora ~60 s antes de CADA janela: as excursoes derivam ~150-300 px
+        # por janela (tilt sempre p/ baixo — gravidade; pan por backlash) e a
+        # baseline do firmware anda com tracking encadeado (medido 01/09/2026)
+        now = datetime.now()
+        now_s = now.hour * 3600 + now.minute * 60 + now.second
+        if now_s < target - 60:
+            time.sleep(target - 60 - now_s)
+        if now_s <= target + 300:
+            reanchor_safely(f"[{folder}]")
         now = datetime.now()
         now_s = now.hour * 3600 + now.minute * 60 + now.second
         if now_s < target:
@@ -363,6 +488,13 @@ def run_windows(T, windows, label):
                 print(f"{pos_name} {folder} skipped (incomplete move)", file=sys.stderr)
                 failures += 1
             back_to_guard(done)
+            # malha fechada apos CADA volta: a coreografia e reproduzivel ao
+            # pixel na maioria dos ciclos, mas ~40% deles perdem um quantum
+            # (~150-360 px) na inversao de sentido do pan — backlash
+            # intermitente, medido 01/09/2026 (10 ciclos). Medir+corrigir aqui
+            # garante o proximo ponto de partida (e a proxima pos1) na guarda.
+            time.sleep(SETTLE_S)
+            reanchor_safely(f"[{folder}:{pos_name}->guarda]")
     return 0 if failures == 0 else 1
 
 
