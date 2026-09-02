@@ -135,7 +135,7 @@ PSR_MIN = 12.0                   # PSR minimo p/ uma ref entrar na votacao (bons
 PSR_STRONG = 30.0                # uma unica ref acima disso ja vale sozinha
 AGREE_PX = 80                    # duas refs concordando dentro disso = medicao valida
 PAN_LONG_PX = 600                # a partir daqui a correcao e um burst longo proporcional
-SWEEP_WAIT_S = 75                # antes de varrer: o firmware devolve a camera ~1 min apos perder o alvo
+SWEEP_WAIT_S = 60                # medicao invalida: espera o guard-return do firmware (~1 min) e re-mede
 SWEEP_NETS = (0.3, -0.3, 0.6, -0.6, 0.9, -0.9, 1.2, -1.2)   # deslocamento liquido (s a vel 0.4) de cada passo da varredura
 STALL_PX = 20                    # eixo que se moveu menos que isso apos um burst = stall; aceita e nao insiste
 SECONDARY_DELAY_S = 30   # wait after the main shots before moving
@@ -372,7 +372,7 @@ def _recover_sweep(tag):
     return None
 
 
-def cmd_reanchor(dry=False, tag=""):
+def cmd_reanchor(dry=False, tag="", sweep=False):
     """Mede o offset da guarda vs referências (com concordância entre refs)
     e corrige com bursts; pilar perdido -> varredura de recuperacao.
     Avalia POR EIXO: eixo que piorou tem a correcao desfeita; eixo que nao
@@ -386,8 +386,15 @@ def cmd_reanchor(dry=False, tag=""):
             print(f"reanchor{tag} it{it}: medicao invalida (refs discordam / PSR baixo)")
             if dry:
                 return 1
-            meas = _recover_sweep(tag)
-            if meas is None:
+            if it == 1:   # espera o guard-return do firmware e re-mede UMA vez
+                print(f"reanchor{tag}: aguardando {SWEEP_WAIT_S}s (guard-return do firmware) e re-medindo")
+                time.sleep(SWEEP_WAIT_S)
+                meas = _snap_measure()
+            if meas in (None, "fail") and sweep:
+                meas = _recover_sweep(tag)
+            if meas in (None, "fail"):
+                print(f"reanchor{tag}: sem medicao valida — NAO mexo (varredura so manual: reanchor --sweep)",
+                      file=sys.stderr)
                 return 1
             prev, last_moves = None, {}
         sx, sy, psr, ref_name = meas
@@ -448,9 +455,10 @@ def run_windows(T, windows, label):
     print(f"{label} today: {int(T // 60):02d}:{int(T % 60):02d}")
     def reanchor_safely(tag):
         try:
-            cmd_reanchor(tag=tag)
+            return cmd_reanchor(tag=tag)
         except Exception as e:  # numpy/PIL ausentes ou erro inesperado: segue sem
             print(f"reanchor indisponivel: {e}", file=sys.stderr)
+            return 1
 
     failures = 0
     for off, folder in windows:
@@ -462,8 +470,9 @@ def run_windows(T, windows, label):
         now_s = now.hour * 3600 + now.minute * 60 + now.second
         if now_s < target - 60:
             time.sleep(target - 60 - now_s)
+        anchored = False
         if now_s <= target + 300:
-            reanchor_safely(f"[{folder}]")
+            anchored = reanchor_safely(f"[{folder}]") == 0
         now = datetime.now()
         now_s = now.hour * 3600 + now.minute * 60 + now.second
         if now_s < target:
@@ -494,7 +503,10 @@ def run_windows(T, windows, label):
             # intermitente, medido 01/09/2026 (10 ciclos). Medir+corrigir aqui
             # garante o proximo ponto de partida (e a proxima pos1) na guarda.
             time.sleep(SETTLE_S)
-            reanchor_safely(f"[{folder}:{pos_name}->guarda]")
+            if anchored:   # pilar visivel nesta janela: fecha a malha apos a volta
+                reanchor_safely(f"[{folder}:{pos_name}->guarda]")
+            else:
+                print(f"[{folder}] janela sem ancora valida: volta sem re-medir", file=sys.stderr)
     return 0 if failures == 0 else 1
 
 
@@ -520,7 +532,7 @@ def main():
     if cmd == "pos3test":
         return cmd_postest("posicao3")
     if cmd == "reanchor":
-        return cmd_reanchor(dry="--dry" in sys.argv[2:])
+        return cmd_reanchor(dry="--dry" in sys.argv[2:], sweep="--sweep" in sys.argv[2:])
     print(__doc__)
     return 2
 

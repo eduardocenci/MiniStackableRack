@@ -167,13 +167,18 @@ global do quadro inteiro também não recupera deslocamentos grandes
 confiança é **PSR** (pico ÷ desvio dos sidelobes — bons 22–113, lixo
 6–17) e uma medição só vale se **duas referências concordam** em ≤80 px
 (ou uma com PSR ≥30) — nas boas as refs concordam em <30 px, nas ruins
-divergem por centenas. Medição inválida ⇒ primeiro **espera 75 s** (o
-firmware devolve a câmera à baseline ~1 min após perder um alvo de
-tracking — em horário de obra é o caso mais comum) e re-mede; se ainda
-inválida, **varredura de recuperação** em pan com deslocamento líquido
-alternado e crescente (±0.3, ±0.6, ±0.9, ±1.2 s a vel 0.4 — até uma
-excursão inteira), medindo a cada passo até o pilar voltar; se falhar,
-desfaz a varredura. Erros ≥600 px usam burst
+divergem por centenas. Medição inválida ⇒ **espera 60 s** (o firmware
+devolve a câmera à baseline ~1 min após perder um alvo de tracking — em
+horário de obra é o caso mais comum), re-mede uma vez e, se ainda
+inválida, **não mexe** (janela "sem âncora": fotografa onde está e pula
+as re-âncoras pós-excursão). A **varredura de recuperação** (pan com
+deslocamento líquido alternado e crescente ±0.3…±1.2 s, medindo a cada
+passo; desfaz se falhar) existe só como comando manual `reanchor
+--sweep`: em 02/09/2026 ela rodou automática numa sequência inteira sem
+pilar à vista, varrendo e "restaurando" por dead-reckoning seis vezes
+seguidas — cada restauração com seu quantum de erro — e deixou a câmera
+num lugar absurdo, a ponto de Eduardo precisar resetar a câmera. Nunca
+mais automática. Erros ≥600 px usam burst
 longo proporcional (~1250 px/s + quantum; acima de ~0.3 s a duração volta
 a controlar). Roda ~60 s **antes de CADA janela** e **após cada
 volta** de pos2 e de pos3 (a última volta da sequência deixa a câmera na
