@@ -164,10 +164,14 @@ de busca e o gate por altura de pico (0.02) recusou corrigir por três
 janelas — pos1 das 06:36 e 06:46 saíram no flanco esquerdo. Registro
 global do quadro inteiro também não recupera deslocamentos grandes
 (fisheye + pilares próximos quebram a translação pura). Por isso: a
-confiança é **PSR** (pico ÷ desvio dos sidelobes — bons 22–113, lixo
-6–17) e uma medição só vale se **duas referências concordam** em ≤80 px
-(ou uma com PSR ≥30) — nas boas as refs concordam em <30 px, nas ruins
-divergem por centenas. Medição inválida ⇒ **espera 60 s** (o firmware
+validade de uma medição vem da **concordância entre referências** (≥2
+dentro de 80 px → mediana do grupo; ou uma só com PSR ≥30): nas boas as
+refs concordam em <30 px, nas ruins divergem por centenas. O PSR (pico ÷
+desvio dos sidelobes) é só filtro anti-ruído (≥4): de madrugada/noite
+uma medição certa dá PSR 20–100, mas **de dia a cena texturizada derruba
+o PSR a 5–13 mesmo com o pico certo** — em 03/09/2026 um gate de PSR ≥12
+descartou 7 das 8 janelas com as três refs concordando, e a malha fechada
+não corrigiu um desvio de ~290 px que sabia medir. Medição inválida ⇒ **espera 60 s** (o firmware
 devolve a câmera à baseline ~1 min após perder um alvo de tracking — em
 horário de obra é o caso mais comum), re-mede uma vez e, se ainda
 inválida, **não mexe** (janela "sem âncora": fotografa onde está e pula

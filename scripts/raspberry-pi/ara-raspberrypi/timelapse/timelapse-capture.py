@@ -131,7 +131,7 @@ REANCHOR_TOL_PX = 80             # |offset| aceitável (~3.5% do FOV)
 PAN_CORRECT_MIN_PX = 200         # quantum varia 280-400 px: abaixo de 200 a correcao e cara ou coroa
 TILT_CORRECT_MIN_PX = 100
 REANCHOR_MAX_ITER = 5
-PSR_MIN = 12.0                   # PSR minimo p/ uma ref entrar na votacao (bons: 22-113; lixo: 6-17)
+PSR_MIN = 4.0                    # so filtro anti-ruido: de dia o PSR de medicoes CERTAS cai a 5-13 (03/09)
 PSR_STRONG = 30.0                # uma unica ref acima disso ja vale sozinha
 AGREE_PX = 80                    # duas refs concordando dentro disso = medicao valida
 PAN_LONG_PX = 600                # a partir daqui a correcao e um burst longo proporcional
@@ -297,10 +297,13 @@ def _measure_offset(ref_path, cur_path):
 
 
 def _measure_valid(cur_path):
-    """Mede contra todas as referências posicao1-*.jpg e só aceita quando
-    pelo menos duas referências com PSR razoável CONCORDAM (<= AGREE_PX):
-    numa medição boa as refs concordam em <30 px; numa ruim divergem por
-    centenas (02/09/2026). Retorna (sx, sy, psr, ref) ou None."""
+    """Mede contra todas as referências posicao1-*.jpg. A validade vem da
+    CONCORDÂNCIA entre referências (>= 2 dentro de AGREE_PX), não do PSR
+    absoluto: de dia a cena texturizada derruba o PSR (5-13) mesmo com o
+    pico certo, enquanto medições ruins divergem por centenas de px
+    (03/09/2026). PSR entra só como filtro anti-ruído (PSR_MIN) e como
+    aceitação de uma ref sozinha quando inequívoca (PSR_STRONG). Devolve a
+    mediana do grupo concordante: (sx, sy, psr_max, ref) ou None."""
     import glob
     cands = []
     for ref in sorted(glob.glob(os.path.join(REF_DIR, "posicao1-*.jpg"))):
@@ -308,10 +311,16 @@ def _measure_valid(cur_path):
         if psr >= PSR_MIN:
             cands.append((psr, sx, sy, os.path.basename(ref)))
     cands.sort(reverse=True)
+    best_group = []
     for i, (psr, sx, sy, name) in enumerate(cands):
-        for psr2, sx2, sy2, _ in cands[i + 1:]:
-            if abs(sx - sx2) <= AGREE_PX and abs(sy - sy2) <= AGREE_PX:
-                return sx, sy, psr, name
+        group = [c for c in cands if abs(c[1] - sx) <= AGREE_PX and abs(c[2] - sy) <= AGREE_PX]
+        if len(group) >= 2 and len(group) > len(best_group):
+            best_group = group
+    if best_group:
+        xs = sorted(c[1] for c in best_group)
+        ys = sorted(c[2] for c in best_group)
+        mid = len(xs) // 2
+        return xs[mid], ys[mid], best_group[0][0], best_group[0][3]
     if cands and cands[0][0] >= PSR_STRONG:   # uma ref so, mas inequivoca
         psr, sx, sy, name = cands[0]
         return sx, sy, psr, name
