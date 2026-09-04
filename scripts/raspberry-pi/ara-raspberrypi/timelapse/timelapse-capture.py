@@ -137,6 +137,22 @@ AGREE_PX = 80                    # duas refs concordando dentro disso = medicao 
 PAN_LONG_PX = 600                # a partir daqui a correcao e um burst longo proporcional
 SWEEP_WAIT_S = 60                # medicao invalida: espera o guard-return do firmware (~1 min) e re-mede
 SWEEP_NETS = (0.3, -0.3, 0.6, -0.6, 0.9, -0.9, 1.2, -1.2)   # deslocamento liquido (s a vel 0.4) de cada passo da varredura
+# Homing por fim de curso (ideia Eduardo 04/09/2026): a camera nao da 360;
+# os limites de pan (esquerdo = parede do barraco) e de tilt (inferior =
+# chao) sao paredes firmes e repetiveis (+0,+4 px apos empurrao extra). Da
+# quina se chega perto da guarda com uma receita QUANTIZADA (mesmos bursts
+# com que foi aprendida — 7x0.5 s de pan, 10x0.3 s de tilt; um burst unico
+# de 3.45 s pousou ~1500 px aquem: cada burst carrega seu quantum de
+# latencia), e a reancora termina o servico. Usado so quando a medicao esta
+# invalida fora do expediente (de dia o tracking e o dono da camera) ou por
+# comando manual (reanchor --home).
+HOME_PAN = (-1.0, 0.0, 25.0)      # ate o limite esquerdo
+HOME_TILT = (0.0, -1.0, 12.0)     # ate o limite inferior
+TRAVEL_PAN = [(0.4, 0.0, 0.5)] * 7   # limite esquerdo -> guarda (pouso ~-150 px)
+TRAVEL_TILT = [(0.0, 0.4, 0.3)] * 10  # limite inferior -> guarda (pouso ~+70 px)
+HOME_HOURS_BLOCKED = (7, 18)      # entre 07:00 e 18:00 nunca faz homing automatico
+TILT_PLAUSIBLE_PX = 400           # |tilt| acima disso so com PSR forte (falsos acordos perto da parede)
+TILT_PLAUSIBLE_PSR = 15
 STALL_PX = 20                    # eixo que se moveu menos que isso apos um burst = stall; aceita e nao insiste
 SECONDARY_DELAY_S = 30   # wait after the main shots before moving
 SETTLE_S = 2             # settle after arriving, before shooting
@@ -320,6 +336,8 @@ def _measure_valid(cur_path):
         xs = sorted(c[1] for c in best_group)
         ys = sorted(c[2] for c in best_group)
         mid = len(xs) // 2
+        if abs(ys[mid]) > TILT_PLAUSIBLE_PX and best_group[0][0] < TILT_PLAUSIBLE_PSR:
+            return None   # tilt grande so com evidencia forte (04/09: falso acordo +524 px, PSR 6)
         return xs[mid], ys[mid], best_group[0][0], best_group[0][3]
     if cands and cands[0][0] >= PSR_STRONG:   # uma ref so, mas inequivoca
         psr, sx, sy, name = cands[0]
@@ -381,12 +399,40 @@ def _recover_sweep(tag):
     return None
 
 
-def cmd_reanchor(dry=False, tag="", sweep=False):
+def _home_and_recover(tag):
+    """Perdido: vai aos fins de curso (pan esquerdo, tilt inferior) e volta a
+    guarda com a receita quantizada; devolve a medicao no pouso (ou None)."""
+    print(f"reanchor{tag}: HOMING — fins de curso + receita quantizada (~1 min)")
+    ptz_move(*HOME_PAN)
+    time.sleep(2)
+    for mv in TRAVEL_PAN:
+        ptz_move(*mv)
+        time.sleep(1)
+    ptz_move(*HOME_TILT)
+    time.sleep(2)
+    for mv in TRAVEL_TILT:
+        ptz_move(*mv)
+        time.sleep(1)
+    time.sleep(SETTLE_S)
+    meas = _snap_measure()
+    if meas in (None, "fail"):
+        print(f"reanchor{tag}: homing nao reencontrou o pilar", file=sys.stderr)
+        return None
+    print(f"reanchor{tag}: homing pousou a ({meas[0]:+.0f},{meas[1]:+.0f})px")
+    return meas
+
+
+def _homing_allowed():
+    h = datetime.now().hour
+    return not (HOME_HOURS_BLOCKED[0] <= h < HOME_HOURS_BLOCKED[1])
+
+
+def cmd_reanchor(dry=False, tag="", sweep=False, home=False):
     """Mede o offset da guarda vs referências (com concordância entre refs)
     e corrige com bursts; pilar perdido -> varredura de recuperacao.
     Avalia POR EIXO: eixo que piorou tem a correcao desfeita; eixo que nao
     se moveu (stall) e aceito; dois eixos piorando = aborta."""
-    prev, last_moves, stalled = None, {}, set()
+    prev, last_moves, stalled, homed = None, {}, set(), False
     for it in range(1, REANCHOR_MAX_ITER + 1):
         meas = _snap_measure()
         if meas == "fail":
@@ -401,8 +447,11 @@ def cmd_reanchor(dry=False, tag="", sweep=False):
                 meas = _snap_measure()
             if meas in (None, "fail") and sweep:
                 meas = _recover_sweep(tag)
+            if meas in (None, "fail") and (home or _homing_allowed()) and not homed:
+                homed = True
+                meas = _home_and_recover(tag)
             if meas in (None, "fail"):
-                print(f"reanchor{tag}: sem medicao valida — NAO mexo (varredura so manual: reanchor --sweep)",
+                print(f"reanchor{tag}: sem medicao valida — NAO mexo (manual: reanchor --home / --sweep)",
                       file=sys.stderr)
                 return 1
             prev, last_moves = None, {}
@@ -541,7 +590,8 @@ def main():
     if cmd == "pos3test":
         return cmd_postest("posicao3")
     if cmd == "reanchor":
-        return cmd_reanchor(dry="--dry" in sys.argv[2:], sweep="--sweep" in sys.argv[2:])
+        return cmd_reanchor(dry="--dry" in sys.argv[2:], sweep="--sweep" in sys.argv[2:],
+                            home="--home" in sys.argv[2:])
     print(__doc__)
     return 2
 

@@ -190,7 +190,22 @@ passo; desfaz se falhar) existe só como comando manual `reanchor
 pilar à vista, varrendo e "restaurando" por dead-reckoning seis vezes
 seguidas — cada restauração com seu quantum de erro — e deixou a câmera
 num lugar absurdo, a ponto de Eduardo precisar resetar a câmera. Nunca
-mais automática. Erros ≥600 px usam burst
+mais automática.
+
+**Homing por fim de curso** (ideia Eduardo, calibrado 04/09/2026): a
+câmera não dá 360° — os limites de pan (esquerdo = parede do barraco) e de
+tilt (inferior = chão) são paredes firmes e **repetíveis** (+0,+4 px após
+um empurrão extra de 10 s). Da quina, uma receita **quantizada** leva
+perto da guarda: `pan −1.0 × 25 s` → `7 × (0.4, 0.5 s)` → `tilt −1.0 ×
+12 s` → `10 × (0.4, 0.3 s)`; pouso medido em (−146,+78) e (−200,+104) px
+em idas repetidas (~79 s cada) — dentro do envelope, e a re-âncora
+termina. A receita tem de ser executada com os MESMOS bursts com que foi
+aprendida: um burst único de 3.45 s pousou ~1500 px aquém (cada burst
+carrega seu quantum de latência). Política: só quando a medição está
+inválida **fora do expediente** (07:00–18:00 nunca — de dia o tracking é
+o dono da câmera) e uma vez por execução; manual: `reanchor --home`.
+Falsos acordos perto da parede: tilt medido acima de 400 px só é aceito
+com PSR ≥15. Erros ≥600 px usam burst
 longo proporcional (~1250 px/s + quantum; acima de ~0.3 s a duração volta
 a controlar). Roda ~60 s **antes de CADA janela** e **após cada
 volta** de pos2 e de pos3 (a última volta da sequência deixa a câmera na
