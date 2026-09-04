@@ -98,6 +98,14 @@ dia 25; colunas pos3|pos1|pos2) no WhatsApp e arquiva em
 `DiaDeTrabalho/`, `SemanaDeTrabalho/` e `MesDeTrabalho/` no topo do
 Timelapse — mudanças na estrutura do Drive precisam acompanhar lá.
 
+Relógio de boot sem RTC (lição 03/09/2026, vista primeiro no bnu): o Pi
+nasce com o relógio atrasado e o NTP corrige minutos depois; o supercronic
+dorme por duração fixa e todos os horários (05:00, 16:40, 20:00, trabalho)
+ficam deslocados pelo salto. Proteção no host:
+[`../docker/canteiro-timelapse/canteiro-timelapse-clock-resync.service`](../docker/canteiro-timelapse/canteiro-timelapse-clock-resync.service)
+espera `time-sync.target` real (`systemd-time-wait-sync` habilitado) e
+reinicia o container, que recalcula a agenda.
+
 ## Operação
 
 ```bash

@@ -1,0 +1,19 @@
+# Live copy: /etc/systemd/system/canteiro-timelapse-clock-resync.service
+# Raspberry Pi sem RTC: no boot o relogio nasce atrasado e o NTP corrige
+# minutos depois. supercronic dorme por DURACAO fixa calculada na partida,
+# entao um salto de relogio desloca todos os agendamentos (03/09/2026: bnu
+# rebootou, relogio saltou +59 min, presenca das 20:00 disparou 20:59 e a
+# grade das 20:10 iria sair duplicada as 21:09). Este unit espera a
+# sincronizacao real (systemd-time-wait-sync) e reinicia os containers, que
+# recalculam a agenda com o relogio certo.
+[Unit]
+Description=Reinicia os containers canteiro-timelapse apos a sincronizacao do relogio (Pi sem RTC)
+Wants=network-online.target systemd-time-wait-sync.service
+After=network-online.target time-sync.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker compose -f /home/eduardocenci/canteiro-timelapse/compose.yml restart
+
+[Install]
+WantedBy=multi-user.target

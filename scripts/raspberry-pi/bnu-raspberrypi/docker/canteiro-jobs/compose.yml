@@ -55,6 +55,7 @@ services:
     env_file: env/canteiro-sunset-compare.env
     environment:
       TZ: America/Sao_Paulo
+      PYTHONUNBUFFERED: "1"   # logs dos jobs em tempo real (stdout do python nao fica preso no buffer)
       RCLONE_CONFIG: /config/rclone/rclone.conf
     volumes:
       # rw on purpose: rclone refreshes the Drive token in place; uid 1000
