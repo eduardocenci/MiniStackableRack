@@ -12,7 +12,7 @@
 # See scripts/proxmox/mia-proxmox/README.md.
 #
 # What this would do: cast the bnu Frigate "birdseye" all-cameras view to the
-# Entertainment Room Apple TV (192.168.0.247) via AirPlay from mia-proxmox
+# Entertainment Room Apple TV (192.168.2.80) via AirPlay from mia-proxmox
 # (deployed at /usr/local/bin/cast-birdseye).
 # - The Apple TV enforces AirPlay pairing, so this reuses mia HA's stored
 #   AirPlay credential, read AT RUNTIME from the HA VM via the QEMU guest
@@ -24,7 +24,7 @@ set -e
 
 ATV_ID="32:AD:6A:31:05:F9"
 # Progressive fMP4 by default; pass an alternative URL as $1 to experiment.
-URL="${1:-http://192.168.0.21:1984/api/stream.mp4?src=birdseye}"
+URL="${1:-http://192.168.2.20:1984/api/stream.mp4?src=birdseye}"
 
 CRED=$(qm guest exec 100 -- cat /mnt/data/supervisor/homeassistant/.storage/core.config_entries \
   | python3 -c 'import sys,json; o=json.load(sys.stdin); d=json.loads(o["out-data"]); print(next(e["data"]["credentials"]["3"] for e in d["data"]["entries"] if e["domain"]=="apple_tv"))')
@@ -33,5 +33,5 @@ CRED=$(qm guest exec 100 -- cat /mnt/data/supervisor/homeassistant/.storage/core
 # start (frame fetch spawns it; tolerate failure).
 curl -s -m 25 -o /dev/null "http://100.116.190.49:1984/api/frame.jpeg?src=birdseye" || true
 
-exec /opt/pyatv-venv/bin/atvremote --scan-hosts 192.168.0.247 --id "$ATV_ID" \
+exec /opt/pyatv-venv/bin/atvremote --scan-hosts 192.168.2.80 --id "$ATV_ID" \
   --airplay-credentials "$CRED" "play_url=$URL"

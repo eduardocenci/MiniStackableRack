@@ -1,8 +1,8 @@
 # mia-proxmox — host-level config
 
-Proxmox host of the mia rack. LAN `192.168.0.21/24` (vmbr0), tailnet
+Proxmox host of the mia rack. LAN `192.168.2.20/24` (vmbr0, static; subnet 192.168.2.0/24 since the 2026-09-04 IP-plan cutover), tailnet
 `mia-proxmox` (100.86.13.113). Guests: VM 100 `mia-homeassistant`
-(LAN `192.168.0.11`), VM 101 Win11.
+(LAN `192.168.2.21`), VM 101 Win11.
 
 ## Tailnet forwards for mia HA (`systemd/`)
 
@@ -14,8 +14,8 @@ rack LAN:
 
 | Unit | Listens | Forwards to | Used by |
 |---|---|---|---|
-| `frigate-birdseye-proxy.socket` | `192.168.0.21:8554` | `bnu-frigate:8554` (RTSP) | mia HA `camera.frigate_birdseye` (generic camera, `rtsp://192.168.0.21:8554/birdseye`) |
-| `frigate-birdseye-hls-proxy.socket` | `192.168.0.21:1984` | `bnu-frigate:1984` (go2rtc API/HLS) | LAN clients fetching HLS/MP4 directly |
+| `frigate-birdseye-proxy.socket` | `192.168.2.20:8554` | `bnu-frigate:8554` (RTSP) | mia HA `camera.frigate_birdseye` (generic camera, `rtsp://192.168.2.20:8554/birdseye`) |
+| `frigate-birdseye-hls-proxy.socket` | `192.168.2.20:1984` | `bnu-frigate:1984` (go2rtc API/HLS) | LAN clients fetching HLS/MP4 directly |
 
 Deploy: copy both `.socket`/`.service` pairs to `/etc/systemd/system/`,
 `systemctl daemon-reload && systemctl enable --now '*.socket'`. The proxy
@@ -30,7 +30,7 @@ standby; stop by turning the TV off. Full chain:
 
 ```
 bnu Frigate birdseye (restream, continuous) ─tailnet─▶ mia-proxmox :8554 forward
-  ─▶ mia HA generic camera ─HLS :8123─▶ Samsung QN90F cast receiver (192.168.0.228)
+  ─▶ mia HA generic camera ─HLS :8123─▶ Samsung QN90F cast receiver (192.168.2.81)
 ```
 
 `cast-birdseye.sh` (deployed at `/usr/local/bin/cast-birdseye`) is the
@@ -38,6 +38,6 @@ bnu Frigate birdseye (restream, continuous) ─tailnet─▶ mia-proxmox :8554 f
 `play_url` is broken against tvOS 26.6 (AirPlay /play accepted, no playback
 session, `/playback-info` → 500; reproduced with Apple's reference HLS
 stream). pyatv lives in `/opt/pyatv-venv`. Revisit when pyatv gains AirPlay 2
-video. The Apple TV ("Entertainment Room", 192.168.0.247, pairing mandatory)
+video. The Apple TV ("Entertainment Room", 192.168.2.80, pairing mandatory)
 remains paired with mia HA; its AirPlay credential lives in HA's
 `core.config_entries` and is read at runtime by the script, never stored.

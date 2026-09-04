@@ -1,0 +1,123 @@
+# mia-homeassistant package: Venstar Explorer Mini (climate.thermostat, 192.168.2.70)
+# regulates on the Apollo AIR-1 SEN55 room temperature instead of its own sensor.
+#
+# The Venstar Local API cannot accept an external temperature, so the automation
+# shifts the setpoint it sends by (thermostat reading - SEN55 reading). The room
+# then settles at input_number.room_target_temperature even though the thermostat
+# display shows a different number. Set the target on the helper, not on the
+# thermostat card.
+#
+# Deployed to /config/packages/thermostat_sen55.yaml (configuration.yaml has
+# `homeassistant: packages: !include_dir_named packages`).
+
+input_number:
+  room_target_temperature:
+    name: Room target temperature
+    min: 16
+    max: 30
+    step: 0.5
+    unit_of_measurement: "°C"
+    icon: mdi:thermometer
+  # Venstar 1st-stage deadband, setup step 17 on the unit (factory default 2 °F).
+  # Not readable over the Local API — keep this in sync with the thermostat.
+  venstar_deadband:
+    name: Venstar deadband (setup step 17)
+    min: 1
+    max: 6
+    step: 1
+    unit_of_measurement: "°F"
+    icon: mdi:arrow-expand-vertical
+    mode: box
+
+# Where the compressor trips, expressed on the ROOM (SEN55) scale.
+# Venstar rule (manual, step 17): cool starts at setpoint + deadband and stops at
+# setpoint; heat starts at setpoint - deadband and stops at setpoint — always
+# measured on its own sensor. Adding (SEN55 - Venstar) converts to what the
+# SEN55 will read at that moment, so these lines sit next to the SEN55 trace
+# on Dashboard-Main → A/C.
+template:
+  - sensor:
+      - name: "A/C compressor start temperature"
+        unique_id: ac_compressor_start_temperature
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+        icon: mdi:snowflake-thermometer
+        availability: >-
+          {{ states('climate.thermostat') in ['heat', 'cool']
+             and is_number(state_attr('climate.thermostat', 'temperature'))
+             and is_number(states('sensor.apollo_air_1_305e6c_sen55_temperature'))
+             and is_number(states('sensor.thermostat_thermostat_temperature')) }}
+        state: >-
+          {% set sp = state_attr('climate.thermostat', 'temperature') | float %}
+          {% set db = states('input_number.venstar_deadband') | float(2) * 5 / 9 %}
+          {% set gap = states('sensor.apollo_air_1_305e6c_sen55_temperature') | float
+                     - states('sensor.thermostat_thermostat_temperature') | float %}
+          {% if is_state('climate.thermostat', 'cool') %}
+            {{ (sp + db + gap) | round(1) }}
+          {% else %}
+            {{ (sp - db + gap) | round(1) }}
+          {% endif %}
+      - name: "A/C compressor stop temperature"
+        unique_id: ac_compressor_stop_temperature
+        unit_of_measurement: "°C"
+        device_class: temperature
+        state_class: measurement
+        icon: mdi:thermometer-check
+        availability: >-
+          {{ states('climate.thermostat') in ['heat', 'cool']
+             and is_number(state_attr('climate.thermostat', 'temperature'))
+             and is_number(states('sensor.apollo_air_1_305e6c_sen55_temperature'))
+             and is_number(states('sensor.thermostat_thermostat_temperature')) }}
+        state: >-
+          {% set sp = state_attr('climate.thermostat', 'temperature') | float %}
+          {% set gap = states('sensor.apollo_air_1_305e6c_sen55_temperature') | float
+                     - states('sensor.thermostat_thermostat_temperature') | float %}
+          {{ (sp + gap) | round(1) }}
+      # 1 while the compressor runs (cool or heat), 0 otherwise — numeric so the
+      # Plotly card on Dashboard-Main → A/C can shade the run periods.
+      - name: "A/C compressor running"
+        unique_id: ac_compressor_running
+        state_class: measurement
+        icon: mdi:air-conditioner
+        state: >-
+          {{ 1 if state_attr('climate.thermostat', 'hvac_action') in ['cooling', 'heating'] else 0 }}
+
+automation:
+  - id: thermostat_follows_sen55
+    alias: Thermostat follows SEN55 temperature
+    description: >-
+      Keeps the Venstar setpoint offset by the difference between its own sensor
+      and the SEN55 so the room reaches input_number.room_target_temperature.
+    mode: single
+    trigger:
+      - platform: state
+        entity_id:
+          - sensor.apollo_air_1_305e6c_sen55_temperature
+          - sensor.thermostat_thermostat_temperature
+          - input_number.room_target_temperature
+      - platform: time_pattern
+        minutes: "/10"
+    condition:
+      - condition: template
+        value_template: >-
+          {{ is_number(states('sensor.apollo_air_1_305e6c_sen55_temperature'))
+             and is_number(states('sensor.thermostat_thermostat_temperature'))
+             and states('climate.thermostat') in ['heat', 'cool'] }}
+    action:
+      - variables:
+          room: "{{ states('sensor.apollo_air_1_305e6c_sen55_temperature') | float }}"
+          tstat: "{{ states('sensor.thermostat_thermostat_temperature') | float }}"
+          want: "{{ states('input_number.room_target_temperature') | float }}"
+          # never shift more than 4 °C, in case a sensor goes bad
+          offset: "{{ [[tstat - room, -4] | max, 4] | min }}"
+          setpoint: "{{ (want + offset) | round(1) }}"
+          current: "{{ state_attr('climate.thermostat', 'temperature') | float(0) }}"
+      # the Venstar only takes whole °F (0.56 °C) steps; skip tiny changes
+      - condition: template
+        value_template: "{{ (setpoint - current) | abs >= 0.3 }}"
+      - service: climate.set_temperature
+        target:
+          entity_id: climate.thermostat
+        data:
+          temperature: "{{ setpoint }}"

@@ -106,7 +106,7 @@ instead **proxies inbound tailnet connections to `127.0.0.1`** on the same port.
 So the container binds `${MIA_COPYPARTY_BIND_IP}` = `127.0.0.1:3923`:
 
 - tailnet client → `100.110.80.51:3923` → tailscaled → `127.0.0.1:3923` ✓
-- LAN/WAN client → `192.168.0.10:3923` → nothing listening ✗ (by design)
+- LAN/WAN client → `192.168.2.15:3923` → nothing listening ✗ (by design)
 
 If Tailscale is ever switched to TUN mode (a `tailscale0` interface appears),
 set `MIA_COPYPARTY_BIND_IP` to the NAS's 100.x IP instead. If the var is unset,

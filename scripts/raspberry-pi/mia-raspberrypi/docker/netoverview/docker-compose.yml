@@ -1,0 +1,24 @@
+# mia-raspberrypi · netoverview — deployed at ~/netoverview/docker-compose.yml on the Pi.
+# Image updates arrive on their own (cron: docker compose pull && up -d every 5 min);
+# this file only needs pushing when the environment below changes.
+services:
+  netoverview:
+    container_name: netoverview
+    image: cenci/netoverview:latest
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      DB_PATH: /data/devices.db
+      SCAN_INTERVAL_MINUTES: "5"
+      PORT_SCAN_INTERVAL_HOURS: "24"
+      # MIA IP plan (192.168.2.0/24, cut over 2026-09-04). Same last-octet blocks
+      # at every site; only the site prefix differs. Source of truth for the
+      # reservations: UniFi UCG Max. Shown as chips + a Category column.
+      IP_PLAN: "1=Gateway;2-9=Network gear;10-19=Rack;20-29=Proxmox;30-39=Computers;40-49=Cellphones;50-59=IoT power;60-69=IoT lights;70-79=IoT other;80-89=Media;90-99=Spare;100-199=DHCP pool;200-254=Retired"
+      IP_PLAN_NOTE: "mia 192.168.2.0/24 · fleet: ara 192.168.1 · bg 192.168.0 · bnu 10.1.1 · fln 192.168.3 · same last-octet blocks at every site"
+    volumes:
+      - netoverview_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  netoverview_data:
