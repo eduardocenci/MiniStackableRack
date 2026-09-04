@@ -124,6 +124,32 @@ tracking ativo (domingo) acumulou ~5% de tilt após 3 vai-e-voltas — sempre
 encerrar comparando um snap com a referência da guarda e corrigindo com
 nudge antes de sair (o guard-return só zera com gente rastreada na obra).
 
+## Alertas de falha → WhatsApp Casa SmokeTests (desde 04/09/2026)
+
+Pedido Eduardo 04/09/2026: **qualquer execução do script que termine com
+rc ≠ 0 vira uma mensagem no grupo Casa SmokeTests** — nada falha em silêncio.
+
+- `fail(msg)` registra cada razão (stderr + lista `FAILURES`): janela
+  perdida (>5 min de atraso), grab falhou (pos1/pos2/pos3/trabalho),
+  excursão incompleta (PTZ), re-âncora sem âncora válida (câmera perdida /
+  não convergiu), exceção não tratada. `_run_with_alert()` embrulha o
+  `main()`: com rc ≠ 0 manda `⚠️ *timelapse ARA* — <cmd> terminou com rc=N`
+  + até 8 razões (best-effort: falha no envio só loga, nunca derruba a
+  execução).
+- Transporte: o WAHA vive no LXC 101 de bnu (LAN-only); o ara chega nele
+  pela tailnet através do relay socat `bnu-proxmox:3001 → 10.1.1.126:3000`
+  (registrado no `globalnet/architecture.yaml`, nó `bnu_prx`). Testado do
+  próprio ara em 04/09/2026: HTTP 200 em 0,25 s, sessão `WORKING`.
+- Config no env do container, **fora do git**:
+  `ara-raspberrypi:~/canteiro-timelapse/env/alerts.env` (chmod 600) —
+  `ALERT_WAHA_URL=http://bnu-proxmox:3001`, `ALERT_WAHA_KEY` (cópia viva de
+  `BNU_WAHA_API_KEY` do `.env` raiz), `ALERT_WAHA_SESSION=default`,
+  `ALERT_CHAT_JID=120363410899542847@g.us` (Casa SmokeTests). Sem as
+  variáveis o script só loga "alerta nao configurado".
+- Teste do caminho completo: `docker exec canteiro-timelapse
+  timelapse-capture alerttest` → posta a mensagem de teste e sai com rc=1
+  (validado 04/09/2026, HTTP 201).
+
 ## Re-âncora visual da guarda (desde 31/08/2026)
 
 Descoberta de 31/08 (dia de instalação das telas colada na câmera): **a

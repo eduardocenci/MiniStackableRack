@@ -51,6 +51,7 @@ Subcommands
   pos2test / pos3test
              recipe -> snap to /tmp/pos<N>test.jpg -> reverse, no outbox
              writes — health/re-calibration check.
+  alerttest  sends a test failure alert to the SmokeTests group and exits 1.
   reanchor [--dry]
              visual re-anchor of the guard: correlates the shed's Y-post ROI
              of a fresh snap against the reference library
@@ -72,6 +73,45 @@ import time
 from datetime import date, datetime
 
 BASE = "/var/lib/timelapse"
+# Alerta de falha no WhatsApp (pedido Eduardo 04/09/2026): qualquer execucao
+# que termine com rc != 0 manda um resumo ao grupo Casa SmokeTests via o
+# WAHA de bnu (LAN-only la; alcancado pela tailnet atraves do relay socat
+# registrado no architecture.yaml). Config no env do container
+# (~/canteiro-timelapse/env/alerts.env, NAO commitado): ALERT_WAHA_URL,
+# ALERT_WAHA_KEY, ALERT_WAHA_SESSION, ALERT_CHAT_JID. Sem config = so loga.
+ALERT_WAHA_URL = os.environ.get("ALERT_WAHA_URL", "")
+ALERT_WAHA_KEY = os.environ.get("ALERT_WAHA_KEY", "")
+ALERT_WAHA_SESSION = os.environ.get("ALERT_WAHA_SESSION", "default")
+ALERT_CHAT_JID = os.environ.get("ALERT_CHAT_JID", "")
+FAILURES = []   # razoes acumuladas na execucao (viram o corpo do alerta)
+
+
+def fail(msg):
+    """Registra uma falha (stderr + lista para o alerta)."""
+    print(msg, file=sys.stderr)
+    FAILURES.append(msg)
+
+
+def send_alert(text):
+    """Best-effort: nunca derruba a execucao por causa do alerta."""
+    if not (ALERT_WAHA_URL and ALERT_WAHA_KEY and ALERT_CHAT_JID):
+        print("alerta nao configurado (ALERT_*): " + text.replace("\n", " | "), file=sys.stderr)
+        return False
+    import json
+    import urllib.request
+    try:
+        req = urllib.request.Request(
+            f"{ALERT_WAHA_URL}/api/sendText",
+            data=json.dumps({"session": ALERT_WAHA_SESSION, "chatId": ALERT_CHAT_JID,
+                             "text": text}).encode(),
+            headers={"Content-Type": "application/json", "X-Api-Key": ALERT_WAHA_KEY})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            print(f"alerta enviado, HTTP {r.status}")
+            return True
+    except Exception as e:
+        print(f"alerta FALHOU: {e}", file=sys.stderr)
+        return False
+
 OUTBOX = os.path.join(BASE, "outbox")
 RELAY_PT = "rtsp://127.0.0.1:8554/canteiro"
 RELAY_FIXA = "rtsp://127.0.0.1:8554/canteiro-alt"
@@ -436,6 +476,7 @@ def cmd_reanchor(dry=False, tag="", sweep=False, home=False):
     for it in range(1, REANCHOR_MAX_ITER + 1):
         meas = _snap_measure()
         if meas == "fail":
+            fail(f"reanchor{tag}: grab da medicao falhou")
             return 1
         if meas is None:
             print(f"reanchor{tag} it{it}: medicao invalida (refs discordam / PSR baixo)")
@@ -451,8 +492,7 @@ def cmd_reanchor(dry=False, tag="", sweep=False, home=False):
                 homed = True
                 meas = _home_and_recover(tag)
             if meas in (None, "fail"):
-                print(f"reanchor{tag}: sem medicao valida — NAO mexo (manual: reanchor --home / --sweep)",
-                      file=sys.stderr)
+                fail(f"reanchor{tag}: sem medicao valida — NAO mexo (camera perdida? manual: reanchor --home / --sweep)")
                 return 1
             prev, last_moves = None, {}
         sx, sy, psr, ref_name = meas
@@ -478,7 +518,7 @@ def cmd_reanchor(dry=False, tag="", sweep=False, home=False):
                     time.sleep(1)
                     print(f"reanchor: {ax} piorou, correcao desfeita", file=sys.stderr)
             if len(worse) == 2 or (worse and len(last_moves) == 1):
-                print("reanchor: nao converge — abortando", file=sys.stderr)
+                fail(f"reanchor{tag}: nao converge — abortando")
                 return 1
             if worse:
                 time.sleep(SETTLE_S)
@@ -494,7 +534,7 @@ def cmd_reanchor(dry=False, tag="", sweep=False, home=False):
             print("reanchor: residuo nao corrigivel com o passo minimo, aceito")
             return 0
         time.sleep(SETTLE_S)
-    print("reanchor: max iteracoes atingido", file=sys.stderr)
+    fail(f"reanchor{tag}: max iteracoes atingido sem convergir")
     return 1
 
 
@@ -506,6 +546,8 @@ def cmd_trabalho():
         return 0
     stamp = now.strftime("%Y-%m-%d_%H%M")
     ok = grab(RELAY_PT, f"trabalho/{now.strftime('%Y-%m')}/{stamp}.jpg")
+    if not ok:
+        fail(f"trabalho {stamp}: grab falhou")
     return 0 if ok else 1
 
 
@@ -515,7 +557,7 @@ def run_windows(T, windows, label):
         try:
             return cmd_reanchor(tag=tag)
         except Exception as e:  # numpy/PIL ausentes ou erro inesperado: segue sem
-            print(f"reanchor indisponivel: {e}", file=sys.stderr)
+            fail(f"reanchor{tag} indisponivel: {e}")
             return 1
 
     failures = 0
@@ -531,16 +573,19 @@ def run_windows(T, windows, label):
         anchored = False
         if now_s <= target + 300:
             anchored = reanchor_safely(f"[{folder}]") == 0
+            if not anchored:   # camera perdida / nao convergiu: a foto sai, mas e falha (alerta)
+                failures += 1
         now = datetime.now()
         now_s = now.hour * 3600 + now.minute * 60 + now.second
         if now_s < target:
             time.sleep(target - now_s)
         elif now_s > target + 300:
-            print(f"window {folder} already >5 min past, skipping", file=sys.stderr)
+            fail(f"janela {folder} perdida (>5 min de atraso)")
             failures += 1
             continue
         stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
         if not grab(RELAY_PT, f"posicao1/{folder}/{stamp}.jpg"):
+            fail(f"posicao1 {folder}: grab falhou")
             failures += 1
         grab(RELAY_FIXA, f"lentefixa/{folder}/{stamp}.jpg")
         # posições 2 e 3: move, shoot, walk back — camera ends at the guard
@@ -550,9 +595,10 @@ def run_windows(T, windows, label):
             if len(done) == len(recipe):
                 stamp2 = datetime.now().strftime("%Y-%m-%d_%H%M")
                 if not grab(RELAY_PT, f"{pos_name}/{folder}/{stamp2}.jpg"):
+                    fail(f"{pos_name} {folder}: grab falhou")
                     failures += 1
             else:
-                print(f"{pos_name} {folder} skipped (incomplete move)", file=sys.stderr)
+                fail(f"{pos_name} {folder}: excursao incompleta (PTZ)")
                 failures += 1
             back_to_guard(done)
             # malha fechada apos CADA volta: a coreografia e reproduzivel ao
@@ -562,7 +608,8 @@ def run_windows(T, windows, label):
             # garante o proximo ponto de partida (e a proxima pos1) na guarda.
             time.sleep(SETTLE_S)
             if anchored:   # pilar visivel nesta janela: fecha a malha apos a volta
-                reanchor_safely(f"[{folder}:{pos_name}->guarda]")
+                if reanchor_safely(f"[{folder}:{pos_name}->guarda]") != 0:
+                    failures += 1
             else:
                 print(f"[{folder}] janela sem ancora valida: volta sem re-medir", file=sys.stderr)
     return 0 if failures == 0 else 1
@@ -596,5 +643,24 @@ def main():
     return 2
 
 
+def _run_with_alert():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    if cmd == "alerttest":
+        fail("teste de alerta (alerttest)")
+        rc = 1
+    else:
+        try:
+            rc = main()
+        except Exception as e:
+            import traceback
+            fail("excecao: " + traceback.format_exc().strip().splitlines()[-1])
+            rc = 1
+    if rc:
+        host = os.uname().nodename
+        corpo = "\n".join(f"• {f}" for f in FAILURES[-8:]) or "• (sem detalhe registrado)"
+        send_alert(f"⚠️ *timelapse ARA* — `{cmd}` terminou com rc={rc} em {host}\n{corpo}")
+    return rc
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_run_with_alert())
