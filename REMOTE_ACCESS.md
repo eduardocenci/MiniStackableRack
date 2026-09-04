@@ -341,7 +341,11 @@ Ethernet"`; (4) the switches/AP reconnect on their own after the subnet change
 (pool addresses), then take a static `config_network` via `PUT
 /rest/device/<_id>` one at a time, ~30 s each; (5) HA integrations pinned by
 host: `generic` camera = options flow (the `advanced` section is required:
-`{"framerate":2,"verify_ssl":true,"rtsp_transport":"tcp"}`), `tplink` and
+`{"framerate":2,"verify_ssl":true,"rtsp_transport":"tcp"}`; **still open on
+2026-09-04**: the flow's stream probe times out on `rtsp://192.168.2.20:8554/birdseye`
+although go2rtc answers through the same proxy — bnu-frigate is on a relayed
+tailscale path — so `camera.frigate_birdseye` still points at the dead
+`192.168.0.21`; retry from the UI when bnu-frigate has a direct connection), `tplink` and
 `smlight` = reconfigure flow (`POST /api/config/config_entries/flow
 {"handler":…,"entry_id":…}` → `{"host":…}`), `venstar` has neither → delete
 the entry and re-add (`{"host":…,"ssl":false}`, entity id survives).
