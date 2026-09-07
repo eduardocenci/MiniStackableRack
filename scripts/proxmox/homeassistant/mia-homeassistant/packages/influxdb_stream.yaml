@@ -41,6 +41,13 @@ influxdb:
       - sensor.airnow_pm2_5
       - sensor.airnow_pm10
       - sensor.airnow_ozone
+      # NWS station KMIA — live outdoor reference (renamed from the verbose id)
+      - weather.kmia
+      - sensor.kmia_temperature
+      - sensor.kmia_dew_point
+      - sensor.kmia_relative_humidity
+      - sensor.kmia_wind_speed
+      - sensor.kmia_barometric_pressure
     entity_globs:
       - sensor.apollo_air_1_305e6c_*          # AIR-1: T, RH, CO2, PM, VOC, NOx (housekeeping excluded below)
       - sensor.thermostat_*                   # Venstar temps, runtimes, active stage
