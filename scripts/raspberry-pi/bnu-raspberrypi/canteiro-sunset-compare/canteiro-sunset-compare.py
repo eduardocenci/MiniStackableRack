@@ -25,8 +25,13 @@ Cada grade é arquivada no topo do Timelapse em
 no WhatsApp via WAHA `sendImage` (base64 — funciona neste Core build,
 mesmo padrão do canteiro-watchdog).
 
-A câmera grava data/hora dentro de cada frame, então a própria grade
-carrega os carimbos dos dois dias em cada célula.
+Desde 07/09/2026 a grade é ALINHADA por software: mede-se o deslocamento
+do pilar do galpão na pos1 de cada dia (pilar_align, mesma medição da
+re-âncora do ara) e desloca+recorta as 3 colunas daquele dia por esse
+offset, zerando o tremor entre dias (pos2/pos3 herdam o offset da guarda).
+Sem numpy/pillow ou sem as referências do Drive, cai no modo antigo
+(ffmpeg, sem alinhar). Como o recorte come a faixa inferior onde a câmera
+grava o carimbo, cada célula recebe uma etiqueta DD/MM desenhada.
 
 Config: ~/canteiro-jobs/env/canteiro-sunset-compare.env (env_file do
 compose) — WAHA_URL, WAHA_KEY, WAHA_SESSION, GROUP_JID, TEST_JID,
@@ -39,6 +44,7 @@ Teste manual (vai ao TEST_JID — grupo Casa SmokeTests):
   (sem filtro: testa os produtos que valeriam hoje; com filtro, força-os)
 """
 import base64
+import glob
 import json
 import os
 import subprocess
@@ -48,6 +54,8 @@ import time
 import urllib.request
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
+
+import pilar_align   # alinhamento por software (mede o pilar, desloca+recorta)
 
 TZ = ZoneInfo("America/Sao_Paulo")
 
@@ -108,6 +116,86 @@ def montage_grid(cells, out):
     args += ["-filter_complex", filt, "-frames:v", "1", "-q:v", "3", "-y", out]
     r = subprocess.run(args, timeout=120)
     return r.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 100_000
+
+
+PAD_PX       = 28     # folga alem do maior offset, ao recortar
+MAX_MARGIN   = 320    # recorte maximo por lado (protege o enquadramento)
+
+
+def _montage_aligned(cells, row_offs, days, out):
+    """Monta a grade 2x3 em PIL alinhando cada linha pelo offset do pilar.
+    `row_offs` = [(sx,sy)|None, (sx,sy)|None] (linha de cima, linha de baixo);
+    o offset da linha vale para as 3 colunas (p3,p1,p2). Recorta a janela de
+    referencia deslocada de (sx,sy) e etiqueta DD/MM. Retorna True/False."""
+    from PIL import Image, ImageDraw, ImageFont
+    ims = [Image.open(c).convert("RGB") for c in cells]
+    W, H = ims[0].size
+    shifts = []
+    for ri in range(2):
+        shifts += [row_offs[ri] if row_offs[ri] else (0, 0)] * 3
+    mags = [max(abs(o[0]), abs(o[1])) for o in row_offs if o]
+    M = min(MAX_MARGIN, (max(mags) + PAD_PX) if mags else PAD_PX)
+    cw, ch = W - 2 * M, H - 2 * M
+    tw = CELL_W
+    th = round(CELL_W * ch / cw)
+    canvas = Image.new("RGB", (tw * 3, th * 2), (18, 18, 18))
+    dr = ImageDraw.Draw(canvas)
+    try:
+        font = ImageFont.load_default(size=30)
+    except Exception:
+        font = ImageFont.load_default()
+    for idx, (im, (sx, sy)) in enumerate(zip(ims, shifts)):
+        left = max(0, min(M + sx, W - cw))
+        top = max(0, min(M + sy, H - ch))
+        tile = im.crop((left, top, left + cw, top + ch)).resize((tw, th))
+        r, c = divmod(idx, 3)
+        canvas.paste(tile, (c * tw, r * th))
+        tag = days[0 if idx < 3 else 1].strftime("%d/%m")
+        tx, ty = c * tw + 10, r * th + th - 40
+        dr.rectangle([tx - 5, ty - 4, tx + 82, ty + 32], fill=(0, 0, 0))
+        dr.text((tx, ty), tag, fill=(255, 220, 0), font=font)
+    canvas.save(out, quality=88)
+    return os.path.exists(out) and os.path.getsize(out) > 50_000
+
+
+def build_montage(cells, day_top, day_bottom, ref_dir, out):
+    """Grade alinhada quando da (numpy/pillow + refs + medicao valida da
+    pos1); senao a grade ffmpeg de sempre. Retorna (ok, alinhada)."""
+    if ref_dir and pilar_align.available():
+        offs = []
+        for idx, day in ((1, day_top), (4, day_bottom)):   # cells[1]/[4] = pos1
+            r = None
+            try:
+                r = pilar_align.measure_valid(cells[idx], ref_dir)
+            except Exception as e:
+                print(f"align: erro medindo pos1 {day:%d/%m}: {e}", file=sys.stderr)
+            o = pilar_align.sane_offset(r)
+            offs.append(o)
+            if o:
+                print(f"align {day:%d/%m}: offset=({o[0]:+d},{o[1]:+d}) "
+                      f"psr={r[2]:.0f} ref={r[3]}")
+            else:
+                print(f"align {day:%d/%m}: sem shift (medicao invalida/implausivel)")
+        if any(offs):
+            if _montage_aligned(cells, offs, (day_top, day_bottom), out):
+                return True, True
+            print("align: montagem alinhada falhou, caindo no ffmpeg", file=sys.stderr)
+    return montage_grid(cells, out), False
+
+
+def fetch_refs(dest):
+    """Baixa as referencias posicao1-*.jpg do Drive (ceuazul:Timelapse/ref)
+    para `dest`; retorna `dest` ou None."""
+    os.makedirs(dest, exist_ok=True)
+    r = subprocess.run(["rclone", "copy", f"{REMOTE}/ref", dest,
+                        "--include", "posicao1-*.jpg"],
+                       capture_output=True, timeout=180)
+    if r.returncode != 0:
+        print("align: rclone das refs falhou: "
+              + r.stderr.decode(errors="replace")[-200:], file=sys.stderr)
+    if glob.glob(os.path.join(dest, "posicao1-*.jpg")):
+        return dest
+    return None
 
 
 def waha_post(endpoint, payload):
@@ -205,6 +293,9 @@ def main():
 
     rc = 0
     with tempfile.TemporaryDirectory(prefix="sunset-compare-") as tmp:
+        ref_dir = fetch_refs(os.path.join(tmp, "ref")) if pilar_align.available() else None
+        if pilar_align.available() and not ref_dir:
+            print("align: refs indisponiveis, grades sairao sem alinhamento", file=sys.stderr)
         for nome, day_top, caption, pasta in products:
             titulo = caption.split("*")[1]
             cells, faltam = make_grid_cells(day_top, today, tmp, 1 if test else RETRIES)
@@ -215,8 +306,9 @@ def main():
                 rc = 1
                 continue
             out = os.path.join(tmp, f"{nome}.jpg")
-            if not montage_grid(cells, out):
-                st = send_text(chat, prefix + f"⚠️ {titulo} falhou na montagem (ffmpeg).")
+            ok, aligned = build_montage(cells, day_top, today, ref_dir, out)
+            if not ok:
+                st = send_text(chat, prefix + f"⚠️ {titulo} falhou na montagem.")
                 print(f"{nome}: montagem falhou, aviso enviado, HTTP {st}")
                 rc = 1
                 continue
@@ -232,7 +324,8 @@ def main():
                 print(f"rclone copyto {pasta} falhou: "
                       + r.stderr.decode(errors="replace")[-200:], file=sys.stderr)
             st = send_image(chat, out, prefix + caption)
-            print(f"{nome}: {day_top:%d/%m} vs {today:%d/%m} enviada, HTTP {st} -> {chat}")
+            print(f"{nome}: {day_top:%d/%m} vs {today:%d/%m} "
+                  f"({'alinhada' if aligned else 'sem alinhamento'}) enviada, HTTP {st} -> {chat}")
     return rc
 
 

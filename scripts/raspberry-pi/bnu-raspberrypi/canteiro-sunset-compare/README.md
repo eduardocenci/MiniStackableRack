@@ -8,8 +8,9 @@ fotos do pôr do sol nas TRÊS posições da lente PT (timelapse do ara Pi,
 upload às 20:00 — ver
 [`../../ara-raspberrypi/timelapse/`](../../ara-raspberrypi/timelapse/)):
 linha 1 = baseline, linha 2 = hoje; colunas posicao3 | posicao1 | posicao2
-(esquerda→centro→direita da obra); 800 px/célula → 2400×900 (ffmpeg
-hstack+vstack).
+(esquerda→centro→direita da obra); 800 px/célula. A grade é **alinhada por
+software** (PIL) desde 07/09/2026 — ver abaixo; sem numpy/pillow ou sem as
+referências do Drive, cai no modo antigo (ffmpeg hstack+vstack, 2400×900).
 
 | Produto | Quando | Baseline (linha 1) | Exceção de estreia |
 |---|---|---|---|
@@ -19,7 +20,8 @@ hstack+vstack).
 
 Envio via WAHA `sendImage` (funciona neste Core build; mesmo padrão do
 [`../canteiro-watchdog/`](../canteiro-watchdog/)). A câmera queima
-data/hora em cada frame, então as grades dispensam legenda por célula.
+data/hora em cada frame; como o alinhamento recorta a faixa inferior onde
+esse carimbo fica, cada célula recebe uma etiqueta `DD/MM` desenhada.
 Produtos do mesmo dia saem em sequência (Dia → Semana → Mês) e reusam os
 downloads entre si.
 
@@ -45,6 +47,33 @@ Pedido Eduardo 27/08/2026. Roda em bnu (e não no ara Pi) porque o WAHA
 - **Destino de produção ATIVO desde 27/08/2026** (comando do Eduardo):
   grupo **Cenci Céu Azul Casa-Hangar** (`120363402090094156@g.us`). O JID
   do Casa SmokeTests fica comentado no env como rollback/staging.
+
+## Alinhamento por software (desde 07/09/2026)
+
+Mesmo com a re-âncora da câmera, a guarda (pos1) varia até ~170 px de um dia
+para o outro (a baseline do tracking caminha durante o dia; o passo mínimo do
+motor, ~280 px de pan, não corrige resíduos menores — medido 03–06/09/2026).
+No timelapse e nas grades isso vira um tremor visível entre dias. Como o
+offset de cada frame é medível com ~4 px, o alinhamento é feito por software:
+
+- [`pilar_align.py`](pilar_align.py) — MESMA medição da re-âncora do ara
+  (correlação de fase do numpy na ROI do pilar do galpão, validade por
+  concordância entre as 4 referências `posicao1-*.jpg`). As constantes (ROI,
+  PSR, AGREE) são cópia da doutrina do ara
+  ([`../../ara-raspberrypi/timelapse/`](../../ara-raspberrypi/timelapse/)) —
+  se a ROI ou as referências mudarem lá, atualizar aqui.
+- As referências vêm do backup no Drive `ceuazul:Timelapse/ref/` (o ara não é
+  alcançável do bnu), baixadas uma vez por execução.
+- Mede-se a **pos1** de cada dia; o offset daquele dia vale para as 3 colunas
+  (pos2/pos3 são excursões reproduzíveis a partir da guarda, herdam o mesmo
+  deslocamento). Recorta-se a janela de referência deslocada de `(sx, sy)`,
+  travando o pilar no mesmo pixel em todas as células.
+- **Fallbacks (a grade nunca deixa de sair):** sem numpy/pillow, sem as
+  referências, ou medição inválida/implausível de uma linha → aquela linha
+  não é deslocada; se nenhuma linha mede, cai na montagem ffmpeg de sempre.
+- A imagem do container ganhou `numpy`+`pillow` (ver
+  [`../docker/canteiro-jobs/`](../docker/canteiro-jobs/)). O log de cada
+  envio diz `alinhada` ou `sem alinhamento`.
 
 ## Install (container desde 2026-08-29)
 

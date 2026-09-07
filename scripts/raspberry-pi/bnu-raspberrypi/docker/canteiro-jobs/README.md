@@ -36,7 +36,8 @@ back; container runs as uid 1000 so ownership never flips).
 # copy packaging + scripts into the build context on the Pi
 for f in docker/canteiro-jobs/{Dockerfile,compose.yml,crontab-presenca,crontab-sunset-compare} \
          canteiro-watchdog/canteiro-watchdog.py canteiro-presenca/canteiro-presenca.py \
-         canteiro-sunset-compare/canteiro-sunset-compare.py; do
+         canteiro-sunset-compare/canteiro-sunset-compare.py \
+         canteiro-sunset-compare/pilar_align.py; do
   MSYS_NO_PATHCONV=1 python scripts/devtool.py push bnu-raspberrypi \
     "scripts/raspberry-pi/bnu-raspberrypi/$f" "canteiro-jobs/$(basename $f)"
 done

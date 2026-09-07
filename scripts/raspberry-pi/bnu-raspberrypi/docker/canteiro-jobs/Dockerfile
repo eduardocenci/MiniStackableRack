@@ -11,6 +11,10 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ffmpeg rclone tzdata ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 
+# numpy + pillow: alinhamento por software das grades do por do sol
+# (canteiro-sunset-compare + pilar_align — mede o pilar e desloca+recorta)
+RUN pip install --no-cache-dir numpy pillow
+
 # supercronic: cron for containers (runs as PID 1, non-root OK, jobs log to
 # stdout). Schedules honor the container's TZ env.
 ARG SUPERCRONIC_VERSION=v0.2.34
@@ -19,4 +23,4 @@ RUN chmod 0755 /usr/local/bin/supercronic
 
 WORKDIR /app
 COPY canteiro-watchdog.py canteiro-presenca.py canteiro-sunset-compare.py \
-     crontab-presenca crontab-sunset-compare /app/
+     pilar_align.py crontab-presenca crontab-sunset-compare /app/
