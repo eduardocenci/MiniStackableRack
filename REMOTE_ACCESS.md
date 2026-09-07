@@ -111,6 +111,14 @@ ms365 MCP are NOT available on every machine — a run without them files
 sheet+local archive and leaves Drive uploads/share links as checklist items
 (see the finance-hangar/ingest skills' degraded modes).
 
+**Ready-made forwarder (2026-09-07): `python scripts/bnu_lan_forward.py`** — opens both
+forwards (18788 + 13000) through `bnu-proxmox` and keeps them alive; start it in a
+background shell (`nohup … &`), export the two `BNU_WAHA_*_URL` env vars and run the
+pipeline as usual. Verified end-to-end on 2026-09-07 (wa-sweep off the bnu LAN: 45
+messages + 18 media pulled, group send path reachable). Note: paramiko key auth to
+`root@bnu-proxmox` is refused from this machine (`Authentication failed`) — the script
+falls back to `PROXMOX_PW` automatically; plain `ssh` in Git Bash is unaffected.
+
 ### ARA (home build — dashboard site `home: true`, still not in devtool.py)
 
 `ara-raspberrypi` is a tailnet node (the "computadorzinho" in the canteiro
@@ -169,6 +177,27 @@ on bnu-raspberrypi):
   see *Fleet IP plan* below. The desktop reaches every rack device directly.
   The ISP side behind the UCG is still `192.168.1.0/24` (`192.168.1.1` answers
   HTTP; routed via `.2.1`).
+- **Presence at mia** (2026-09-05): HACS **`mudape/iphonedetect` 2.5.0** ("iPhone
+  Device Tracker", the same integration bnu/bg/fln use — polls a fixed LAN IP with
+  UDP-5353 probes + the ARP table) with one entry **Duda** = Eduardo's iPhone 17 Pro
+  Max at its UCG reservation `192.168.2.40` (`consider_home: 300`, entity
+  `device_tracker.duda`, `source_type: router` — went `home` within 5 s of the
+  entry being created while the phone sat on SSID `Cenci`). `person.eduardo_cenci`
+  = `device_tracker.duda` + the Companion-app tracker
+  `device_tracker.cencis_iphone_15_pro_2` (that `mobile_app` registration is model
+  `iPhone18,2` = the 17 Pro Max; its device and config-entry title were renamed
+  "Cenci's iPhone 17 Pro Max" in HA, entity ids left as they were). The older
+  `…_15_pro` registration (model iPhone16,1, idle since 2026-04-21) was dropped
+  from the person but its entry was not deleted. The `mobile_app` trackers report
+  `unknown` on every site (the app never sends a location) — LAN presence via
+  iphonedetect is the one that actually works.
+- **mia-proxmox cannot resolve public DNS names** (2026-09-05): its
+  `/etc/resolv.conf` is Tailscale-managed and lists only `100.100.100.100`
+  (MagicDNS); `getent hosts updates.smlight.tech` fails while `ping 8.8.8.8`
+  works. Any `curl https://…` from the host times out on "Resolving". Until
+  fixed (`tailscale set --accept-dns=false` + a real nameserver, or a global
+  nameserver in the tailnet DNS settings), download on **mia-raspberrypi**
+  (same LAN, DNS fine) and push from there.
 - **mia HA cannot originate connections to the tailnet** (Tailscale add-on is
   inbound-only): `curl http://100.x…` from inside HA times out. When mia HA
   must consume a tailnet service, forward it onto the rack LAN from
@@ -178,12 +207,17 @@ on bnu-raspberrypi):
 - **mia Kasa HS300 power strips** — TWO, both on SSID `Cenci-IoT` (= the
   rack `192.168.2.0/24`), both **cloud-free since 2026-09-01** (factory reset
   + local provisioning, no Kasa account; discovery `owner` empty, default
-  creds `kasa@tp-link.net`/`kasaSetup`): rack strip `192.168.2.50` (reserved; MAC
-  `E0-D3-62-D0-F8-45`, fw 1.1.2 → **KLAP v2** on :80, port 9999 closed;
-  outlets MiniRack_Main / MiniRack_UPS_NAS / MiniRack_AUX_Rasp / Desktop /
-  Anker_USBcHub / Plug1, HA entry `01KMXYA5Z7D3JHRXFN52RQ177P`) and
-  `192.168.2.51` (reserved; MAC `…FD-B8`, fw 1.0.11 → legacy :9999, HA entry
-  `01M1FS8A0MBCHZPN7M8MPES6FN`). **python-kasa 0.10.2 (= what HA 2026.8 pins)
+  creds `kasa@tp-link.net`/`kasaSetup`): **Power Strip Desk** `192.168.2.50`
+  (reserved, UCG client still named `hs300-rack`; MAC `E0-D3-62-D0-F8-45`,
+  fw 1.1.2 → **KLAP v2** on :80, port 9999 closed; it feeds the WORK DESK,
+  not the rack — outlets Fully Stand-Up Desk / Anker USB Charger / Desktop /
+  Sonos Era 100 / LED Strip / Monitor, renamed on the strip 2026-09-04 via
+  `hs300_local.py names`; entity ids still carry the old `minirack_*`
+  suffixes; HA entry `01KMXYA5Z7D3JHRXFN52RQ177P` "Power Strip Desk HS300") and
+  **Power Strip Living Room** `192.168.2.51` (reserved, UCG client `hs300-2`;
+  MAC `…FD-B8`, fw 1.0.11 → legacy :9999; TV cabinet — outlets LED Strip
+  Bottom Cabinet / Empty / LED Strip Ambient Light TV / Apple TV / Sonos Arc
+  Ultra / TV 75, named 2026-09-04; HA entry `01M1FS8A0MBCHZPN7M8MPES6FN`). **python-kasa 0.10.2 (= what HA 2026.8 pins)
   cannot talk to fw 1.1.2**: it maps `IOT.KLAP` to the v1 transport and
   builds an `IotPlug` (no outlets) — upstream python-kasa#1604 open. mia HA
   runs the `klap2_patch` custom integration (repo
@@ -207,13 +241,23 @@ on bnu-raspberrypi):
   created through the config-flow REST API — `POST
   /api/config/config_entries/flow {"handler":"matter"}` then
   `{"use_addon": true}`). HA host IPv6 is on (ULA + link-local on
-  `enp6s18`), which Matter needs. First Matter device: **Tapo P316M**
-  6-outlet strip (Matter over Wi-Fi, per-outlet energy). Tapo Matter
-  devices pair over **Bluetooth** (BLE name like `P316M_xxxxxxxx`, seen from
+  `enp6s18`), which Matter needs. First Matter node: **Tapo P316M** 6-outlet
+  strip "Power Strip Rack" at **`192.168.2.52`** (UCG reservation, IoT power
+  block; MAC `58-D8-12-37-0C-DA`, fw 1.3.0, serial `58D812370CDA`), per-outlet
+  power/energy — entity map in `scripts/kasa/mia-hs300/README.md`. Tapo
+  Matter devices pair over **Bluetooth** (BLE name `P316M_xxxxxxxx`, seen from
   mia-raspberrypi's `bluetoothctl scan on`), they do NOT open a Wi-Fi setup
-  AP, so the python-kasa/`pi_ap.sh` route does not apply — commission from
-  the HA Companion app (phone BLE) or, phone-less, chip-tool on the Pi +
-  `commission over IP`. The HA VM has no Bluetooth adapter.
+  AP, so the python-kasa/`pi_ap.sh` route does not apply — commissioned from
+  the HA Companion app on the iPhone (phone BLE); the HA VM has no Bluetooth
+  adapter. Never touched by the Tapo app → no TP-Link account (`owner=no`).
+  Moving a Wi-Fi client into its block after the fact: set the reservation
+  (`PUT /rest/user/<_id>`), then `POST /cmd/stamgr {"cmd":"kick-sta","mac":…}`
+  — the P316M renewed to `.52` in ~25 s and HA's Matter link followed via
+  mDNS without any reload. The UCG login file `/root/.ipcut.env` on
+  mia-proxmox is **not kept** — stage it from `.env` (`MIA_UNIFI_USER/PASSWORD`
+  as `USER=`/`PASSWORD=`) for the run and delete it after; run API scripts
+  there detached (`setsid nohup … &` + log), the SSH channel times out on
+  anything that polls for more than ~60 s.
 - **Pi Wi-Fi radios as scanners** (seen 2026-09-04, `iw dev wlan0 scan`):
   mia and bnu Pis scan fine (wlan0 down by default, `sudo ip link set wlan0
   up` first). **bg-raspberrypi wlan0 is RF-killed** (`Operation not possible
@@ -240,6 +284,78 @@ on bnu-raspberrypi):
   `packages/thermostat_sen55.yaml` makes it regulate on the Apollo AIR-1 SEN55
   via `input_number.room_target_temperature` — set the target there, not on
   the climate card. Not in `architecture.yaml` (end device, like the HS300s).
+- **HA home location was still Plymouth, MI (42.431, −83.471, "Plymouth") until
+  2026-09-06** — sun, zones and the Met.no `weather.forecast_casa` were computed
+  for Michigan. Moved to Brickell 33130 (25.7617, −80.1918, elev 2 m, "Casa MIA")
+  over the websocket (`config/core/update`; REST has no endpoint for it). Met.no
+  tracks home and followed automatically; `zone.home` state = number of persons
+  home. Check `GET /api/config` → `latitude/longitude` before trusting any
+  sun-angle or weather-based logic at a relocated site.
+- **InfluxDB 2 on mia-nas** (`influxdb:2.7`, deployed 2026-09-07) is the
+  never-purged thermal-model store — org `casa-mia`, bucket `house`, infinite
+  retention, admin token `MIA_INFLUXDB_TOKEN`. It **binds the NAS rack-LAN IP
+  `192.168.2.15:8086`, not the tailnet**: verified the HA Core container reaches
+  `192.168.2.15` (LAN) but NOT the NAS tailnet IP `100.110.80.51` nor a
+  `127.0.0.1` bind (copyparty's loopback bind is NAS-local only). Reach it via
+  the site Pi/Proxmox hop — `devtool.py lan mia 192.168.2.15
+  "curl -s http://192.168.2.15:8086/health"` — or on the NAS itself
+  `docker exec influxdb influx query '...' --org casa-mia` (admin token baked
+  into the container's influx CLI config). HA streams an allow-list to it via
+  `packages/influxdb_stream.yaml` (host/token in `secrets.yaml`:
+  `influxdb_host`/`influxdb_token`). Source + deploy notes:
+  `scripts/synology/mia-synology/docker/influxdb/`. Like copyparty, it is a NAS
+  Docker service documented in its folder, **not** an `architecture.yaml` node
+  (central GlobalNet on bnu can't reach a MIA LAN IP, so a `check_url` would
+  read red). The recorder on HA is now a 60-day cache with per-outlet
+  voltage/current and AIR-1 housekeeping excluded (`packages/recorder_prune.yaml`).
+- **Roborock robot vacuum at mia is a Saros 10R** (`roborock.vacuum.a144`,
+  fw 02.52.32, MAC `24:9e:7d:47:5c:f7`) at **`192.168.2.73`** — UCG client
+  `roborock-saros-10r` (renamed from `roborock-s8-pro-ultra` 2026-09-05 via
+  `PUT /rest/user/<_id>` run from mia-raspberrypi, which reaches
+  `https://192.168.2.1` fine when mia-proxmox SSH is flaky).
+  Local API = Roborock V1 protocol, TCP `58867` (+ UDP `58866`), AES with the
+  per-device `localKey` that only the Roborock cloud hands out — no HTTP, no
+  auth-less endpoint. HA 2026.8.2 (`roborock` entry
+  `01KMXE08Y11YZTVE9N50DYF8WS`, python-roborock) holds an ESTABLISHED session
+  to `.73:58867` for commands/status AND an MQTT session to
+  `mqtt-us-3.roborock.com:8883` — maps, routines and the initial
+  login/`localKey` fetch stay cloud-side; the robot blocks its local API when
+  it cannot reach Roborock, so do not WAN-block it. Reachability check:
+  `devtool.py run mia-proxmox "bash -c '</dev/tcp/192.168.2.73/58867'"`.
+  Fully cloud-free options: Valetudo does NOT support any S8/Saros (list is
+  exhaustive); `Python-roborock/local_roborock_server` (HA add-on that
+  impersonates the Roborock cloud after a one-time account snapshot) lists
+  Saros 10R fw 02.52.32 as confirmed working — not deployed. **Known stall:**
+  all Saros entities flip to `unavailable` while the entry stays `loaded` and
+  the `.73:58867` session stays ESTABLISHED (2026-09-06 01:03 UTC, mid-clean;
+  home-assistant/core#152159) — reload the entry, back in <10 s:
+  `devtool.py ha mia POST /api/config/config_entries/entry/01KMXE08Y11YZTVE9N50DYF8WS/reload`.
+  Room clean = `vacuum.send_command` `app_segment_clean` `[{"segments":[8],"repeat":1}]`
+  (segment ids via `roborock.get_maps`; map "MIA" = 1 Living room · 2 Kitchen · 3 Hall ·
+  4 Master bedroom · 5 Bathroom_Master · 6 Guest bedroom · 7 Bathroom_Guest · 8 Study —
+  Room 9 merged into 6 on 2026-09-06). Map edits are raw commands too: `merge_segment`
+  `[6, 9]`, then `name_segment` `[{"miRoomId":"<cloud iot id>","robotRoomId":<seg>},…]`
+  for every segment (a merge blanks the survivor's name); cloud room ids from
+  `POST /api/services/shell_command/roborock_rooms?return_response` (package
+  `roborock_tools.yaml` + `/config/scripts/roborock_rooms.py`, python-roborock inside
+  the core container — first package needing `shell_command` required an HA restart,
+  ~30 s). `get_maps` is cached: reload the entry to see edits.
+  **Read-only robot/dock settings and clean records** (2026-09-06):
+  `POST /api/services/shell_command/roborock_query?return_response`
+  `{"args": "get_status get_smart_wash_params get_wash_towel_mode app_get_dryer_setting get_clean_record:5"}`
+  — `/config/scripts/roborock_query.py` (same package) runs python-roborock **5.31.1**
+  (HA 2026.8.2; the `roborock.devices.*` trait/channel layout — no `version_1_apis`,
+  no `cloud_api`) inside the core container over the **local L01 protocol only**
+  (`LocalChannel` + `RpcChannel`, localKey from the cloud home data), so it never opens a
+  second cloud MQTT session with HA's client id. Any `get_*` RPC works
+  (`method=<json params>` for params; `get_clean_record:N` = last N records with
+  `wash_count`/`extra_time`). Zero-connection alternative for what HA already holds
+  (full status, clean summary, rooms, device features, but not per-clean records):
+  `GET /api/diagnostics/config_entry/01KMXE08Y11YZTVE9N50DYF8WS`. `shell_command`
+  entries reload without a restart: `POST /api/services/shell_command/reload`.
+  Map PNG = `GET /api/image_proxy/image.living_room_saros_10r_mia`
+  with the HA bearer token. Dashboard: sidebar *Vacuum* (`robot-vacuum`),
+  source `scripts/proxmox/homeassistant/mia-homeassistant/dashboards/dashboard-vacuum.yaml`.
 - **Identifying a Samsung Tizen device — ask the TV, not the router.** Any
   Tizen set answers an unauthenticated `GET http://<ip>:8001/api/v2/` with
   `modelName`, `name`, `resolution`, `networkType`, `wifiMac`, `PowerState`.
@@ -280,6 +396,67 @@ on bnu-raspberrypi):
   `async_play_media`), so **video to the Apple TV is currently impossible**;
   cast video to the QN90F receiver instead (`script.cast_frigate_birdseye`).
 
+- **Bambu Lab P2S 3D printer at mia** (2026-09-05): `192.168.2.72` (UCG
+  reservation renamed `bambu-x1c` → **`bambu-p2s`**, MAC `60:32:3b:9f:fc:f8`, SSID
+  Cenci-IoT). The UniFi fingerprint and the older docs said "X1C"; SSDP says
+  **P2S**: model code `N7`, serial `22E8AJ581301903`, fw 01.02.00.00, hw AP02,
+  one **AMS 2 Pro** (hw N3F05). Identify any Bambu printer from **mia-proxmox**
+  with SSDP: bind UDP 2021 (join `239.255.255.250`), send `M-SEARCH … ST:
+  urn:bambulab-com:device:3dprinter:1` to `239.255.255.250:1990` — the reply
+  carries `USN` (= serial), `DevModel.bambu.com`, `DevName`, `DevConnect`
+  (`cloud`/`lan`) and `DevVersion` (ship the script as `echo <base64> | base64 -d
+  > /tmp/x.py && python3 /tmp/x.py` through `devtool.py run`). Open ports:
+  **8883** MQTT/TLS, **990** FTPS, **6000** chamber camera; **322 (RTSPS) closed**
+  = *LAN Mode Liveview* off on the printer. **Local MQTT works with the LAN access
+  code while the printer stays cloud-bound and Developer Mode is OFF** — user
+  `bblp`, password `MIA_BAMBU_P2S_ACCESS_CODE` (root `.env`, serial in
+  `MIA_BAMBU_P2S_SERIAL`), topics `device/<serial>/report|request`, self-signed
+  cert (`CERT_NONE`); `{"pushing":{"command":"pushall","sequence_id":"0"}}`
+  returns the full state. HA: HACS **`greghesp/ha-bambulab` 2.2.25**
+  (`bambu_lab`, entry `01M1T7HD30E09JP6FGS1H2FR2M`; entry title and device names
+  `P2S` / `P2S External Spool` / `P2S AMS 2 Pro`, entity ids shortened to
+  `*.p2s_*`) added over REST: `{"printer_mode":"lan"}`, then the `Lan` step with
+  `host`, `serial`, `access_code`, the numeric fields **as strings**
+  (`"print_cache_count":"100","timelapse_cache_count":"1","usage_hours":"0"` —
+  ints are rejected `expected str`) and the expandable section as a dict
+  (`"advanced":{"disable_ssl_verify":false,"enable_firmware_update":false}`).
+  The first setup created only the printer + External Spool devices (the full
+  MQTT state was not in yet); **reloading the entry created the AMS 2 Pro device**
+  (13 entities). Gaps: (1) **no pause/resume/stop buttons, fan or speed
+  controls** — this firmware wants *signed* MQTT commands
+  (`print_fun.mqtt_signature_required`, `binary_sensor.p2s_developer_lan_mode`
+  off); only **Developer Mode** on the printer screen unlocks control entities,
+  monitoring needs nothing. (2) **`camera.p2s_camera` fails to load while *LAN Mode Liveview* is off**
+  (`camera.py:115` `urlparse(rtsp_url).netloc.split(':')` → `TypeError bytes/str`
+  because the printer reports `ipcam.rtsp_url = "disable"`/None — upstream bug).
+  Liveview was switched on at the printer screen on 2026-09-05: it then reports
+  `rtsps://192.168.2.72:322/streaming/live/1`, port 322 opens, and after
+  `POST /api/config/config_entries/entry/<id>/reload` the camera loads —
+  `GET /api/camera_proxy/camera.p2s_camera` returns a 1080p JPEG (~110 KB in 2 s);
+  HA's MJPEG proxy (`/api/camera_proxy_stream/…`, what the bundled minimal card's
+  camera pane uses) returns the integration's black "!" placeholder (`camera_image()`
+  is hard-coded to it) — use stills (`picture-entity` `camera_view: auto`, ~1 s 1080p frames
+  through go2rtc) or the WebRTC live view (`camera_view: live`, go2rtc). **The printer accepts ONE RTSPS client**: when
+  the frontend falls back to HLS (legacy `stream` worker) it and go2rtc alternate
+  `i/o timeout` / `Error demuxing stream` log lines until the HLS player is gone — a `live`
+  dashboard card re-triggered that on every reload, so the mia dashboard uses `auto`;
+  Bambu Studio's LAN liveview competes for the same slot. **Bundled Lovelace cards** (resource `/bambu_lab/ha-bambulab-cards.js?v=0.6.53`,
+  auto-registered by the integration; the docs only say "use the card editor", the
+  keys below were read from the JS): `custom:ha-bambulab-print_status-card`
+  (`printer:` device id, `style: simple|minimal|graphic`; minimal adds
+  `show_printer_name`, `show_cover`, `cover_position`, `show_camera_feed`,
+  `camera_position`; simple adds `custom_camera`; all take
+  `custom_humidity/temperature/light/power`), `custom:ha-bambulab-ams-card` (`ams:`
+  device id, `style: vector|graphic`, `show_info_bar`, `subtitle`, `show_type`,
+  `spool_anim_reflection/wiggle`), `custom:ha-bambulab-spool-card` (`spool:` device
+  id, `tray` 1–4, `show_info_bar`, `show_type`, `subtitle`),
+  `custom:ha-bambulab-print_control-card` and `custom:ha-bambulab-skipobject-card`
+  (`printer:`) — the control card drives the pause/resume/stop buttons, i.e. needs
+  Developer Mode, so it is not on the dashboard. HACS has exactly one Bambu card, `drkpxl/printwatch-card`
+  1.2.0 (2025-02-03, P1S-era entity names) — installed on mia 2026-09-05 for
+  comparison, verdict in the dashboards README. Dashboard: sidebar **Printer** (`3d-printer`),
+  source `scripts/proxmox/homeassistant/mia-homeassistant/dashboards/dashboard-printer.yaml`.
+
 ### Fleet IP plan (decided 2026-09-04)
 
 Every site keeps its own /24 (no two sites overlap, so subnet routes can be
@@ -301,7 +478,7 @@ at every site** — `.20` is always the Proxmox host, `.21` always the HA VM.
 | `.10–.19` | Rack | `.10` Pi · `.11` GL KVM · `.12` Zigbee gateway · `.15` NAS · `.16` NAS VM |
 | `.20–.29` | Proxmox | `.20` host (static) · `.21` HA VM · `.22` win11 VM · `.23+` LXCs |
 | `.30–.39` | Computers | desktops, laptops (`.30` desktop wired, `.31` its Wi-Fi NIC) |
-| `.40–.49` | Cellphones | phones, watches, e-readers — only with MAC randomization off for the SSID |
+| `.40–.49` | Cellphones | phones, watches, e-readers — reserve the SSID's *private* (per-network) MAC; it is stable unless the phone's *Rotate Wi-Fi Address* is on (mia `.40`–`.44` are reserved this way). HA presence (`iphonedetect`, every site) targets these fixed IPs: mia Duda `.40`; bnu Jorge `.113`, Duda `.152`, Silvana `.134`, Ivani `.112`; bg Duda `.48`, Jorge `.126`, Silvana `.125`; fln Duda `.142` (`device_tracker.my_iphone`) — the non-mia ones are pre-plan pool addresses to move into this block when each site is renumbered (reconfigure flow: `POST /api/config/config_entries/flow {"handler":"iphonedetect","entry_id":…}` → `{"ip_address":…}`) |
 | `.50–.59` | IoT power control | HS300s, Tapo P316M |
 | `.60–.69` | IoT lights | WLED, bulbs, LED strips |
 | `.70–.79` | IoT other | thermostat, sensors, printer, robot, 3D printer |
@@ -325,7 +502,9 @@ fixed_ip, network_id}` per client, `PUT /rest/networkconf/<_id>` for the
 subnet + pool, then the host re-addresses itself, VM NICs get a
 `link_down` flap (`qm set … link_down=1`) so HAOS/Windows renew at once, and
 `POST /cmd/devmgr {cmd: restart}` on the switches/AP flaps every other client
-link. Wi-Fi phones with private (randomized) MACs cannot be reserved.
+link. Wi-Fi phones with private (randomized) MACs *can* be reserved after all — the
+private MAC is fixed per SSID unless the phone rotates it (by 2026-09-05 mia had
+`.40`–`.44` reserved that way, and `.40` drives HA presence).
 
 Lessons from the mia run (2026-09-04): (1) the `MIA_UNIFI_USER` local admin
 was **view-only** — every write is `403 api.err.NoPermission` until the role
@@ -350,6 +529,78 @@ tailscale path — so `camera.frigate_birdseye` still points at the dead
 {"handler":…,"entry_id":…}` → `{"host":…}`), `venstar` has neither → delete
 the entry and re-add (`{"host":…,"ssl":false}`, entity id survives).
 
+### ⚠ mia UCG Max leaks the ISP's DHCP to the LAN while it boots (found 2026-09-04)
+
+Symptom: after a gateway power-cycle, **mia-desktop** (wired, USW Flex port 6,
+Intel I225-V at 2.5 GbE) has no LAN and no internet until the cable is
+re-seated or the PC rebooted. Windows' DHCP client log explains it: while the
+UCG is still booting its switch ports are not yet isolated, so the desktop's
+DHCP request (its link comes back the moment the Flex, powered with the
+gateway, is up) reaches the **ISP's DHCP server `10.53.15.4`** through the WAN
+port, which NAKs the `192.168.2.30` renewal and hands out a **public address
+`146.113.253.155`** with the ISP's gateway. Once the UCG finishes booting the
+ports are separated again and the desktop is stranded on that lease until
+DHCP restarts (link flap / reboot → `192.168.2.1` NAKs the public lease and
+the reservation returns). Seen 14:35 and 17:32 on 2026-09-04. Rack devices
+escape it only because they boot slower than the gateway. Note the exposure:
+for a few minutes the desktop sat on the internet with a public IP and only
+Windows Firewall in front of it.
+Mitigations: **DHCP Guarding enabled** on the Default network (trusted server
+`192.168.2.1` only, 2026-09-04, `dhcpguard_enabled`/`dhcpd_ip_1` on
+`rest/networkconf`); UniFi OS is current (5.1.31, the newest release as of
+2026-08-24; switches 2.1.8, U7 Pro 8.7.11 — nothing upgradable). The robust
+fix for the desktop is still a **static `192.168.2.30`** on its adapter (the
+UCG reservation stays as the record). **DHCP Guarding did not prevent a repeat
+on 2026-09-05 14:37** (same NAK from `10.53.15.4`, same public lease) — the
+Flex is not filtering in time. **Root cause found 2026-09-05: the primary
+internet feed is on UCG port 4 (`eth3`), a LAN port re-purposed as "Internet 2"
+(WAN2, public IP `146.113.252.53`, priority 1), while the dedicated WAN port 5
+(`eth4`, "Internet 1") carries a secondary link into the Verizon router's LAN
+(`192.168.1.157`, failover-only).** Ports 1–4 are one switch fabric; until
+UniFi OS has applied the WAN2 role during boot, port 4 is just another LAN
+port, so the ONT's DHCP is bridged straight to every client. Sonos and other
+Wi-Fi clients were hit the same way, not only the desktop. Fix is on the
+Ubiquiti side. **Done 2026-09-05 16:20: cables swapped** — ONT now on port 5
+(`eth4`, Internet 1, primary, public IP `146.113.252.21`), Verizon router LAN on
+port 4 (`eth3`, Internet 2, failover-only, `192.168.1.151`). **Confirmed by the
+next power cycle (16:31):** the desktop was no longer offered a public address;
+instead port 4 leaked the Verizon router's DHCP (`192.168.1.1` NAK'd
+`192.168.2.30`, handed `192.168.1.152`). So the diagnosis holds exactly: any
+link on ports 1–4 is LAN during boot; only the dedicated WAN port is safe. What
+remains is the port-4 link itself: unplug it (same FiOS line = no real
+redundancy) or keep it with the Verizon router's DHCP server OFF and Internet 2
+set static. **Decision 2026-09-05: it is a separate ISP service → kept as
+failover.** Internet 2 is now static `192.168.1.151/24`, gw `192.168.1.1`, DNS
+`192.168.1.1`/`8.8.8.8` (`wan_type: static` on `rest/networkconf`, verified up).
+Verizon router admin: `MIA_VERIZON_ROUTER_URL` / `MIA_VERIZON_ROUTER_ADMIN_PASSWORD`
+in `.env`. **Its DHCP server is OFF since 2026-09-05** (Advanced → Network
+Settings → IPv4 Address Distribution → *Disabled*; done in the already-logged-in
+browser session — never log in with the password). Its lease table had shown
+the desktop, proxmox, Pi, Surface and all three Sonos on `192.168.1.15x`, i.e.
+every earlier leak. Nothing on that segment hands out addresses any more.
+**Its Wi-Fi is OFF since 2026-09-05 as well** (Basic → Wi-Fi → Primary Network →
+*Wi-Fi Enabled* master toggle → *Apply Changes* → two OK confirmations → ~30 s
+"Applying Settings"; Guest and IoT networks were already disabled). Reached the
+same way: a new tab in the mia desktop's Chrome profile at
+`https://192.168.1.1/#/basic/…` inherits the logged-in session (Claude in
+Chrome works; from `192.168.2.30` the segment is routed via the UCG). The box
+is a **Verizon Internet Gateway on 5G Ultra Wide-Band** (5G Home Internet, not
+FiOS — the "same FiOS line" remark above is wrong), which is why it counts as
+a separate ISP service.
+After the 16:30 power cycle two wired rack devices came up with **no address
+at all** (asked during the boot window, got nothing, never retried): the
+SLZB-06 recovered with a PoE cycle of its Flex port (`POST /cmd/devmgr
+{"cmd":"power-cycle","mac":<switch>,"port_idx":3}`); mia-glkvm (USW Ultra port
+7, own USB-C PSU, not PoE) rejected the PoE cycle (`InvalidTargetPort`) and a
+`port_overrides` `forward: disabled` was accepted but never applied — it needs
+a physical power cycle. Its tailnet node shows `offline` while in that state.
+**Verified 2026-09-05 17:03 (third power cycle):** no foreign DHCP server
+answered any client; the desktop logged only a benign "could not renew (0x79)"
+while the UCG was still booting, kept `192.168.2.30`, and every one of the 23
+online reservations came up on its planned address. The Sonos players (all
+three) have not associated with the AP since the cutover and are `unavailable`
+in HA — they need a local power cycle, not a network change.
+
 ### Re-authentication
 Key expiry is disabled on every node, and every Windows node runs Tailscale in
 **unattended mode** so the tunnel survives reboot without a desktop login
@@ -365,7 +616,7 @@ so plain `ssh` works non-interactively.
 | Device | Host name | LLM interface (in priority order) | User | Auth | Notes |
 |---|---|---|---|---|---|
 | Proxmox | `<region>-proxmox` | SSH → web `https://<host>:8006` | `root` | **key**, else `PROXMOX_PW` | SFTP OK. Gateway to all guests (§4) |
-| Home Assistant | `<region>-homeassistant` | **REST API** → SSH add-on → web `:8123` | `hassio` | REST: `<REGION>_HA_TOKEN`; SSH: `HA_SSH_PW` **password only** | Add-on SSH has **no key auth** and **no SFTP**; `/config` needs `sudo` → `push` uses `base64 -d \| sudo tee`. **MagicDNS names do NOT resolve inside HA containers** (add-on shell and core alike, seen 2026-08-26: `ara-raspberrypi` → HTTP 000 while `100.66.255.82` → 200) — scripts under `/config` must use tailnet `100.x` IPs. The add-on shell also lacks `requests`; the core container (where `shell_command` runs) has it — test scripts via `shell_command` + `?return_response`, **or run `sudo /config/scripts/venv/bin/python`**: that venv has requests+yaml, so a `/config/scripts/*.py` module can be imported and unit-tested straight from the add-on shell (`sudo` because the scripts and their logs are root-owned — `rm` under `/config/scripts` needs it too; `devtool push` already sudo-tees). The add-on has **no ffmpeg** and **no docker** (protection mode ON), so image ops and `docker ps` exist only inside the core container (2026-09-01). **`ha core check` over devtool SSH fails** (`unauthorized: missing or invalid API token` — the non-login shell has no `SUPERVISOR_TOKEN`); validate and reload through REST instead: `devtool.py ha <site> POST /api/config/core/check_config` → `{"result":"valid"}`, then `POST /api/services/homeassistant/reload_all` (picks up new `packages/` files and helpers without a restart; a brand-new `input_number` starts at its `min`, so set it right after the reload — seen 2026-09-04 on mia). **`reload_all` cannot load an integration that was not loaded yet** — the first `template:` block on mia needed `POST /api/services/homeassistant/restart` (the call itself times out because the API goes down; poll `/api/states/<new entity>` until it answers, ~1 min). **Storage-mode dashboards** (`/config/.storage/lovelace.<id>`) are not editable through REST and are cached in memory, so do not edit the file: use the websocket API (`lovelace/config` → `lovelace/config/save`, url_path from `.storage/lovelace_dashboards`) — `python scripts/ha_lovelace_add_entities.py <site> <url_path> <entity…>` does it for a history-graph card (2026-09-04). **HACS plugins install over the same websocket** (`hacs/repositories/list` → `hacs/repository/download`, resource auto-registered under `/hacsfiles/…`): `python scripts/ha_hacs_install.py <site> <owner/repo>` — used for `dbuezas/lovelace-plotly-graph-card` on mia (2026-09-04) |
+| Home Assistant | `<region>-homeassistant` | **REST API** → SSH add-on → web `:8123` | `hassio` | REST: `<REGION>_HA_TOKEN`; SSH: `HA_SSH_PW` **password only** | Add-on SSH has **no key auth** and **no SFTP**; `/config` needs `sudo` → `push` uses `base64 -d \| sudo tee`. **MagicDNS names do NOT resolve inside HA containers** (add-on shell and core alike, seen 2026-08-26: `ara-raspberrypi` → HTTP 000 while `100.66.255.82` → 200) — scripts under `/config` must use tailnet `100.x` IPs. The add-on shell also lacks `requests`; the core container (where `shell_command` runs) has it — test scripts via `shell_command` + `?return_response`, **or run `sudo /config/scripts/venv/bin/python`**: that venv has requests+yaml, so a `/config/scripts/*.py` module can be imported and unit-tested straight from the add-on shell (`sudo` because the scripts and their logs are root-owned — `rm` under `/config/scripts` needs it too; `devtool push` already sudo-tees). The add-on has **no ffmpeg** and **no docker** (protection mode ON), so image ops and `docker ps` exist only inside the core container (2026-09-01). **`ha core check` over devtool SSH fails** (`unauthorized: missing or invalid API token` — the non-login shell has no `SUPERVISOR_TOKEN`); validate and reload through REST instead: `devtool.py ha <site> POST /api/config/core/check_config` → `{"result":"valid"}`, then `POST /api/services/homeassistant/reload_all` (picks up new `packages/` files and helpers without a restart; a brand-new `input_number` starts at its `min`, so set it right after the reload — seen 2026-09-04 on mia). **`reload_all` cannot load an integration that was not loaded yet** — the first `template:` block on mia needed `POST /api/services/homeassistant/restart` (the call itself times out because the API goes down; poll `/api/states/<new entity>` until it answers, ~1 min). **Storage-mode dashboards** (`/config/.storage/lovelace.<id>`) are not editable through REST and are cached in memory, so do not edit the file: use the websocket API (`lovelace/config` → `lovelace/config/save`, url_path from `.storage/lovelace_dashboards`) — `python scripts/ha_lovelace_add_entities.py <site> <url_path> <entity…>` does it for a history-graph card (2026-09-04). **HACS plugins install over the same websocket** (`hacs/repositories/list` → `hacs/repository/download`, resource auto-registered under `/hacsfiles/…`): `python scripts/ha_hacs_install.py <site> <owner/repo>` — used for `dbuezas/lovelace-plotly-graph-card` and `punxaphil/custom-sonos-card` on mia (2026-09-04). **HACS integrations** use the same script with a third argument — `python scripts/ha_hacs_install.py <site> <owner/repo> integration` — then `POST /api/services/homeassistant/restart` (a freshly downloaded custom component has **no config flow until the restart**; mia was back in ~40 s, `GET /api/config/config_entries/flow_handlers` lists the domain once it is loadable) and the entry via `POST /api/config/config_entries/flow {"handler": "<domain>"}` → `POST …/flow/<flow_id> {fields}` — used for `mudape/iphonedetect` on mia (2026-09-05). **Person entities** are storage-based: edit over the websocket with `person/list` → `person/update {person_id, name, user_id, device_trackers}`; device/entry renames with `config/device_registry/update {device_id, name_by_user}` and `config_entries/update {entry_id, title}` (entity ids untouched). **Whole dashboards** (create + config) are applied from yaml by `scripts/proxmox/homeassistant/mia-homeassistant/dashboards/apply_dashboard.py <file.yaml>` (`dashboard:` + `config:` blocks; see that folder's README). **Reload an integration** with REST `POST /api/config/config_entries/entry/<entry_id>/reload` (entry ids from websocket `config_entries/get`; there is no websocket `config_entries/reload`) — needed e.g. for Sonos to re-read favorites added in the Sonos app (2026-09-04). Sonos speakers answer UPnP directly on the LAN (`http://<ip>:1400`, SOAP `ContentDirectory#Browse` of `FV:2` = favorites) via `devtool.py lan mia <ip> "curl …"`; IPs are in the HA device registry `configuration_url` (mia: living room .82 Arc Ultra, study .83 Era 100 — zone renamed Den → Study on the speaker 2026-09-06, kitchen .84 Era 100; the **Sub 4** bonded to the Arc Ultra is invisible to HA — `ZoneGroupTopology#GetZoneGroupState` on the Arc lists it as a `Satellite`, `RINCON_F85C240023E0…`, MAC `f8:5c:24:00:23:e0` — reserved `.85` `sonos-sub-4` on the UCG 2026-09-06). **WLED** controllers (mia `.60/.61/.64/.65`, Gledopto, WLED 16.0.1) answer `http://<ip>/json/info` (and `/presets.json`, `/json/state`) on the LAN; in HA they are `wled_60/61/64/65` (renamed 2026-09-05/06). `.65` (127 RGBW LEDs: rack 0–68 = *Front of Rack* 0–38 + *Side of Rack* 38–68, tail 68–127 whose cap/plate light is 77–117; MAC `88:57:21:bc:01:9c`; presets 3 "Print Issue" / 4 "Default (Day-Night blend)" (three layers: 0 *Day (Flow Stripe)* 0–68, 1 *Night (Colorwaves)* 0–68 on top, 2 *Cap/Plate* 77–117; 2026-09-07) / 5 "Door Open" / 7 "Discrete (Colorwaves)" = the pure night look / 9 "Default + Cap/Plate" = the pure day look / 8 "Selective Cap/Plate" obsolete) is driven by the P2S through `packages/p2s_led.yaml` on mia HA — door open → 5, print issue → 3, else 4 with the night layer dialled in by the sun (`sensor.p2s_led_night_mix`: 0 % above `input_number.p2s_led_day_elevation` 0°, 100 % below `input_number.p2s_led_night_elevation` −6°, sent as segment opacities by `rest_command.wled_65_mix` with a 60 s crossfade per 4 % step); the decision is `sensor.p2s_led_preset`, applied **by preset id** with a `rest_command` to `/json/state` `{"ps": id}` (HA's WLED `select` only takes preset *names* and a rename broke the first version), names read back with a `rest` sensor on `/presets.json`; see the mia dashboards README. Note `rest_command`/`rest` are start-up-only domains — a package that introduces them needs `POST /api/services/homeassistant/restart`, `reload_all` is not enough (same as the first `template:` block). Once they are loaded, `reload_all` does pick up a **new** `rest_command` and new `json_attributes` on a `rest` sensor (2026-09-07: `rest_command.wled_65_mix` and attribute `7` appeared without a restart). A zeroconf WLED discovery can carry a stale host (the `.65` entry landed in `setup_retry`); the fix is the same as for `.64`: user flow with the right `host` → `already_configured` repoints it → reload. **WLED preset mechanics (learned on `.65`, 2026-09-06)**: a preset holding a per-LED pixel map (`"i":[start,stop,"RRGGBB",…]`, what preset 8 is) can only be stored as a raw API command — POST the object to `/json/state` with `"psave":<id>,"o":true,"n":"<name>"` (`"o"` = save the object as sent; a plain `psave` serialises the current state and drops the map; presets can be read back from `/presets.json`). The map only sticks on a segment that already exists: when the same request creates or re-bounds the segment, `setGeometry` marks it for reset and the next frame clears its pixel buffer — preset 8 works on top of 4, but a merged copy applied after 3 or 5 (both delete segment 3) came up black every time. For a static area use a plain solid segment instead: preset 9 = preset 4 + segment 3 `77–117`, fx 0, col `[255,227,125,0]` — verified lit from 3, 4 and 5 and it survives boot. `{"ps":N}` is a no-op while N is already the current preset (`presetCycCurr != currentPreset` in json.cpp) — POST the state itself to re-apply. `transition` is in 100 ms units (preset 4's 50 = 5 s), so read pixels ≥ 6 s after a switch or you see the crossfade. **Segment blending (measured 2026-09-07 with solid colours)**: overlapping segments composite in id order; `bm` = 0 top (alpha over), 1 bottom, 2 add, 3 subtract, 4 difference, 5 average, 6 multiply, 7 divide, 8 lighten, 9 darken, 10 screen, 11 overlay, 12 hardlight, 13 softlight, 14 dodge, 15 burn, 16 stencil (order from the `blendMode` comment in FX.h). Segment opacity is applied in gamma space — a layer at `bri` renders raw = colour × (bri/255)^(1/2.8) (colour gamma 2.8 is on in `/json/cfg` `light.gc.col`), so `bri` 128 reads 199 in the buffer and the light output is linear in `bri`; with `bm` 0 the result is top×α + below×(1−α), α = (bri/255)^(1/2.8). A linear dissolve between two full-length layers is therefore top `bri` = 255·m^2.8 (37 at m = 0.5) with the lower layer at 255; `bri` 0 turns a segment off (and `bri` > 0 back on, both transitioned); dialling opacities clears `ps` to −1 (HA's preset select goes blank). `GET /json/live` is gone in WLED 16 (501): `python scripts/wled_live.py <site> <ip>` reads the live pixels over the websocket peek (`{"lv":true}` → binary `L` frames of RGB triplets) through the site's Proxmox host and prints lit ranges per segment. **Config flows over REST**: `POST /api/config/config_entries/flow {handler}` → `POST …/flow/<flow_id> {step data}` (confirm a zeroconf discovery with `{}`), options with `POST /api/config/config_entries/options/flow {handler: <entry_id>}`; reload with `POST /api/config/config_entries/entry/<id>/reload`. **`192.168.2.63` FancyLEDs (Tuya chip) has no open port and no LAN broadcasts — cloud-only, do not retry local control** (probed 2026-09-05 from mia-proxmox). **`/api/error_log` is gone in HA 2026.8** (404) — read the log over the websocket (`system_log/list`; entries carry the `exception` traceback). **Integration diagnostics**: `GET /api/diagnostics/config_entry/<entry_id>` returns the JSON download (full device state + feature table — how the P2S facts were read, 2026-09-05). `GET /api/config/config_entries/flow` is 405 and websocket `config_entries/flow/progress` lists only *discovery* flows — a user-started flow whose `flow_id` you dropped is invisible; it expires harmlessly, start another. **HA config flows over REST**: fields with a `number` text selector still expect **strings**, and an `expandable` section is submitted as a **dict** under its name (seen on `bambu_lab`, 2026-09-05) |
 | Windows 11 VM | `<region>-win11` | ~~SSH~~ → guest agent (§4) → RDP | `eduardocenci` | ~~key~~ **broken** | **SSH key auth REJECTED on all four win11 VMs since ≤2026-08-28** (paramiko AuthenticationException; no password fallback). Use the QEMU guest agent (`devtool.py guest <site> <vmid>`), which works on all four. Default shell is **PowerShell**. No SFTP — `push`/`pull` go through base64 |
 | Raspberry Pi | `<region>-raspberrypi` | SSH | `eduardocenci` | **key**, else `RASPBERRYPI_PW` | SFTP OK. `sudo` is passwordless on bnu/mia/bg but **asks a password on fln** (seen 2026-08-26, mia confirmed 2026-08-29) — plain `docker` works everywhere (user in `docker` group); for root-only cmds on fln pipe the password: `devtool.ssh_run(dev, "sudo -S <cmd>", input_bytes=(ENV["RASPBERRYPI_PW"]+"\n").encode())`. **Plain OpenSSH from this machine is NOT reliable on the rack Pis** (2026-09-01): bnu/bg answered `Permission denied (publickey)` to the key, mia/fln had no known host key — `devtool.py run` (paramiko, key → `RASPBERRYPI_PW` fallback) worked on all four; ara-raspberrypi accepts plain `ssh` with the key. `devtool.py push` mangles long Git-Bash paths (a scratchpad path under `/c/Users/.../AppData/Local/Temp/claude/...` came out as `C:/Users/eduar/AppData/Local/Temp/<file>`) — ship scripts as `echo <base64> \| base64 -d > /tmp/x.sh && bash /tmp/x.sh` through `run` instead. **WAN speedtest on demand**: `curl -X POST "http://<site>-raspberrypi:5000/api/speedtest/run?wait=1"` (~20 s, returns the stored row; Ookla CLI → Cloudflare fallback), history at `GET /api/speedtest?limit=N` — see globalnet `docs/runbooks/monitoring.md` → *WAN speedtest* |
 | GL-KVM | `<region>-glkvm` | SSH → web `http://<host>` | `root` | **key**, else `GLKVM_PW` | Runs **dropbear**: keys live in `/etc/dropbear/authorized_keys`, not just `~/.ssh`. SFTP may fail → devtool falls back to base64 |
@@ -375,6 +626,17 @@ so plain `ssh` works non-interactively.
 list. Never open a browser unless every CLI/API option is exhausted.
 
 ### Tooling constraints on this machine
+- **Verifying HA dashboards visually (2026-09-05):** the in-app Browser pane
+  refuses LAN/tailnet URLs (`http://mia-homeassistant:8123` and
+  `http://192.168.2.21:8123` both "denied or failed"). **Claude in Chrome**
+  (`mcp__claude-in-chrome__*`, the desktop Chrome with its HA login) opens them
+  fine: `navigate` → `computer` screenshot/zoom → `read_console_messages` →
+  `javascript_tool` walking shadow roots (`hui-error-card`, `ha-web-rtc-player`
+  `video.readyState`, custom-card fields). Strip `?token=` query strings from
+  anything the JS returns or the tool blocks the whole result ("Cookie/query
+  string data"). Sections-view geometry: a `column_span: 3` section has a
+  **36-column grid** (`columns: 4` tiles clamp to their 6-column minimum) — size
+  cards there in 36ths, `columns: full` is the safe choice for wide cards.
 - `plink` and `sshpass` are **not installed** — do not use them.
 - OpenSSH (`ssh`, via Git Bash) works for key auth; **paramiko** (installed) is
   the only way to do non-interactive password auth. `devtool.py` handles both.
@@ -458,6 +720,15 @@ list. Never open a browser unless every CLI/API option is exhausted.
   stdout/stderr to UTF-8 with `errors="replace"`, so no `PYTHONIOENCODING`
   prefix is needed. Undrawable glyphs render as `?` instead of losing the
   command's whole output.
+- **HA Core DEBUG logs on HAOS: read them through the Proxmox guest agent.**
+  On HA 2026.8 there is no `/config/home-assistant.log` any more (only an
+  empty `.log.fault`), the SSH add-on's `ha core logs` answers
+  `401: Unauthorized` and the add-on has no `docker`. What works (mia,
+  2026-09-05): `MSYS_NO_PATHCONV=1 python scripts/devtool.py guest mia 100
+  "docker logs --since 30m homeassistant 2>&1 | grep -a zigpy_znp"` — HAOS
+  answers `qm guest exec`, and the Core container is named `homeassistant`.
+  `GET /api/error_log` only carries WARNING and above, so raise levels first
+  with `POST /api/services/logger/set_level {"zigpy_znp":"debug"}`.
 - **Git Bash mangles absolute-path ARGUMENTS before devtool ever sees them**
   (MSYS path conversion): `/api/states` becomes `C:/Program Files/Git/api/...`
   (ha → InvalidURL) and a remote `/tmp/x` becomes the Windows `%TEMP%` path
@@ -484,9 +755,23 @@ UI is **unauthenticated fleet-wide** (`auth.enabled: false`, login/pass still
 | Single param | `GET /api2?action=1&param=<espRev\|zbRev\|coordMode\|locale\|crash_info\|inetState>` |
 | Device log | `GET /api2?action=5` |
 | Core OTA from a URL | `GET /api2?action=8&fwUrl=<url>` |
-| **Config backup (`.smbk`)** | `GET /api2?action=20` |
+| **Config backup (`.smbk`)** | `GET /api2?action=20` — ⚠ answered `UNKNOWN ACTION` on mia v3.3.1 (2026-09-05); `20` is not in the UI's action enum below, so treat the backup route as unverified |
 | Save a settings form | `POST /settings/saveParams` (form fields + `pageId=<n>`) |
 | **Push a core firmware file** | `POST /esp32update`, multipart field `update` |
+| **Zigbee radio flash from a URL** | `GET /api2?action=6&fwUrl=<url>&fwVer=<rev>&fwType=0&baud=115200&fwCh=-1` (`fwType` 0 = coordinator) |
+| **Zigbee radio flash from a file** | `POST /fileUpload?customName=/fw.bin` (multipart field `update`), then `GET /api2?action=6&local=1&fwVer=-1&fwType=0&baud=0&fwCh=2` |
+
+The action numbers come from the UI's `/js/httpApi.js` (`api2.actions`,
+read 2026-09-05 on v3.3.1): 0 page · 1 param · 2 wifi scan · 3 send hex ·
+4 cmd · 5 log · **6 flash Zigbee** · 7 wifi connect status · **8 flash core** ·
+9 zHub · 10 dev · 11 script · 12 IR · 13 buzzer · 18 AI. The radio firmware
+index for the plain SLZB-06 (CC2652P, `hw_version` 170) is key **`"0"`** of
+`…/slzb-06x-ota.php?type=ZB&format=slzb`; its 20240710 coordinator build is
+`https://updates.smlight.tech/firmware/slzb06x/zigbee/slzb06/CC1352P2_CC2652P_other_coordinator_20240710.bin`
+(180 140 bytes, md5 `b4d3720b31be2154079458ed93d4eda2`, "SLZB" header).
+Keys 16/17 are the SLZB-06**U**/P7 builds — the P7 `.bin` is a different chip,
+never push it to a CC2652P. `zb_channel` in `/ha_info` is `0` even on bnu with
+a live ZHA session — it is not a "no network" signal.
 
 Page numbers worth knowing: **7** = firmware update (`fw_ch`, `enabled`,
 `chkHour`, `chkInterval`), 2 = network, 4 = auth, 8 = LEDs, 9 = time,
@@ -567,7 +852,7 @@ normalising clocks + auto-update across the fleet:
 | bnu | `10.1.1.132` | SLZB-06 | v3.3.1 | 20240710 | on 03:00 / 5 d | `<-03>3` |
 | bg | `192.168.0.116` | SLZB-06 | v3.3.1 | 20240710 | on 03:00 / 5 d | `<-03>3` |
 | fln | `192.168.0.188` | SLZB-06U | v3.3.1 (was v3.3.3.dev4) | 20260311 | on 03:00 / 5 d | `<-03>3` |
-| mia | **`192.168.2.12`** (reserved) | SLZB-06 | v3.3.1 | 20221226 | on 03:00 / 5 d | `EST5EDT,…` |
+| mia | **`192.168.2.12`** (reserved) | **SLZB-06U** (replaced 2026-09-06; old SLZB-06 radio dead) | v3.3.1 (flashed 2026-09-06, shipped on `v3.2.6.dev3`/dev) | 20221226 | on 03:00 / 5 d (set 2026-09-06) | `EST5EDT,…` (set 2026-09-06) |
 
 All four were shipped on `EET-2EEST` (the vendor default) until 2026-09-01 —
 their "03:00" update window was really 22:00 the previous day. Site timezones
@@ -578,16 +863,104 @@ Gonçalves, fln Florianópolis (all `America/Sao_Paulo` → `<-03>3`), mia Easte
 > ⚠ **mia's gateway drifted twice on DHCP** (`.251` → `.254` in Aug 2026,
 > and an earlier ply/mia IP conflict) because the whole rack sat inside a
 > 55-address DHCP pool. Since the 2026-09-04 cutover it has a UCG reservation
-> at **`192.168.2.12`** (MAC `88:57:21:6a:53:ef`, which is also what
-> `architecture.yaml`'s `netoverview_probe` keys on). `192.168.0.251` was the
-> USW Ultra (`28:70:4e:ee:80:ab`, SSH only, no HTTP) — that is what made it
-> look like "the gateway is down". The `smlight` entry in mia HA is still
-> pinned to `.251` (`setup_retry`) → *Reconfigure* it to `192.168.2.12`.
-> **There is no ZHA entry in mia HA at the moment** (2026-09-04, checked via
-> `/api/config/config_entries/entry`); when Zigbee is set up again, point ZHA
-> at `socket://192.168.2.12:6638` from the UI (Settings → Devices & services →
-> ZHA → ⋮ → *Reconfigure*), never by hand-editing `.storage`. (Decision
-> 2026-09-01: Eduardo does the ZHA step by hand.)
+> at **`192.168.2.12`**. `192.168.0.251` was the USW Ultra
+> (`28:70:4e:ee:80:ab`, SSH only, no HTTP) — that is what made it look like
+> "the gateway is down". **2026-09-06: the dead SLZB-06 (`88:57:21:6a:53:ef`)
+> was replaced by an SLZB-06U** — Ethernet MAC **`9e:13:9e:37:1a:58`** (what
+> UniFi/ARP and `architecture.yaml`'s `netoverview_probe` see; the device's
+> own `/ha_info` and HA's `smlight` unique id report the base MAC
+> `9c:13:9e:37:1a:58`), coordinator IEEE `00:12:4b:00:3e:49:b8:e7`. The
+> `.12` reservation was moved to the new MAC (UniFi refuses a second client
+> on the same `fixed_ip` — `api.err.FixedIpAlreadyUsedByClient` — even with
+> `use_fixedip: false`, so the dead unit's record was first parked on
+> `192.168.2.254`, name `mia-zigbee-slzb06-dead`), then an ESP reset
+> (`GET /api2?action=4&cmd=3&idx=0`) made the new unit renew onto `.12` in
+> ~9 s. mia HA now has a **ZHA** entry on `socket://192.168.2.12:6638`
+> (znp, 115200, formed 2026-09-06: PAN `F1D1`, channel 20, random keys) and
+> a fresh **`smlight`** entry `SLZB-06U` (old `SLZB-06` entry deleted).
+> ZHA config is done through the flow, never by hand-editing `.storage`.
+
+**ZHA setup attempt 2026-09-05 (mia) — blocked by the radio, not by HA.**
+The ZHA config flow can be driven entirely over REST
+(`POST /api/config/config_entries/flow {"handler":"zha"}`, then
+`path: "Enter Manually"` → `radio_type: "ZNP = Texas Instruments …"` →
+`{path: "socket://192.168.2.12:6638", baudrate: 115200, flow_control: "none"}`
+→ `setup_strategy_advanced` → `form_initial_network`, then re-`POST {}` while
+the step is `progress`); the bnu entry it mirrors is `radio_type: znp`,
+`socket://10.1.1.132:6638`, 115200, `flow_control: null`. mia HA has no
+`zigbee.db` and the coordinator NVRAM holds no network (the flow only offers
+*form new* / *upload backup*, not *reuse*). The probe succeeds, but
+**formation aborts with `cannot_form_network` ("too much RF interference")**.
+That text is zigpy-znp's label for *any* timeout: the debug log shows
+`BDBStartCommissioning(NwkFormation)` → `StateChangeInd(StartingAsCoordinator)`
+and then nothing for 60 s — the CC2652P never reports formation success or
+failure. It happens already on the ephemeral "form quickly" network on
+channel 11, i.e. before any energy scan, so it is not a channel choice. mia's
+radio is the only one still on **20221226**; bnu/bg (identical SLZB-06,
+`hw_version` 170) run **20240710**. With Eduardo's go the radio **was flashed
+to 20240710 via the file route above** (upload from mia-raspberrypi, `ok`,
+log: `zb ota task | Starting OTA … Serial speed changed to: 115200` ~7 s
+later; `/ha_info` then reports `zb_version: -1` because that field is the
+*configured* `fwVer`, not read from the chip) — and **formation still hangs
+identically**, also after `CMD_ZB_RST` (`GET /api2?action=4&cmd=1&idx=0`,
+log `api | Radiomodule reset: CC2652P`). So it is not firmware, not NVRAM
+(zigpy-znp clears NV before forming) and not channel choice.
+
+**The gateway's own energy scan hangs too.** SLZB-OS exposes one:
+`GET /api2?action=4&cmd=5&idx=0` answers `ok` and the result arrives as an
+SSE event `ZB_ENERGY_SCAN_DONE` (`{"energy": …}` or an error) on
+`GET /events` (`curl -sN`). At mia nothing but `: PING` and one `WHTNW`
+event arrived in 75 s — twice. Every RF operation on this CC2652P (formation,
+ED scan) never completes while MT/NVRAM traffic is fine — the signature of
+an RF core that does not answer (hardware), possibly thermal:
+`/ha_sensors` reads **`esp32_temp` 95.0 °C / `zb_temp` 91.4 °C** at mia vs
+43.9 / 41.0 °C at bnu (HA's SMLIGHT entities show the same as 202 °F /
+197 °F; room is 22 °C). PoE draw is normal-low — **0.86 W on USW Flex 2.5G
+8 PoE `a8:9c:6c:0a:a3:5e` port 3** (UniFi `stat/device` `port_table`; the
+SLZB is *not* on the USW Ultra). **The temperature is a sensor lie**: Eduardo
+felt the case (not hot) and the unit still read 96 °C 35 s after a cold
+boot. Cold PoE power-cycle done 2026-09-05 with his approval
+(`POST /proxy/network/api/s/default/cmd/devmgr
+{"cmd":"power-cycle","mac":"a8:9c:6c:0a:a3:5e","port_idx":3}` → `rc: ok`,
+gateway back in ~25 s) — **formation still hangs identically**.
+**Verdict: the mia SLZB-06's CC2652P radio is dead (RF core unresponsive) —
+replace the unit.** Nothing remote is left to try; a replacement SLZB-06/06U
+goes on the same `.12` reservation and the ZHA flow above then applies
+unchanged. The other SLZB-OS `CMD` codes (all
+`GET /api2?action=4&cmd=<n>&idx=0`): 0 router reconnect · **1 radio reset** ·
+2 radio BSL · 3 ESP reset · 4 clear log · **5 energy scan** · 9 hard reset ·
+10 temp calibration · 11/12/14 IEEE write / read factory / read current.
+Debug logging for `zigpy`, `zigpy_znp` and `zha` was raised to `debug` on mia
+HA for this and could not be lowered again from this session (classifier);
+`logger.set_level` back to `warning`, or a HA restart, clears it.
+
+**Resolved 2026-09-06 with a new SLZB-06U** — the flow above worked first
+time on the new radio, which confirms the old unit was hardware. Two things
+the replacement taught: (1) a factory-fresh SLZB already holds a formed
+network in NVRAM, so `choose_formation_strategy` offers **`reuse_settings`**
+(plus `upload_manual_backup` / `form_new_network`) — and that reused network
+carried the well-known Z-Stack default key
+`01:03:05:07:09:0b:0d:0f:00:02:04:06:08:0a:0c:0d`; **always pick
+`form_new_network`** (the entry from `reuse_settings` was deleted and
+re-formed with random keys, ~35 s in `progress`). (2) HA's zeroconf
+`smlight` discovery keeps the *pool* address the box was first seen on;
+confirming it after the reservation moved the box to `.12` aborts with
+`cannot_connect` — use the user flow (`{"handler":"smlight"}` →
+`{"host":"192.168.2.12"}`) instead, then delete the stale `zha` zeroconf
+flows (`DELETE /api/config/config_entries/flow/<id>`). Fleet settings were
+applied to the new box the same day (page 9 `tz=EST5EDT,…`, page 7
+`enabled=on&chkHour=3&chkInterval=5` — the checkbox needs **`on`**, a literal
+`true` is ignored). It shipped on `v3.2.6.dev3` (dev channel) and was **flashed
+to v3.3.1 the same day** with the LAN push route — from **mia-raspberrypi**, not
+mia-proxmox: the Proxmox host cannot resolve `updates.smlight.tech` at all
+(`curl: (6) Could not resolve host`, 20 s DNS timeout), while the Pi downloads
+the 3.8 MB image in seconds. Push took ~10 s to reboot; `fw_channel` flipped to
+`release`, tz / auto-update / the `.12` lease and both HA entries (ZHA, smlight)
+survived untouched, ZHA devices stayed available. Two caveats: **`api2?action=20`
+(config backup) answers `UNKNOWN ACTION` on this SLZB-06U** on both the dev build
+and v3.3.1 (so there was no rollback file — the only settings were re-applied by
+hand anyway), and the vendor OTA index JSON is not a flat `prod` list on the
+`ESPs3` feed (parse it before trusting it).
 
 **Automating core updates.** Since SLZB-OS will not do it, fln HA carries
 `automation.slzb_06u_atualizar_firmware_core_automaticamente_canal_release`
