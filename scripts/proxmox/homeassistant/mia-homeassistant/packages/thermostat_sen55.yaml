@@ -2,13 +2,35 @@
 # regulates on the Apollo AIR-1 SEN55 room temperature instead of its own sensor.
 #
 # The Venstar Local API cannot accept an external temperature, so the automation
-# shifts the setpoint it sends by (thermostat reading - SEN55 reading). The room
-# then settles at input_number.room_target_temperature even though the thermostat
-# display shows a different number. Set the target on the helper, not on the
-# thermostat card.
+# shifts the setpoint it sends by the gap between the room (SEN55) and the
+# thermostat's own sensor. The room then settles at
+# input_number.room_target_temperature even though the thermostat display shows a
+# different number. Set the target on the helper, not on the thermostat card —
+# but if you DO turn the wall dial, "Venstar wall setpoint sync" copies that back
+# into the helper for you.
+#
+# Two refinements over the first cut:
+#   * the gap is now a 30-min rolling MEAN (sensor.sen55_venstar_gap_avg) instead
+#     of the instantaneous difference, which was jittery enough to short-cycle
+#     the compressor; and
+#   * the control loop no longer triggers on the thermostat's own sensor, so its
+#     ~0.56 °C stair-steps no longer kick the automation.
 #
 # Deployed to /config/packages/thermostat_sen55.yaml (configuration.yaml has
 # `homeassistant: packages: !include_dir_named packages`).
+#
+# LOADING: the `sensor:` block below adds a statistics and a derivative platform
+# sensor, and there is a new input_number — those need a full Home Assistant
+# RESTART, not a reload. (Template and automation changes alone would reload, but
+# the platform sensors force a restart.)
+#
+# ENTITY-ID CONTRACT: for template / statistics / derivative sensors the entity_id
+# is `sensor.` + slugify(NAME); `unique_id` is only the registry key and does NOT
+# set the entity_id. The three new sensors below are therefore NAMED so their
+# slugs are exactly the ids the controller, the statistics source and the
+# dashboard reference (sensor.sen55_venstar_gap, sensor.sen55_venstar_gap_avg,
+# sensor.sen55_temp_rate). Do not add words like "vs" or "(30 min mean)" to these
+# names — that would change the slug and break the loop.
 
 input_number:
   room_target_temperature:
@@ -27,6 +49,20 @@ input_number:
     step: 1
     unit_of_measurement: "°F"
     icon: mdi:arrow-expand-vertical
+    mode: box
+  # The last whole-°F setpoint THIS package commanded to the Venstar. It is the
+  # anti-loop token shared by the two automations: the controller records here
+  # the °F it is about to write, and "wall setpoint sync" ignores any climate
+  # change whose °F already equals this value (that change was ours, not a human).
+  # No `initial:` on purpose, so it restores across restarts and we don't re-adopt
+  # the wall setpoint every time HA boots.
+  last_commanded_setpoint_f:
+    name: Last commanded setpoint
+    min: 35
+    max: 99
+    step: 1
+    unit_of_measurement: "°F"
+    icon: mdi:thermostat
     mode: box
 
 # Where the compressor trips, expressed on the ROOM (SEN55) scale.
@@ -82,35 +118,82 @@ template:
         icon: mdi:air-conditioner
         state: >-
           {{ 1 if state_attr('climate.thermostat', 'hvac_action') in ['cooling', 'heating'] else 0 }}
+      # Instantaneous room-vs-thermostat gap, (SEN55 - Venstar own sensor), in °C.
+      # This is the RAW signal; the controller consumes its 30-min mean below, not
+      # this. Positive => the room reads warmer than the thermostat's own sensor.
+      # NAME chosen so slugify(name) == sen55_venstar_gap (see ENTITY-ID CONTRACT).
+      - name: "SEN55 Venstar gap"
+        unique_id: sen55_venstar_gap
+        unit_of_measurement: "°C"
+        state_class: measurement
+        icon: mdi:thermometer-lines
+        availability: >-
+          {{ is_number(states('sensor.apollo_air_1_305e6c_sen55_temperature'))
+             and is_number(states('sensor.thermostat_thermostat_temperature')) }}
+        state: >-
+          {{ (states('sensor.apollo_air_1_305e6c_sen55_temperature') | float
+              - states('sensor.thermostat_thermostat_temperature') | float) | round(3) }}
+
+# Platform sensors — REQUIRE A RESTART to load.
+sensor:
+  # 30-minute rolling mean of the raw gap. Smoothing here is what stops the
+  # controller from chasing every SEN55 tick and short-cycling the compressor.
+  # NAME chosen so slugify(name) == sen55_venstar_gap_avg (the id the controller
+  # reads); its source is the template sensor sensor.sen55_venstar_gap above.
+  - platform: statistics
+    name: "SEN55 Venstar gap avg"
+    unique_id: sen55_venstar_gap_avg
+    entity_id: sensor.sen55_venstar_gap
+    state_characteristic: mean
+    max_age:
+      minutes: 30
+    sampling_size: 400
+  # Rate of change of the room temperature, °C per minute over a 5-min window.
+  # Not used by the loop yet — reserved for future predictive look-ahead.
+  # NAME chosen so slugify(name) == sen55_temp_rate.
+  - platform: derivative
+    name: "SEN55 temp rate"
+    unique_id: sen55_temp_rate
+    source: sensor.apollo_air_1_305e6c_sen55_temperature
+    unit_time: min
+    time_window:
+      minutes: 5
 
 automation:
   - id: thermostat_follows_sen55
     alias: Thermostat follows SEN55 temperature
     description: >-
-      Keeps the Venstar setpoint offset by the difference between its own sensor
-      and the SEN55 so the room reaches input_number.room_target_temperature.
+      Offsets the Venstar setpoint by the 30-min-average gap between the room
+      (SEN55) and the thermostat's own sensor so the room reaches
+      input_number.room_target_temperature. Triggers on the room temperature and
+      the target/gap helpers only — never on the thermostat's own sensor, whose
+      whole-°F stair-steps used to re-fire the loop.
     mode: single
     trigger:
       - platform: state
         entity_id:
           - sensor.apollo_air_1_305e6c_sen55_temperature
-          - sensor.thermostat_thermostat_temperature
           - input_number.room_target_temperature
+          - input_number.venstar_deadband
+          - sensor.sen55_venstar_gap_avg
       - platform: time_pattern
-        minutes: "/10"
+        minutes: "/5"
     condition:
       - condition: template
         value_template: >-
-          {{ is_number(states('sensor.apollo_air_1_305e6c_sen55_temperature'))
-             and is_number(states('sensor.thermostat_thermostat_temperature'))
+          {{ is_number(states('sensor.sen55_venstar_gap_avg'))
+             and is_number(state_attr('climate.thermostat', 'temperature'))
              and states('climate.thermostat') in ['heat', 'cool'] }}
     action:
       - variables:
-          room: "{{ states('sensor.apollo_air_1_305e6c_sen55_temperature') | float }}"
-          tstat: "{{ states('sensor.thermostat_thermostat_temperature') | float }}"
           want: "{{ states('input_number.room_target_temperature') | float }}"
-          # never shift more than 4 °C, in case a sensor goes bad
-          offset: "{{ [[tstat - room, -4] | max, 4] | min }}"
+          gap_avg: "{{ states('sensor.sen55_venstar_gap_avg') | float }}"
+          # sensor.sen55_venstar_gap_avg is (SEN55 - Venstar). The shift we ADD to
+          # `want` has to be (Venstar - SEN55) = -gap, so that when the Venstar
+          # stops on its own sensor the room (SEN55) is sitting at `want`. Hence
+          # the negation — feeding +gap here would invert the loop into positive
+          # feedback. Still clamped to +/-4 °C so a bad sensor can't run away.
+          offset: "{{ [[(gap_avg * -1), -4] | max, 4] | min }}"
           # The Venstar stores whole °F. Compare in that unit and send the exact °C
           # value of the chosen °F, otherwise HA's 0.5 °C display rounding vs the
           # device's 1 °F rounding disagree and the automation rewrites the same
@@ -120,8 +203,80 @@ automation:
           setpoint: "{{ ((setpoint_f - 32) * 5 / 9) | round(2) }}"
       - condition: template
         value_template: "{{ setpoint_f != current_f }}"
+      # ANTI-LOOP GUARD — record what we are about to command BEFORE we command it.
+      # climate.set_temperature awaits an HTTP round-trip to the Venstar; during
+      # that await the state_changed it produces can be dispatched to the
+      # "wall setpoint sync" listener. If we stamped last_commanded_setpoint_f
+      # only AFTER the write, that listener could still see the old value, decide
+      # our own write was a human at the wall, overwrite room_target and start a
+      # loop. Stamping first means the resulting climate change always satisfies
+      # new_f == last_commanded_setpoint_f over there and is ignored.
+      - service: input_number.set_value
+        target:
+          entity_id: input_number.last_commanded_setpoint_f
+        data:
+          value: "{{ setpoint_f }}"
       - service: climate.set_temperature
         target:
           entity_id: climate.thermostat
         data:
           temperature: "{{ setpoint }}"
+
+  - id: venstar_wall_setpoint_sync
+    alias: Venstar wall setpoint sync
+    description: >-
+      When a human turns the Venstar dial, copy that setpoint back into
+      input_number.room_target_temperature so the two never fight. Distinguishes
+      a human change from this package's own writes via
+      input_number.last_commanded_setpoint_f.
+    # single: the body is a couple of instant service calls, so runs never
+    # overlap in practice; and if the controller's reconciling write re-fires this
+    # trigger while we are still inside, dropping that re-fire is exactly right —
+    # it would be a no-op against the guard anyway.
+    mode: single
+    trigger:
+      # attribute: temperature => fire only when the SETPOINT changes, not on
+      # every current_temperature / hvac_action tick.
+      - platform: state
+        entity_id: climate.thermostat
+        attribute: temperature
+    condition:
+      - condition: template
+        value_template: >-
+          {% if not is_number(state_attr('climate.thermostat', 'temperature')) %}
+            {{ false }}
+          {% else %}
+            {% set new_f = ((state_attr('climate.thermostat', 'temperature') | float) * 9 / 5 + 32) | round(0) | int %}
+            {% set last_f = states('input_number.last_commanded_setpoint_f') | float(-999) | round(0) | int %}
+            {# Only act when the new wall °F is NOT the one we just commanded, #}
+            {# i.e. a human moved the dial rather than our controller. #}
+            {{ new_f != last_f }}
+          {% endif %}
+    action:
+      - variables:
+          new_c: "{{ state_attr('climate.thermostat', 'temperature') | float }}"
+          new_f: "{{ (new_c * 9 / 5 + 32) | round(0) | int }}"
+          # Nearest 0.5 °C, clamped to the helper's own 16-30 °C bounds.
+          new_target: "{{ [[((new_c * 2) | round(0) / 2), 16] | max, 30] | min }}"
+      # Stamp the token to the wall's °F FIRST. Setting room_target next re-fires
+      # the controller; if that controller decides to nudge the setpoint, the
+      # climate change it makes will come back through this automation — but by
+      # then the controller has re-stamped last_commanded_setpoint_f to ITS value
+      # (it stamps before writing too), so this stays a no-op and cannot loop.
+      - service: input_number.set_value
+        target:
+          entity_id: input_number.last_commanded_setpoint_f
+        data:
+          value: "{{ new_f }}"
+      - service: input_number.set_value
+        target:
+          entity_id: input_number.room_target_temperature
+        data:
+          value: "{{ new_target }}"
+      - service: logbook.log
+        data:
+          name: Thermostat
+          message: >-
+            target changed at the wall to {{ new_f }} °F — room target set to
+            {{ new_target }} °C
+          entity_id: climate.thermostat

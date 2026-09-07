@@ -1,0 +1,195 @@
+# Dashboard-Main (sidebar 'A/C', url_path dashboard-main) → picture-elements "room map" card.
+# Storage-mode dashboard: applied over the websocket API (lovelace/config/save), not from this file.
+# Background is the Roborock map image entity (image.living_room_saros_10r_mia) via image_entity.
+# All top/left values are APPROXIMATE placeholders — the operator nudges each chip in the card UI editor.
+# Chips are state-label elements: numeric state (or one attribute via `attribute:`) wrapped by prefix/suffix.
+type: picture-elements
+image_entity: image.living_room_saros_10r_mia
+# --- Fallback base image (uncomment if your HA build rejects image_entity on picture-elements) ---
+# image: /api/image_proxy/image.living_room_saros_10r_mia
+grid_options:
+  columns: 18
+  rows: 10
+elements:
+
+  # ─────────── STUDY / DEN  (Apollo AIR-1: temp, humidity, CO₂) ───────────
+  - type: state-label
+    entity: sensor.apollo_air_1_305e6c_sen55_temperature
+    prefix: '🌡 '
+    suffix: ' °C'
+    tap_action:
+      action: more-info
+    style:
+      top: 76%
+      left: 82%
+      transform: translate(-50%, -50%)
+      color: white
+      background-color: rgba(0, 0, 0, 0.6)
+      padding: 3px 7px
+      border-radius: 10px
+      font-size: 13px
+      font-weight: '500'
+      white-space: nowrap
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8)
+
+  - type: state-label
+    entity: sensor.apollo_air_1_305e6c_sen55_humidity
+    prefix: '💧 '
+    suffix: ' %'
+    tap_action:
+      action: more-info
+    style:
+      top: 83%
+      left: 82%
+      transform: translate(-50%, -50%)
+      color: white
+      background-color: rgba(0, 0, 0, 0.6)
+      padding: 3px 7px
+      border-radius: 10px
+      font-size: 13px
+      font-weight: '500'
+      white-space: nowrap
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8)
+
+  - type: state-label
+    entity: sensor.apollo_air_1_305e6c_co2
+    prefix: 'CO₂ '
+    suffix: ' ppm'
+    tap_action:
+      action: more-info
+    style:
+      top: 90%
+      left: 82%
+      transform: translate(-50%, -50%)
+      color: white
+      background-color: rgba(0, 0, 0, 0.6)
+      padding: 3px 7px
+      border-radius: 10px
+      font-size: 13px
+      font-weight: '500'
+      white-space: nowrap
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8)
+
+  # ─────────── KITCHEN  (Venstar: current temp + hvac_action) ───────────
+  # state-label shows ONE attribute per element via `attribute:` — two chips stacked.
+  - type: state-label
+    entity: climate.thermostat
+    attribute: current_temperature
+    prefix: '🍳 '
+    suffix: ' °C'
+    tap_action:
+      action: more-info
+    style:
+      top: 40%
+      left: 30%
+      transform: translate(-50%, -50%)
+      color: white
+      background-color: rgba(0, 0, 0, 0.6)
+      padding: 3px 7px
+      border-radius: 10px
+      font-size: 13px
+      font-weight: '500'
+      white-space: nowrap
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8)
+
+  - type: state-label
+    entity: climate.thermostat
+    attribute: hvac_action
+    prefix: 'A/C '
+    tap_action:
+      action: more-info
+    style:
+      top: 47%
+      left: 30%
+      transform: translate(-50%, -50%)
+      color: white
+      background-color: rgba(0, 0, 0, 0.6)
+      padding: 3px 7px
+      border-radius: 10px
+      font-size: 12px
+      font-weight: '500'
+      white-space: nowrap
+      text-transform: capitalize
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8)
+
+  # ─────────── PEOPLE HOME  (sensor.people_home, from D2) ───────────
+  - type: state-label
+    entity: sensor.people_home
+    prefix: '👥 '
+    suffix: ' home'
+    tap_action:
+      action: more-info
+    style:
+      top: 8%
+      left: 16%
+      transform: translate(-50%, -50%)
+      color: white
+      background-color: rgba(0, 0, 0, 0.6)
+      padding: 3px 7px
+      border-radius: 10px
+      font-size: 13px
+      font-weight: '500'
+      white-space: nowrap
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8)
+
+  # ─────────── OUTSIDE  (weather.forecast_casa → 'temperature' attribute) ───────────
+  - type: state-label
+    entity: weather.forecast_casa
+    attribute: temperature
+    prefix: '☀ Out '
+    suffix: ' °C'
+    tap_action:
+      action: more-info
+    style:
+      top: 8%
+      left: 84%
+      transform: translate(-50%, -50%)
+      color: white
+      background-color: rgba(0, 0, 0, 0.6)
+      padding: 3px 7px
+      border-radius: 10px
+      font-size: 13px
+      font-weight: '500'
+      white-space: nowrap
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8)
+
+  # ─────────── A/C COMPRESSOR STATE ───────────
+  # Primary: the template sensor sensor.a_c_compressor_running.
+  # Fallback (comment the block above, uncomment below) if its state string reads oddly:
+  #   use sensor.thermostat_active_stage (idle / first_stage) — the Venstar's own stage.
+  - type: state-label
+    entity: sensor.a_c_compressor_running
+    prefix: '❄ Comp '
+    tap_action:
+      action: more-info
+    style:
+      top: 8%
+      left: 50%
+      transform: translate(-50%, -50%)
+      color: white
+      background-color: rgba(0, 0, 0, 0.6)
+      padding: 3px 7px
+      border-radius: 10px
+      font-size: 12px
+      font-weight: '500'
+      white-space: nowrap
+      text-transform: capitalize
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8)
+  # - type: state-label
+  #   entity: sensor.thermostat_active_stage
+  #   prefix: '❄ Stage '
+  #   tap_action:
+  #     action: more-info
+  #   style:
+  #     top: 8%
+  #     left: 50%
+  #     transform: translate(-50%, -50%)
+  #     color: white
+  #     background-color: rgba(0, 0, 0, 0.6)
+  #     padding: 3px 7px
+  #     border-radius: 10px
+  #     font-size: 12px
+  #     font-weight: '500'
+  #     white-space: nowrap
+  #     text-transform: capitalize
+  #     text-shadow: 0 1px 2px rgba(0,0,0,0.8)

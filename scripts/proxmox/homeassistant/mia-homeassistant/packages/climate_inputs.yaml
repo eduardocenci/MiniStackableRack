@@ -1,0 +1,41 @@
+# mia-homeassistant package: operator inputs and derived signals for the
+# thermal-control model (windows, comfort ceiling, occupancy count).
+#
+# Companion to thermostat_sen55.yaml. Nothing here drives the Venstar yet — the
+# helpers are learning/advisory inputs the future controller and the window
+# advisor read.
+#
+# Deployed to /config/packages/climate_inputs.yaml (configuration.yaml has
+# `homeassistant: packages: !include_dir_named packages`).
+
+input_boolean:
+  # Flip on when windows are open. Lets the model learn a ventilation
+  # coefficient and lets the window advisor price the thermal cost of opening.
+  windows_open:
+    name: Windows open
+    icon: mdi:window-open
+
+input_number:
+  # Comfort ceiling on relative humidity. The controller prefers one long AC
+  # run (better latent/dehumidification) rather than short cycles that keep the
+  # room below this.
+  humidity_ceiling:
+    name: Humidity ceiling
+    min: 40
+    max: 70
+    step: 1
+    initial: 55
+    unit_of_measurement: "%"
+    icon: mdi:water-percent
+
+template:
+  - sensor:
+      # zone.home holds the count of persons currently home; expose it as a
+      # plain numeric sensor for plotting and modeling. Guard non-numeric
+      # (unknown/unavailable) to 0.
+      - name: "People home"
+        unique_id: people_home
+        state_class: measurement
+        icon: mdi:account-group
+        state: >-
+          {{ states('zone.home') | int(0) }}
