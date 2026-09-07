@@ -1,0 +1,26 @@
+# mia-homeassistant recorder tuning.
+#
+# The recorder is a CACHE for the History/Logbook UI, not the long-term store —
+# the multi-year archive is InfluxDB on mia-nas (scripts/synology/mia-synology/
+# docker/influxdb/). Pruning here does NOT reduce what reaches InfluxDB; the
+# influxdb: integration keeps its own allow-list.
+#
+# Measured 2026-09-07: the recorder took ~244k state rows/day, 241 MB at the
+# 10-day default. The single biggest source was the KLAP HS300 rack strip
+# reporting per-outlet effective VOLTAGE and CURRENT every ~10 s — ~100k rows/day
+# of electrical minutiae the thermal model never uses and no dashboard needs.
+# Excluding those plus the AIR-1 housekeeping channels cuts the write rate ~40%.
+# Kept: per-outlet power (W, the model input), the AIR-1 air-quality channels,
+# the Venstar, and the kWh consumption sensors (the Energy dashboard uses them).
+
+recorder:
+  purge_keep_days: 60          # was default 10; InfluxDB holds everything beyond this
+  commit_interval: 30          # flush every 30 s instead of every state change
+  exclude:
+    entity_globs:
+      - sensor.*effective_voltage*     # HS300 per-outlet volts — never used
+      - sensor.*effective_current*     # HS300 per-outlet amps — never used
+    entities:
+      - sensor.apollo_air_1_305e6c_uptime
+      - sensor.apollo_air_1_305e6c_rssi
+      - sensor.apollo_air_1_305e6c_esp_temperature

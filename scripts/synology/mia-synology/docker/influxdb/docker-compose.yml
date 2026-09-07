@@ -1,0 +1,57 @@
+# InfluxDB 2 — multi-year telemetry store for the MIA thermal model.
+#
+# Runs on the Synology NAS (mia-nas-ds918plus) via DSM "Container Manager" /
+# docker-compose. Reference copy; on the NAS this folder is deployed at
+#   /volume1/docker/influxdb/
+# and `docker-compose up -d` is run from there. A `.env` sitting BESIDE this
+# file supplies the ${...} values below; that `.env` is NOT committed (see
+# .gitignore / README). The repo-root .env holds the same secrets under
+# MIA_INFLUXDB_* and is authoritative.
+#
+# ACCESS MODEL — LAN, not tailnet. Unlike copyparty (127.0.0.1 + userspace
+# tailscale), Home Assistant's influxdb: integration runs inside the HA Core
+# container, which can reach the NAS ONLY over the rack LAN — verified
+# 2026-09-07: HA (192.168.2.21) -> 192.168.2.15:5000 = 200, but the NAS
+# tailnet IP 100.110.80.51 and a 127.0.0.1 bind are both unreachable from the
+# HA container. So InfluxDB binds the NAS LAN IP. It is reachable on the rack
+# LAN (192.168.2.0/24), never on the WAN, and is token-protected. If the NAS
+# LAN IP changes, update MIA_INFLUXDB_BIND_IP here AND MIA_INFLUXDB_HOST in the
+# HA secret (influxdb_host).
+services:
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb
+    restart: unless-stopped
+
+    # PUID:PGID of the DSM user that owns the bind-mounted dirs below.
+    # globalnet = uid 1028, gid 100 (users) — see scripts/synology/README.md.
+    user: "${MIA_INFLUXDB_PUID:-1028}:${MIA_INFLUXDB_PGID:-100}"
+
+    ports:
+      # Bind the NAS LAN IP explicitly — compose errors out if unset (fail safe,
+      # never accidentally 0.0.0.0 / WAN).
+      - "${MIA_INFLUXDB_BIND_IP:?set MIA_INFLUXDB_BIND_IP in the .env beside this compose (the NAS rack-LAN IP, e.g. 192.168.2.15)}:8086:8086"
+
+    environment:
+      # First-run setup only; ignored once the data volume is initialised.
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${MIA_INFLUXDB_INIT_PASSWORD:?set in .env}
+      DOCKER_INFLUXDB_INIT_ORG: ${MIA_INFLUXDB_ORG:-casa-mia}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${MIA_INFLUXDB_BUCKET:-house}
+      DOCKER_INFLUXDB_INIT_RETENTION: "0"          # 0 = keep forever
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${MIA_INFLUXDB_TOKEN:?set in .env}
+      TZ: America/New_York
+
+    volumes:
+      - ./data:/var/lib/influxdb2                   # time-series + WAL
+      - ./config:/etc/influxdb2                     # influx CLI config
+
+    stop_grace_period: 30s
+
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 1m
+      timeout: 5s
+      retries: 5
+      start_period: 30s

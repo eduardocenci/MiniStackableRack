@@ -1,0 +1,75 @@
+# Dashboard-Main (sidebar 'A/C', url_path dashboard-main) → first section, graph card.
+# Storage-mode dashboard: applied over the websocket API (lovelace/config/save), not from this file.
+# Requires HACS plugin dbuezas/lovelace-plotly-graph-card (installed 2026-09-04, v3.3.5 via scripts/ha_hacs_install.py).
+# Compressor shading comes from the Venstar's own sensor.thermostat_active_stage (idle / first_stage,
+# full history) mapped to 0/1 on a hidden y2 axis — not from sensor.a_c_compressor_running.
+# Gotcha (2026-09-04): the y2 trace MUST be listed last — with it first, the 'fill: tonexty' band
+# trace referenced a trace on another axis and Plotly rendered nothing.
+type: custom:plotly-graph
+title: Room temperature vs compressor band
+hours_to_show: 6
+refresh_interval: 30
+grid_options:
+  columns: 36
+  rows: 8
+entities:
+- entity: sensor.a_c_compressor_stop_temperature
+  name: Compressor stops
+  line:
+    color: '#898781'
+    width: 1
+    dash: dot
+    shape: hv
+- entity: sensor.a_c_compressor_start_temperature
+  name: Compressor starts
+  line:
+    color: '#898781'
+    width: 1
+    dash: dot
+    shape: hv
+  fill: tonexty
+  fillcolor: rgba(137,135,129,0.15)
+- entity: sensor.apollo_air_1_305e6c_sen55_temperature
+  name: SEN55 (room)
+  line:
+    color: '#eb6834'
+    width: 2
+- entity: sensor.thermostat_thermostat_temperature
+  name: Venstar sensor
+  line:
+    color: '#2a78d6'
+    width: 2
+    shape: hv
+- entity: input_number.room_target_temperature
+  name: Target
+  line:
+    color: '#1baf7a'
+    width: 1
+    dash: dash
+    shape: hv
+- entity: sensor.thermostat_active_stage
+  name: Compressor running
+  yaxis: y2
+  fill: tozeroy
+  fillcolor: rgba(42,120,214,0.10)
+  line:
+    color: rgba(42,120,214,0.0)
+    width: 0
+    shape: hv
+  showlegend: false
+  hoverinfo: skip
+  filters:
+  - map_y: 'y === "idle" ? 0 : 1'
+layout:
+  yaxis:
+    title:
+      text: °C
+    fixedrange: false
+  yaxis2:
+    overlaying: y
+    side: right
+    range:
+    - 0
+    - 1
+    visible: false
+    fixedrange: true

@@ -9,6 +9,7 @@ Claude runs on) by its bare MagicDNS name:
 | DSM Web UI | `http://mia-nas-ds918plus:5000` | Human interface |
 | SSH | `mia-nas-ds918plus:22` | **LLM interface** — enabled |
 | Copyparty | `http://mia-nas-ds918plus:3923` | See `mia-synology/docker/copyparty/` |
+| InfluxDB 2 | `http://192.168.2.15:8086` (rack LAN) | Thermal-model store. See `mia-synology/docker/influxdb/` |
 
 ## LLM access — SSH
 

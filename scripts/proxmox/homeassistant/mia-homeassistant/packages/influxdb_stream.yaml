@@ -1,0 +1,51 @@
+# Stream the thermal-model allow-list to InfluxDB 2 on mia-nas (bucket "house",
+# infinite retention) — the multi-year store the recorder prune leans on.
+# Deploy: scripts/synology/mia-synology/docker/influxdb/. Host/token in secrets.yaml.
+#
+# Filter: only the entities the model uses. Per-entity measurement (value field
+# "value"), so the thermo service queries by measurement = entity_id. Not
+# streamed: per-outlet voltage/current, AIR-1 housekeeping, kWh cumulative
+# totals (recomputed from power when needed).
+
+influxdb:
+  api_version: 2
+  host: !secret influxdb_host
+  port: 8086
+  ssl: false
+  verify_ssl: false
+  token: !secret influxdb_token
+  organization: casa-mia
+  bucket: house
+  max_retries: 3
+  measurement_attr: entity_id
+  ignore_attributes:
+    - icon
+    - friendly_name
+    - entity_picture
+    - supported_features
+    - attribution
+  include:
+    entities:
+      - climate.thermostat
+      - input_number.room_target_temperature
+      - input_number.venstar_deadband
+      - sensor.a_c_compressor_start_temperature
+      - sensor.a_c_compressor_stop_temperature
+      - sensor.a_c_compressor_running
+      - weather.forecast_casa
+      - sun.sun
+      - zone.home
+      - person.eduardo_cenci
+    entity_globs:
+      - sensor.apollo_air_1_305e6c_*          # AIR-1: T, RH, CO2, PM, VOC, NOx (housekeeping excluded below)
+      - sensor.thermostat_*                   # Venstar temps, runtimes, active stage
+      - binary_sensor.thermostat_*
+      - sensor.den_power_strip_rack_power_*   # den rack strip, per-outlet watts
+      - sensor.*current_consumption           # kasa strips (desk, living, den) watts
+  exclude:
+    entity_globs:
+      - sensor.apollo_air_1_305e6c_uptime
+      - sensor.apollo_air_1_305e6c_rssi
+      - sensor.apollo_air_1_305e6c_esp_temperature
+      - sensor.*effective_voltage*
+      - sensor.*effective_current*
