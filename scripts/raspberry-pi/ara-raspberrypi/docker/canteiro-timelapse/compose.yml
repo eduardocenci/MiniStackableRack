@@ -9,6 +9,11 @@ services:
     user: "1000:1000"
     restart: unless-stopped
     init: true
+    # alertas de falha (rc != 0 -> WhatsApp Casa SmokeTests via o relay socat
+    # :3001 -> WAHA de bnu-proxmox). Live copy of BNU_WAHA_API_KEY (root .env),
+    # chmod 600, NOT in git: ALERT_WAHA_URL / ALERT_WAHA_KEY / ALERT_WAHA_SESSION
+    # / ALERT_CHAT_JID — see timelapse/README.md "Alertas de falha".
+    env_file: env/alerts.env
     environment:
       TZ: America/Sao_Paulo
       PYTHONUNBUFFERED: "1"   # logs das sequencias em tempo real (senao so no fim do processo)

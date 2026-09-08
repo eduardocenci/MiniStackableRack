@@ -72,3 +72,18 @@ The old unit files stay on the Pi, disabled, for one wave:
 `docker compose stop <name>` + `sudo systemctl enable --now <name>.timer`
 (watchdog/presenca/sunset-compare). The watchdog state dir is shared, so no
 state surgery is needed in either direction.
+
+## Relógio de boot sem RTC × supercronic (lição 03/09/2026)
+
+O Pi não tem RTC: no boot o relógio nasce atrasado e o NTP corrige minutos
+depois. O supercronic dorme por **duração fixa** calculada na partida, então
+o salto do relógio desloca todos os agendamentos — em 03/09 o bnu rebootou,
+o relógio saltou +59 min, o `presenca` das 20:00 disparou às 20:59 (e falhou
+por DNS transitório) e a grade das 20:10 iria sair duplicada às 21:09.
+Proteção: [`canteiro-jobs-clock-resync.service`](canteiro-jobs-clock-resync.service)
+(host, `/etc/systemd/system/`) espera `time-sync.target` real
+(`systemd-time-wait-sync` habilitado) e faz `docker compose restart` dos
+três containers, que recalculam a agenda com o relógio certo. Sintoma para
+reconhecer: linhas `msg=starting … job.schedule="0 20 * * *"` com timestamp
+longe do horário do crontab. `PYTHONUNBUFFERED=1` no compose faz os prints
+dos jobs aparecerem em tempo real no `docker logs`.

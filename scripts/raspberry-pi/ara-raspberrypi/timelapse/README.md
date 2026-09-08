@@ -98,6 +98,14 @@ dia 25; colunas pos3|pos1|pos2) no WhatsApp e arquiva em
 `DiaDeTrabalho/`, `SemanaDeTrabalho/` e `MesDeTrabalho/` no topo do
 Timelapse — mudanças na estrutura do Drive precisam acompanhar lá.
 
+Relógio de boot sem RTC (lição 03/09/2026, vista primeiro no bnu): o Pi
+nasce com o relógio atrasado e o NTP corrige minutos depois; o supercronic
+dorme por duração fixa e todos os horários (05:00, 16:40, 20:00, trabalho)
+ficam deslocados pelo salto. Proteção no host:
+[`../docker/canteiro-timelapse/canteiro-timelapse-clock-resync.service`](../docker/canteiro-timelapse/canteiro-timelapse-clock-resync.service)
+espera `time-sync.target` real (`systemd-time-wait-sync` habilitado) e
+reinicia o container, que recalcula a agenda.
+
 ## Operação
 
 ```bash
@@ -115,6 +123,32 @@ Lição operacional (30/08/2026): sessão manual de calibração/testes SEM
 tracking ativo (domingo) acumulou ~5% de tilt após 3 vai-e-voltas — sempre
 encerrar comparando um snap com a referência da guarda e corrigindo com
 nudge antes de sair (o guard-return só zera com gente rastreada na obra).
+
+## Alertas de falha → WhatsApp Casa SmokeTests (desde 04/09/2026)
+
+Pedido Eduardo 04/09/2026: **qualquer execução do script que termine com
+rc ≠ 0 vira uma mensagem no grupo Casa SmokeTests** — nada falha em silêncio.
+
+- `fail(msg)` registra cada razão (stderr + lista `FAILURES`): janela
+  perdida (>5 min de atraso), grab falhou (pos1/pos2/pos3/trabalho),
+  excursão incompleta (PTZ), re-âncora sem âncora válida (câmera perdida /
+  não convergiu), exceção não tratada. `_run_with_alert()` embrulha o
+  `main()`: com rc ≠ 0 manda `⚠️ *timelapse ARA* — <cmd> terminou com rc=N`
+  + até 8 razões (best-effort: falha no envio só loga, nunca derruba a
+  execução).
+- Transporte: o WAHA vive no LXC 101 de bnu (LAN-only); o ara chega nele
+  pela tailnet através do relay socat `bnu-proxmox:3001 → 10.1.1.126:3000`
+  (registrado no `globalnet/architecture.yaml`, nó `bnu_prx`). Testado do
+  próprio ara em 04/09/2026: HTTP 200 em 0,25 s, sessão `WORKING`.
+- Config no env do container, **fora do git**:
+  `ara-raspberrypi:~/canteiro-timelapse/env/alerts.env` (chmod 600) —
+  `ALERT_WAHA_URL=http://bnu-proxmox:3001`, `ALERT_WAHA_KEY` (cópia viva de
+  `BNU_WAHA_API_KEY` do `.env` raiz), `ALERT_WAHA_SESSION=default`,
+  `ALERT_CHAT_JID=120363410899542847@g.us` (Casa SmokeTests). Sem as
+  variáveis o script só loga "alerta nao configurado".
+- Teste do caminho completo: `docker exec canteiro-timelapse
+  timelapse-capture alerttest` → posta a mensagem de teste e sai com rc=1
+  (validado 04/09/2026, HTTP 201).
 
 ## Re-âncora visual da guarda (desde 31/08/2026)
 
@@ -164,16 +198,40 @@ de busca e o gate por altura de pico (0.02) recusou corrigir por três
 janelas — pos1 das 06:36 e 06:46 saíram no flanco esquerdo. Registro
 global do quadro inteiro também não recupera deslocamentos grandes
 (fisheye + pilares próximos quebram a translação pura). Por isso: a
-confiança é **PSR** (pico ÷ desvio dos sidelobes — bons 22–113, lixo
-6–17) e uma medição só vale se **duas referências concordam** em ≤80 px
-(ou uma com PSR ≥30) — nas boas as refs concordam em <30 px, nas ruins
-divergem por centenas. Medição inválida ⇒ primeiro **espera 75 s** (o
-firmware devolve a câmera à baseline ~1 min após perder um alvo de
-tracking — em horário de obra é o caso mais comum) e re-mede; se ainda
-inválida, **varredura de recuperação** em pan com deslocamento líquido
-alternado e crescente (±0.3, ±0.6, ±0.9, ±1.2 s a vel 0.4 — até uma
-excursão inteira), medindo a cada passo até o pilar voltar; se falhar,
-desfaz a varredura. Erros ≥600 px usam burst
+validade de uma medição vem da **concordância entre referências** (≥2
+dentro de 80 px → mediana do grupo; ou uma só com PSR ≥30): nas boas as
+refs concordam em <30 px, nas ruins divergem por centenas. O PSR (pico ÷
+desvio dos sidelobes) é só filtro anti-ruído (≥4): de madrugada/noite
+uma medição certa dá PSR 20–100, mas **de dia a cena texturizada derruba
+o PSR a 5–13 mesmo com o pico certo** — em 03/09/2026 um gate de PSR ≥12
+descartou 7 das 8 janelas com as três refs concordando, e a malha fechada
+não corrigiu um desvio de ~290 px que sabia medir. Medição inválida ⇒ **espera 60 s** (o firmware
+devolve a câmera à baseline ~1 min após perder um alvo de tracking — em
+horário de obra é o caso mais comum), re-mede uma vez e, se ainda
+inválida, **não mexe** (janela "sem âncora": fotografa onde está e pula
+as re-âncoras pós-excursão). A **varredura de recuperação** (pan com
+deslocamento líquido alternado e crescente ±0.3…±1.2 s, medindo a cada
+passo; desfaz se falhar) existe só como comando manual `reanchor
+--sweep`: em 02/09/2026 ela rodou automática numa sequência inteira sem
+pilar à vista, varrendo e "restaurando" por dead-reckoning seis vezes
+seguidas — cada restauração com seu quantum de erro — e deixou a câmera
+num lugar absurdo, a ponto de Eduardo precisar resetar a câmera. Nunca
+mais automática.
+
+**Homing por fim de curso** (ideia Eduardo, calibrado 04/09/2026): a
+câmera não dá 360° — os limites de pan (esquerdo = parede do barraco) e de
+tilt (inferior = chão) são paredes firmes e **repetíveis** (+0,+4 px após
+um empurrão extra de 10 s). Da quina, uma receita **quantizada** leva
+perto da guarda: `pan −1.0 × 25 s` → `7 × (0.4, 0.5 s)` → `tilt −1.0 ×
+12 s` → `10 × (0.4, 0.3 s)`; pouso medido em (−146,+78) e (−200,+104) px
+em idas repetidas (~79 s cada) — dentro do envelope, e a re-âncora
+termina. A receita tem de ser executada com os MESMOS bursts com que foi
+aprendida: um burst único de 3.45 s pousou ~1500 px aquém (cada burst
+carrega seu quantum de latência). Política: só quando a medição está
+inválida **fora do expediente** (07:00–18:00 nunca — de dia o tracking é
+o dono da câmera) e uma vez por execução; manual: `reanchor --home`.
+Falsos acordos perto da parede: tilt medido acima de 400 px só é aceito
+com PSR ≥15. Erros ≥600 px usam burst
 longo proporcional (~1250 px/s + quantum; acima de ~0.3 s a duração volta
 a controlar). Roda ~60 s **antes de CADA janela** e **após cada
 volta** de pos2 e de pos3 (a última volta da sequência deixa a câmera na

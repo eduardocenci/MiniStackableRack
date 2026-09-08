@@ -1030,7 +1030,11 @@ rollback for one wave), `ara-raspberrypi:~/canteiro-relay/mediamtx.yml`
 `/etc/mediamtx/mediamtx.yml` on 2026-08-29, same one-wave lingering), and
 `ara-raspberrypi:~/canteiro-timelapse/env/canteiro-ptz.env` (same camera
 key for ONVIF PTZ — moved from `/etc/canteiro-ptz.env`, which stays for
-the host-side manual `canteiro-ptz` copy).
+the host-side manual `canteiro-ptz` copy),
+`ara-raspberrypi:~/canteiro-timelapse/env/alerts.env` (`ALERT_WAHA_KEY` =
+`BNU_WAHA_API_KEY`, plus `ALERT_WAHA_URL=http://bnu-proxmox:3001` — the
+socat relay to WAHA — and the Casa SmokeTests JID; the timelapse script's
+rc≠0 failure alerts, 2026-09-04).
 
 ## 6. Tailscale: preventing re-authentication
 
