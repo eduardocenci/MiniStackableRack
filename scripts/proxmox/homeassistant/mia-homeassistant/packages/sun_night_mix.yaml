@@ -1,0 +1,88 @@
+# mia-homeassistant package: THE DIAL shared by the LED rules — how much "night" it is right now.
+#
+#   sensor.sun_night_mix   0 % while the sun is above input_number.sun_day_elevation (default 0° =
+#                          sunset), 100 % below input_number.sun_night_elevation (default -6° = end of
+#                          civil twilight, really dark), linear in between, 1 % steps.
+#
+# It is a continuous control: a trigger-based template re-evaluates every 20 s (and on every sun.sun
+# or slider change) using the sun's elevation NOW from custom_templates/sun_model.jinja, which
+# interpolates between HA's own sunset/dusk (or dawn/sunrise) timestamps — sun.sun itself only samples
+# its elevation every 2 min in twilight, which made the fades step (2026-09-07). Over Miami's ~24 min of
+# civil twilight the dial therefore moves about 1 % every 14 s; consumers send each change to their
+# strip with a 20 s crossfade, so the looks merge continuously ("analog", decisão Eduardo 2026-09-08).
+#
+# Consumers: packages/p2s_led.yaml (rack strip .65: day/night layers + cap/plate) and
+# packages/guest_led.yaml (guest bedroom strip .66: brightness). Each keeps its own decision sensor and
+# executor; this package only says how dark it is.
+#
+# Deployed to /config/packages/sun_night_mix.yaml; `homeassistant.reload_all` picks up changes, the
+# macro needs `homeassistant.reload_custom_templates`. New input_numbers come up at `min` after the
+# first reload — set them (0 / -6) right away. Source of truth: this file in the repo.
+
+input_number:
+  sun_day_elevation:
+    name: Sun dial · fully day above sun elevation
+    icon: mdi:weather-sunset-up
+    min: -18
+    max: 15
+    step: 0.5
+    unit_of_measurement: "°"
+    mode: slider
+  sun_night_elevation:
+    name: Sun dial · fully night below sun elevation
+    icon: mdi:weather-sunset-down
+    min: -18
+    max: 15
+    step: 0.5
+    unit_of_measurement: "°"
+    mode: slider
+
+template:
+  - trigger:
+      - platform: time_pattern
+        seconds: "/20"
+      - platform: state
+        entity_id:
+          - sun.sun
+          - input_number.sun_day_elevation
+          - input_number.sun_night_elevation
+    sensor:
+      - name: Sun night mix
+        unique_id: sun_night_mix
+        icon: mdi:theme-light-dark
+        unit_of_measurement: "%"
+        state_class: measurement
+        # if the sliders are crossed (day <= night) it degrades to a hard switch at the night slider
+        state: >-
+          {% from 'sun_model.jinja' import elevation_now %}
+          {% set e = elevation_now() | float(90) %}
+          {% set d = states('input_number.sun_day_elevation') | float(0) %}
+          {% set n = states('input_number.sun_night_elevation') | float(-6) %}
+          {% set m = 1.0 if e <= n else (0.0 if (e >= d or d <= n) else (d - e) / (d - n)) %}
+          {{ (m * 100) | round(0) | int }}
+        attributes:
+          elevation_now: >-
+            {% from 'sun_model.jinja' import elevation_now %}{{ elevation_now() | float(90) | round(2) }}
+          elevation_sampled: "{{ state_attr('sun.sun', 'elevation') | float(90) }}"
+          day_above: "{{ states('input_number.sun_day_elevation') | float(0) }}"
+          night_below: "{{ states('input_number.sun_night_elevation') | float(-6) }}"
+          phase: >-
+            {% from 'sun_model.jinja' import elevation_now %}
+            {% set e = elevation_now() | float(90) %}
+            {% set d = states('input_number.sun_day_elevation') | float(0) %}
+            {% set n = states('input_number.sun_night_elevation') | float(-6) %}
+            {{ 'night' if e <= n else ('day' if (e >= d or d <= n) else ('dusk' if not state_attr('sun.sun', 'rising') else 'dawn')) }}
+          next_setting: "{{ state_attr('sun.sun', 'next_setting') }}"
+          next_dusk: "{{ state_attr('sun.sun', 'next_dusk') }}"
+          next_dawn: "{{ state_attr('sun.sun', 'next_dawn') }}"
+          next_rising: "{{ state_attr('sun.sun', 'next_rising') }}"
+          reason: >-
+            {% from 'sun_model.jinja' import elevation_now %}
+            {% set e = elevation_now() | float(90) %}
+            {% set s = state_attr('sun.sun', 'elevation') | float(90) %}
+            {% set d = states('input_number.sun_day_elevation') | float(0) %}
+            {% set n = states('input_number.sun_night_elevation') | float(-6) %}
+            {% set m = 1.0 if e <= n else (0.0 if (e >= d or d <= n) else (d - e) / (d - n)) %}
+            {% if e <= n %}night — sun at {{ e | round(1) }}°, below {{ n }}°
+            {% elif e >= d or d <= n %}day — sun at {{ e | round(1) }}°, above {{ d }}°
+            {% else %}{{ 'dawn' if state_attr('sun.sun', 'rising') else 'dusk' }} — sun at {{ e | round(2) }}° (interpolated between HA's {{ 'dawn and sunrise' if state_attr('sun.sun', 'rising') else 'sunset and dusk' }} times; last sample {{ s }}°), {{ (m * 100) | round(0) | int }} % of the way from {{ d }}° (day) to {{ n }}° (night){% endif %}{{ '' if state_attr('sun.sun', 'elevation') is not none else ' (sun.sun unavailable → treated as day)' }}

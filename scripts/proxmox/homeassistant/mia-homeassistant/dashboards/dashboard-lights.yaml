@@ -1,0 +1,352 @@
+# "Lights" dashboard (sidebar 'Lights', url_path led-lights) — the mia LED controllers, one page:
+# 'All WLED' light group (helper created 2026-09-05 via the group config flow) on top, then one column per WLED
+# Gledopto controller (WLED 16.0.1, discovered by zeroconf and confirmed 2026-09-05; devices/entities renamed
+# from the colliding 'WLED-Gledopto' to the LAN last octet: wled_60 = 93 LEDs, wled_61 = 59 LEDs, wled_64 = 119 LEDs,
+# wled_65 = 127 LEDs on the rack (P2S + sun rule), wled_66 = 24 LEDs in the guest bedroom (added 2026-09-08, brightness follows the
+# sun dial of packages/sun_night_mix.yaml through packages/guest_led.yaml — its section is at the bottom) —
+# rename again once each strip's room is known; no WLED playlists exist so the playlist select is left out), then a placeholder for the FancyLEDs controller at 192.168.2.63
+# (Tuya chip, cloud-only: TCP 6668 refused and no LAN broadcasts, so it needs the Tuya cloud integration — see README).
+# Storage-mode dashboard: applied over the websocket API by apply_dashboard.py in this folder, not read by HA.
+# Regenerate from the scratch generator or edit by hand; both are fine — this yaml is the source of truth.
+dashboard:
+  url_path: led-lights
+  title: Lights
+  icon: mdi:led-strip-variant
+  show_in_sidebar: true
+  require_admin: false
+  mode: storage
+config:
+  title: Lights
+  views:
+  - title: Lights
+    path: lights
+    icon: mdi:led-strip-variant
+    type: sections
+    max_columns: 3
+    sections:
+    - type: grid
+      column_span: 3
+      cards:
+      - type: heading
+        heading: All WLED
+        heading_style: title
+        icon: mdi:lightbulb-group
+        badges:
+        - type: entity
+          entity: light.wled_60
+          name: '.60'
+        - type: entity
+          entity: light.wled_61
+          name: '.61'
+        - type: entity
+          entity: light.wled_64
+          name: '.64'
+        - type: entity
+          entity: light.wled_65_main
+          name: '.65'
+        - type: entity
+          entity: light.wled_66
+          name: '.66'
+      - type: tile
+        entity: light.all_wled
+        name: All WLED
+        features_position: bottom
+        features:
+        - type: toggle
+        - type: light-brightness
+        grid_options:
+          columns: full
+    - type: grid
+      cards:
+      - type: heading
+        heading: WLED .60 · 93 LEDs
+        heading_style: title
+        icon: mdi:led-strip-variant
+        badges:
+        - type: entity
+          entity: sensor.wled_60_estimated_current
+      - type: tile
+        entity: light.wled_60
+        name: WLED .60
+        features_position: bottom
+        features:
+        - type: toggle
+        - type: light-brightness
+        grid_options:
+          columns: full
+      - type: entities
+        state_color: true
+        entities:
+        - entity: select.wled_60_preset
+        - entity: select.wled_60_color_palette
+        - entity: number.wled_60_speed
+        - entity: number.wled_60_intensity
+        - type: divider
+        - entity: switch.wled_60_nightlight
+        - entity: switch.wled_60_reverse
+        - entity: switch.wled_60_freeze
+        - entity: switch.wled_60_sync_send
+        - entity: switch.wled_60_sync_receive
+        - entity: select.wled_60_live_override
+        - type: divider
+        - entity: sensor.wled_60_max_current
+        - entity: sensor.wled_60_led_count
+        - entity: sensor.wled_60_ip
+        - entity: update.wled_60_firmware
+        - entity: button.wled_60_restart
+    - type: grid
+      cards:
+      - type: heading
+        heading: WLED .61 · 59 LEDs
+        heading_style: title
+        icon: mdi:led-strip-variant
+        badges:
+        - type: entity
+          entity: sensor.wled_61_estimated_current
+      - type: tile
+        entity: light.wled_61
+        name: WLED .61
+        features_position: bottom
+        features:
+        - type: toggle
+        - type: light-brightness
+        grid_options:
+          columns: full
+      - type: entities
+        state_color: true
+        entities:
+        - entity: select.wled_61_preset
+        - entity: select.wled_61_color_palette
+        - entity: number.wled_61_speed
+        - entity: number.wled_61_intensity
+        - type: divider
+        - entity: switch.wled_61_nightlight
+        - entity: switch.wled_61_reverse
+        - entity: switch.wled_61_freeze
+        - entity: switch.wled_61_sync_send
+        - entity: switch.wled_61_sync_receive
+        - entity: select.wled_61_live_override
+        - type: divider
+        - entity: sensor.wled_61_max_current
+        - entity: sensor.wled_61_led_count
+        - entity: sensor.wled_61_ip
+        - entity: update.wled_61_firmware
+        - entity: button.wled_61_restart
+    - type: grid
+      cards:
+      - type: heading
+        heading: WLED .64 · 119 LEDs
+        heading_style: title
+        icon: mdi:led-strip-variant
+        badges:
+        - type: entity
+          entity: sensor.wled_64_estimated_current
+      - type: tile
+        entity: light.wled_64
+        name: WLED .64
+        features_position: bottom
+        features:
+        - type: toggle
+        - type: light-brightness
+        grid_options:
+          columns: full
+      - type: entities
+        state_color: true
+        entities:
+        - entity: select.wled_64_preset
+        - entity: select.wled_64_color_palette
+        - entity: number.wled_64_speed
+        - entity: number.wled_64_intensity
+        - type: divider
+        - entity: switch.wled_64_nightlight
+        - entity: switch.wled_64_reverse
+        - entity: switch.wled_64_freeze
+        - entity: switch.wled_64_sync_send
+        - entity: switch.wled_64_sync_receive
+        - entity: select.wled_64_live_override
+        - type: divider
+        - entity: sensor.wled_64_max_current
+        - entity: sensor.wled_64_led_count
+        - entity: sensor.wled_64_ip
+        - entity: update.wled_64_firmware
+        - entity: button.wled_64_restart
+    - type: grid
+      cards:
+      - type: heading
+        heading: WLED .65 · rack · 127 LEDs
+        heading_style: title
+        icon: mdi:led-strip-variant
+        badges:
+        - type: entity
+          entity: sensor.wled_65_estimated_current
+        - type: entity
+          entity: sensor.p2s_led_preset
+          name: P2S rule
+      - type: tile
+        entity: light.wled_65_main
+        name: WLED .65
+        features_position: bottom
+        features:
+        - type: toggle
+        - type: light-brightness
+        grid_options:
+          columns: full
+      - type: entities
+        state_color: true
+        entities:
+        - entity: input_boolean.p2s_led_link
+          name: Driven by the P2S (Printer dashboard)
+        - entity: select.wled_65_preset
+        - entity: select.wled_65_color_palette
+        - entity: number.wled_65_speed
+        - entity: number.wled_65_intensity
+        - type: divider
+        - entity: switch.wled_65_nightlight
+        - entity: switch.wled_65_reverse
+        - entity: switch.wled_65_freeze
+        - entity: switch.wled_65_sync_send
+        - entity: switch.wled_65_sync_receive
+        - entity: select.wled_65_live_override
+        - type: divider
+        - entity: sensor.wled_65_max_current
+        - entity: sensor.wled_65_led_count
+        - entity: sensor.wled_65_ip
+        - entity: update.wled_65_firmware
+        - entity: button.wled_65_restart
+    - type: grid
+      cards:
+      - type: heading
+        heading: WLED .66 · guest bedroom · 24 LEDs
+        heading_style: title
+        icon: mdi:led-strip-variant
+        badges:
+        - type: entity
+          entity: sensor.wled_66_estimated_current
+        - type: entity
+          entity: sensor.guest_led_brightness
+          name: Sun rule
+      - type: tile
+        entity: light.wled_66
+        name: WLED .66
+        features_position: bottom
+        features:
+        - type: toggle
+        - type: light-brightness
+        grid_options:
+          columns: full
+      - type: entities
+        state_color: true
+        entities:
+        - entity: input_boolean.guest_led_link
+          name: Brightness follows the sun (section below)
+        - entity: select.wled_66_preset
+        - entity: select.wled_66_color_palette
+        - entity: number.wled_66_speed
+        - entity: number.wled_66_intensity
+        - type: divider
+        - entity: switch.wled_66_nightlight
+        - entity: switch.wled_66_reverse
+        - entity: switch.wled_66_freeze
+        - entity: switch.wled_66_sync_send
+        - entity: switch.wled_66_sync_receive
+        - entity: select.wled_66_live_override
+        - type: divider
+        - entity: sensor.wled_66_max_current
+        - entity: sensor.wled_66_led_count
+        - entity: sensor.wled_66_ip
+        - entity: update.wled_66_firmware
+        - entity: button.wled_66_restart
+    - type: grid
+      column_span: 3
+      cards:
+      - type: heading
+        heading: Sun dial · guest bedroom strip .66 ← sun
+        heading_style: title
+        icon: mdi:theme-light-dark
+        badges:
+        - type: entity
+          entity: sensor.sun_night_mix
+          name: Night mix
+        - type: entity
+          entity: sensor.guest_led_brightness
+          name: Decided
+        - type: entity
+          entity: input_boolean.guest_led_link
+          name: Link
+      - type: entities
+        state_color: true
+        title: Sun dial → decision → strip
+        entities:
+        - entity: sensor.sun_night_mix
+          name: 'Sun dial · night mix'
+        - type: attribute
+          entity: sensor.sun_night_mix
+          attribute: reason
+          name: '      why'
+        - type: attribute
+          entity: sensor.sun_night_mix
+          attribute: elevation_now
+          name: '      sun elevation now (interpolated)'
+          suffix: '°'
+        - type: attribute
+          entity: sensor.sun_night_mix
+          attribute: elevation_sampled
+          name: '      sun elevation last sampled by HA'
+          suffix: '°'
+        - entity: input_number.sun_day_elevation
+          name: '      fully day above'
+        - entity: input_number.sun_night_elevation
+          name: '      fully night below'
+        - type: divider
+        - entity: input_boolean.guest_led_link
+          name: Link sun → guest strip (off = manual)
+        - entity: input_number.guest_led_night_brightness
+          name: 'Input · brightness at night'
+        - entity: sensor.guest_led_brightness
+          name: 'Decision · brightness to send (0-255)'
+        - type: attribute
+          entity: sensor.guest_led_brightness
+          attribute: percent
+          name: '      as %'
+          suffix: '%'
+        - type: attribute
+          entity: sensor.guest_led_brightness
+          attribute: reason
+          name: '      because'
+        - type: divider
+        - entity: light.wled_66
+          name: 'Strip · light'
+        - entity: automation.guest_led_apply_brightness
+          name: 'Executor automation'
+        - entity: counter.guest_led_resends
+          name: '      commands the strip did not take (re-sent)'
+        grid_options:
+          columns: 18
+      - type: markdown
+        title: How it decides
+        content: |-
+          The sun dial (`sensor.sun_night_mix`, `packages/sun_night_mix.yaml`) is 0 % while the sun's elevation is above *fully day above* ({{ states('input_number.sun_day_elevation') }}°), 100 % below *fully night below* ({{ states('input_number.sun_night_elevation') }}°), linear in between in 1 % steps; it re-evaluates every 20 s from the sun's elevation *now*, interpolated between Home Assistant's own sunset/dusk (or dawn/sunrise) times because HA only samples the sun every 2 minutes. **Now:** {{ state_attr('sensor.sun_night_mix', 'reason') }}.
+
+          The guest strip's brightness (`sensor.guest_led_brightness`, `packages/guest_led.yaml`) is 100 % by day, **{{ states('input_number.guest_led_night_brightness') }} %** at night, and follows the dial in between along a straight line in perceptual (gamma) space, so the dimming looks even. **Now:** {{ state_attr('sensor.guest_led_brightness', 'reason') }}. The automation sends every change with a 20 s crossfade (5 s after HA starts, the strip is switched on or reconnects, or the link is switched on), never while the strip is off, and nothing while the dial is flat — so manual dimming by day or at night holds until the next dusk or dawn. Effect, colours and presets are never touched. Last sent {{ relative_time(state_attr('automation.guest_led_apply_brightness', 'last_triggered')) ~ ' ago' if state_attr('automation.guest_led_apply_brightness', 'last_triggered') else 'never' }}; the strip reports **{{ (state_attr('light.wled_66', 'brightness') | int(0) / 2.55) | round(0) | int }} %**{{ '' if is_state('light.wled_66', 'on') else ' (off)' }}. Next sunset {{ as_timestamp(state_attr('sun.sun', 'next_setting')) | timestamp_custom('%H:%M') }}, dusk {{ as_timestamp(state_attr('sun.sun', 'next_dusk')) | timestamp_custom('%H:%M') }}, dawn {{ as_timestamp(state_attr('sun.sun', 'next_dawn')) | timestamp_custom('%H:%M') }}, sunrise {{ as_timestamp(state_attr('sun.sun', 'next_rising')) | timestamp_custom('%H:%M') }}.
+        grid_options:
+          columns: 18
+      - type: history-graph
+        title: Sun dial and guest strip, last 24 h
+        hours_to_show: 24
+        entities:
+        - entity: sensor.sun_night_mix
+          name: night mix
+        - entity: sensor.guest_led_brightness
+          name: guest brightness (0-255)
+        grid_options:
+          columns: full
+    - type: grid
+      column_span: 3
+      cards:
+      - type: heading
+        heading: FancyLEDs · 192.168.2.63
+        heading_style: title
+        icon: mdi:string-lights
+      - type: markdown
+        content: 'Tuya-chip controller, cloud-only (no local API on the LAN). Not in Home Assistant yet: add it to the **Smart
+          Life** app, then add the **Tuya** integration in HA (QR login) and its light will be added here.'

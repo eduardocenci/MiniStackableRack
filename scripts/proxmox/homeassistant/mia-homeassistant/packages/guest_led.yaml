@@ -1,0 +1,160 @@
+# mia-homeassistant package: the sun drives the brightness of the guest bedroom LED strip at
+# 192.168.2.66 (HA device "WLED .66": Gledopto ESP32, WLED 16.0.1, 24 RGBW LEDs, MAC
+# 68:fe:71:81:49:b0, UCG reservation `wled-WLED-Gledopto`; added to HA and to light.all_wled 2026-09-08).
+#
+# THE RULE (watch it on the Lights dashboard, "Guest bedroom strip .66 ← sun" section):
+#
+#   brightness = 100 % in the day, input_number.guest_led_night_brightness at full night (the level
+#   the strip was found at, 10 % = WLED bri 25, decisão Eduardo 2026-09-08), and in between it follows
+#   sensor.sun_night_mix (packages/sun_night_mix.yaml) — interpolated in perceptual (gamma) space so
+#   the dimming looks even, sent on every 1 % step of the dial with a 20 s crossfade ("analog").
+#   Only the global brightness is driven; effect, colours and presets stay whatever you set.
+#   Nothing is sent while the strip is off (switching it on applies the current level), and nothing
+#   is sent while the dial is flat (day or night), so manual dimming during the day or at night holds
+#   until the next dusk/dawn.
+#
+# Pieces:
+#   input_boolean.guest_led_link              master switch — off = the strip is yours, nothing is sent
+#   sensor.sun_night_mix                      the input, 0-100 % night (packages/sun_night_mix.yaml)
+#   input_number.guest_led_night_brightness   the level at full night, WLED brightness %
+#   sensor.guest_led_brightness               THE DECISION: state = target WLED brightness 0-255;
+#                                             attributes percent, night_mix, reason
+#   rest_command.wled_66_brightness           "set brightness" on the strip (POST /json/state {"tt", "bri"})
+#   automation.guest_led_apply_brightness     dumb executor: forwards the decision, checks the strip took it
+#                                             3 s later and re-sends once if not (counter.guest_led_resends)
+#
+# Deployed to /config/packages/guest_led.yaml; `homeassistant.reload_all` picks up changes (a new
+# rest_command too, once the integration is loaded). A brand-new input_number comes up at `min`
+# after the first reload — set it right away. Source of truth: this file in the repo.
+
+rest_command:
+  wled_66_brightness:
+    # WLED JSON API: global brightness, crossfaded over tt (100 ms units; 200 = 20 s)
+    url: http://192.168.2.66/json/state
+    method: post
+    content_type: application/json
+    payload: '{"tt": {{ tt | int }}, "bri": {{ bri | int }}}'
+    timeout: 10
+  wled_66_state:
+    # the strip's own state (on / bri): the executor trusts this, not HA's mirror of the light —
+    # light.wled_66 was seen "off" with no brightness while the strip was on (2026-09-08)
+    url: http://192.168.2.66/json/state
+    method: get
+    timeout: 10
+
+input_boolean:
+  guest_led_link:
+    name: Guest bedroom strip .66 ← sun link
+    icon: mdi:link-variant
+
+counter:
+  guest_led_resends:
+    # how often the executor had to repeat a command the strip did not take (see the automation)
+    name: Guest bedroom strip .66 · commands re-sent
+    icon: mdi:repeat-variant
+    step: 1
+
+input_number:
+  guest_led_night_brightness:
+    # no `initial:` so a manual tweak survives restarts
+    name: Guest bedroom strip .66 · brightness at night
+    icon: mdi:brightness-4
+    min: 1
+    max: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+
+template:
+  - sensor:
+      - name: Guest LED brightness
+        unique_id: guest_led_brightness
+        icon: mdi:brightness-auto
+        # THE DECISION: WLED brightness 0-255 = 255 · (1 - m · (1 - f))^2.8, m = night mix,
+        # f = (night level / 255)^(1/2.8): a straight line in perceptual space from day to night
+        state: >-
+          {% set m = states('sensor.sun_night_mix') | float(0) / 100 %}
+          {% set f = (states('input_number.guest_led_night_brightness') | float(10) / 100) ** (1 / 2.8) %}
+          {{ (255 * (1 - m * (1 - f)) ** 2.8) | round(0) | int }}
+        attributes:
+          percent: >-
+            {% set m = states('sensor.sun_night_mix') | float(0) / 100 %}
+            {% set f = (states('input_number.guest_led_night_brightness') | float(10) / 100) ** (1 / 2.8) %}
+            {{ (100 * (1 - m * (1 - f)) ** 2.8) | round(0) | int }}
+          night_mix: "{{ states('sensor.sun_night_mix') }}"
+          night_pct: "{{ states('input_number.guest_led_night_brightness') | float(10) }}"
+          reason: >-
+            {% set m = states('sensor.sun_night_mix') | float(0) / 100 %}
+            {% set f = (states('input_number.guest_led_night_brightness') | float(10) / 100) ** (1 / 2.8) %}
+            {{ (m * 100) | round(0) | int }} % night → {{ (100 * (1 - m * (1 - f)) ** 2.8) | round(0) | int }} % brightness (100 % by day, {{ states('input_number.guest_led_night_brightness') | float(10) | round(0) | int }} % at night; sun: {{ state_attr('sensor.sun_night_mix', 'reason') }})
+
+automation:
+  - id: guest_led_apply_brightness
+    alias: Guest LED apply brightness
+    description: >-
+      Executor only — the decision is sensor.guest_led_brightness in packages/guest_led.yaml.
+      Sends it to WLED .66 whenever it changes (20 s crossfade), and again when HA starts,
+      the strip is switched on or reconnects, or the link is switched on (5 s). Never while the
+      strip is off. Turn input_boolean.guest_led_link off to stop it.
+    mode: queued
+    max_exceeded: silent
+    trigger:
+      # `to:` left empty = fire on state changes only, not on the attributes that follow the sun
+      - platform: state
+        entity_id: sensor.guest_led_brightness
+        to:
+        id: step
+      - platform: homeassistant
+        event: start
+        id: start
+      - platform: state
+        entity_id: light.wled_66
+        from: "off"
+        to: "on"
+        id: switched_on
+      - platform: state
+        entity_id: light.wled_66
+        from: unavailable
+        id: reconnect
+      - platform: state
+        entity_id: input_boolean.guest_led_link
+        to: "on"
+        id: link
+    condition:
+      - condition: state
+        entity_id: input_boolean.guest_led_link
+        state: "on"
+    action:
+      - variables:
+          target: "{{ states('sensor.guest_led_brightness') | int(0) }}"
+      # never wake a strip that is off — asked from the strip itself, not HA's mirror
+      - service: rest_command.wled_66_state
+        response_variable: before
+      - condition: template
+        value_template: "{{ before.status == 200 and before.content.on }}"
+      - service: rest_command.wled_66_brightness
+        data:
+          bri: "{{ target }}"
+          tt: "{{ 200 if trigger.id == 'step' else 50 }}"
+      # closed loop: on 2026-09-08 the strip was seen answering "success" and keeping its old
+      # value for a while (cause unknown), so read it back after 3 s and, if it does not show the
+      # target — and the decision has not moved on meanwhile (a queued run handles that) — send
+      # it once more and count it (counter.guest_led_resends, on the Lights dashboard).
+      - delay:
+          seconds: 3
+      - service: rest_command.wled_66_state
+        response_variable: after
+      - if:
+          - condition: template
+            value_template: >-
+              {{ after.status == 200 and after.content.on
+                 and states('sensor.guest_led_brightness') | int(0) == target
+                 and (after.content.bri | int(0) - target) | abs > 2 }}
+        then:
+          - service: rest_command.wled_66_brightness
+            data:
+              bri: "{{ target }}"
+              tt: 100
+          - service: counter.increment
+            target:
+              entity_id: counter.guest_led_resends

@@ -1,0 +1,37 @@
+{#- custom_templates/sun_model.jinja (mia HA) — the sun's elevation RIGHT NOW, for smooth LED fades.
+
+    sun.sun only refreshes its `elevation` attribute every 2 min in twilight, which turned the LED
+    day/night fades into 8 % steps with a 60 s hold between them (seen at dusk 2026-09-07). Between
+    sunset (-0.833°) and civil dusk (-6°) — and dawn / sunrise in the morning — the elevation is
+    practically linear in time, so elevation_now() extrapolates from HA's own next_setting / next_dusk
+    (or next_dawn / next_rising) timestamps and the wall clock, and moves every time it is rendered.
+    Away from the horizon (|sampled elevation| > 12°), or if the model and the sample disagree by more
+    than 3°, the sampled elevation is returned instead, so the model can never move a fade to the wrong
+    time of day. `next_*` flips to tomorrow the moment an event passes, so events more than 12 h ahead
+    are brought back by 24 h (today's event to within about a minute).
+
+    Usage:   {% from 'sun_model.jinja' import elevation_now %}{% set e = elevation_now() | float(90) %}
+    Deploy:  /config/custom_templates/sun_model.jinja, then service homeassistant.reload_custom_templates.
+    Consumers: packages/sun_night_mix.yaml (sensor.sun_night_mix, the dial for the LED rules). -#}
+{%- macro elevation_now() -%}
+  {%- set now_ts = now().timestamp() -%}
+  {%- set sample = state_attr('sun.sun', 'elevation') | float(90) -%}
+  {%- set ns = namespace(S=as_timestamp(state_attr('sun.sun', 'next_setting'), 0),
+                         D=as_timestamp(state_attr('sun.sun', 'next_dusk'), 0),
+                         A=as_timestamp(state_attr('sun.sun', 'next_dawn'), 0),
+                         R=as_timestamp(state_attr('sun.sun', 'next_rising'), 0)) -%}
+  {%- if ns.S - now_ts > 43200 %}{% set ns.S = ns.S - 86400 %}{% endif -%}
+  {%- if ns.D - now_ts > 43200 %}{% set ns.D = ns.D - 86400 %}{% endif -%}
+  {%- if ns.A - now_ts > 43200 %}{% set ns.A = ns.A - 86400 %}{% endif -%}
+  {%- if ns.R - now_ts > 43200 %}{% set ns.R = ns.R - 86400 %}{% endif -%}
+  {%- if ns.S == 0 or ns.D == 0 or ns.A == 0 or ns.R == 0 or ns.D <= ns.S or ns.R <= ns.A -%}
+    {{ sample }}
+  {%- else -%}
+    {%- if state_attr('sun.sun', 'rising') -%}
+      {%- set model = -0.833 + 5.167 / (ns.R - ns.A) * (now_ts - ns.R) -%}
+    {%- else -%}
+      {%- set model = -0.833 - 5.167 / (ns.D - ns.S) * (now_ts - ns.S) -%}
+    {%- endif -%}
+    {{ model if (sample > -12 and sample < 12 and (model - sample) | abs < 3) else sample }}
+  {%- endif -%}
+{%- endmacro -%}

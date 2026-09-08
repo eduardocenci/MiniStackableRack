@@ -1,0 +1,312 @@
+# mia-homeassistant package: the Bambu Lab P2S and the sun drive the LED strip at 192.168.2.65
+# (HA device "WLED .65": Gledopto ESP32, WLED 16.0.1, 127 RGBW LEDs: rack 0-68, tail 68-127
+# whose cap/plate light is LEDs 77-117; UCG reservation wled-bc019c).
+#
+# THE RULE — all of it, in priority order (watch it evaluate on the Printer dashboard,
+# "LED strip .65" section, or open sensor.p2s_led_preset and read its attributes):
+#
+#   1. P2S door OPEN                       -> WLED preset 5  "Door Open"        (wins over everything)
+#   2. else, a PRINT ISSUE                 -> WLED preset 3  "Print Issue"
+#   3. else                                -> WLED preset 4  "Default (Day-Night blend)", with its three
+#        layers dialled by sensor.sun_night_mix (packages/sun_night_mix.yaml: 0 % above sunset, 100 % at
+#        the end of civil twilight, 1 % steps every ~14 s): sensor.p2s_led_layers turns the mix into the
+#        three opacities and the executor sends every change with a 20 s crossfade, so the day look
+#        melts into the night look continuously while the light fades (2026-09-08, decisão Eduardo:
+#        analog merge; the cap/plate stays lit at night at input_number.p2s_led_cap_night_brightness).
+#
+# HOW THE BLEND WORKS ON THE STRIP (preset 4, rewritten 2026-09-08; WLED mechanics in REMOTE_ACCESS.md):
+#   segment 0 "Day (Flow Stripe)"   LEDs 0-68   the old default look (= preset 9)
+#   segment 1 "Night (Colorwaves)"  LEDs 0-68   the look of preset 7, blend mode 2 (additive)
+#   segment 2 "Cap/Plate"           LEDs 77-117 solid warm white
+#   WLED composites in gamma space: a layer at opacity `bri` contributes colour × (bri/255)^(1/2.8).
+#   With mix m the dial sends day bri = 255·(1-m)^2.8, night bri = 255·m^2.8 (their raw factors sum to
+#   one: a linear dissolve, no clipping) and cap bri = 255·(1 - m·(1 - f))^2.8 where f is the raw
+#   factor of the cap/plate's night level. The first version used "top" (alpha) blending with the
+#   night layer alone dialled: its smallest non-zero opacity already cut the day look by ~40 %, which
+#   was the harsh step seen on 2026-09-07. bri 0 switches a layer off. Presets 7 (pure night) and
+#   9 (pure day) stay on the strip as the references.
+#
+# A "print issue" is: binary_sensor.p2s_print_error on (the printer itself raised an
+# error, e.g. a filament feed failure), OR sensor.p2s_print_status == failed, OR an HMS
+# message whose severity is serious/fatal. The printer's "common" reminders (e.g.
+# "threaded rods need lubrication") are NOT an issue.
+#
+# Preset numbers are the WLED preset IDS and the strip is driven BY ID (WLED JSON API
+# `{"ps": <id>}` via rest_command.wled_65_preset), so renaming presets on the strip cannot
+# break the rule (2026-09-06: a name-based first version broke within the hour when preset 4
+# was renamed). The names shown on the dashboard are read from the strip itself
+# (sensor.wled_65_presets polls /presets.json).
+#
+# Pieces:
+#   input_boolean.p2s_led_link              master switch — off = the strip is yours, nothing is sent
+#   binary_sensor.p2s_print_issue           the "issue" input; attribute `reason` names the condition
+#   sensor.sun_night_mix                    the "night" input, 0-100 % (packages/sun_night_mix.yaml)
+#   input_number.p2s_led_cap_night_brightness  cap/plate level at full night, WLED brightness % (default 50)
+#   sensor.p2s_led_preset                   DECISION 1: state = preset id; attributes preset_name (live
+#                                           name from the strip), because (plain-language reason), rule
+#   sensor.p2s_led_layers                   DECISION 2: state = night mix %; attributes day_bri /
+#                                           night_bri / cap_bri = the three opacities to send, reason
+#   sensor.wled_65_presets                  the strip's preset table (ids 3/4/5/7 as attributes)
+#   rest_command.wled_65_preset             "set preset <id>" on the strip (POST /json/state {"ps": id})
+#   rest_command.wled_65_mix                "set the three layer opacities" (POST /json/state {"tt", "seg"})
+#   automation.p2s_led_apply_preset         dumb executor: forwards both decisions; checks the strip took the
+#                                           opacities 3 s later and re-sends once if not (counter.p2s_led_resends)
+#
+# Deployed to /config/packages/p2s_led.yaml (configuration.yaml: `homeassistant:
+# packages: !include_dir_named packages`); `POST /api/services/homeassistant/reload_all`
+# picks up template/automation/input_number changes and, once the integrations are loaded,
+# new rest_commands too. A brand-new input_number comes up at its `min` after the reload, so
+# set it right away. Source of truth: this file in the repo.
+
+rest_command:
+  wled_65_preset:
+    # WLED JSON API: activate preset <id>; the strip reports the new state back over its
+    # websocket, so select.wled_65_preset shows the preset's name a moment later.
+    url: http://192.168.2.65/json/state
+    method: post
+    content_type: application/json
+    payload: '{"ps": {{ preset | int }}}'
+    timeout: 10
+  wled_65_mix:
+    # the dial: opacities of the day layer (segment 0), night layer (1) and cap/plate (2),
+    # crossfaded over tt (100 ms units; 200 = 20 s). bri 0 switches a layer off.
+    url: http://192.168.2.65/json/state
+    method: post
+    content_type: application/json
+    payload: '{"tt": {{ tt | int }}, "seg": [{"id": 0, "bri": {{ day | int }}}, {"id": 1, "bri": {{ night | int }}}, {"id": 2, "bri": {{ cap | int }}}]}'
+    timeout: 10
+  wled_65_state:
+    # the strip's own state (segments' on / bri): the executor verifies against this, not HA's
+    # mirror of the segment lights, which can go stale (seen on .66, 2026-09-08)
+    url: http://192.168.2.65/json/state
+    method: get
+    timeout: 10
+
+sensor:
+  - platform: rest
+    name: WLED .65 presets
+    unique_id: wled_65_presets
+    resource: http://192.168.2.65/presets.json
+    scan_interval: 300
+    value_template: "{{ value_json | length }}"
+    # the presets the rule talks about, as attributes "3", "4", "5", "7" (each holds the WLED
+    # preset object; its `n` is the name)
+    json_attributes:
+      - "3"
+      - "4"
+      - "5"
+      - "7"
+
+input_boolean:
+  p2s_led_link:
+    name: P2S → LED strip .65 link
+    icon: mdi:link-variant
+
+counter:
+  p2s_led_resends:
+    # how often the executor had to repeat a dial command the strip did not take (see the automation)
+    name: LED strip .65 · commands re-sent
+    icon: mdi:repeat-variant
+    step: 1
+
+input_number:
+  p2s_led_cap_night_brightness:
+    # how bright the cap/plate stays at full night, in WLED brightness % (100 = as in the day);
+    # no `initial:` so a manual tweak survives restarts
+    name: LED strip .65 · cap/plate brightness at night
+    icon: mdi:brightness-4
+    min: 0
+    max: 100
+    step: 5
+    unit_of_measurement: "%"
+    mode: slider
+
+template:
+  - binary_sensor:
+      - name: P2S print issue
+        unique_id: p2s_print_issue
+        device_class: problem
+        icon: mdi:printer-3d-nozzle-alert
+        # serious/fatal HMS messages count, "common" ones do not
+        state: >-
+          {% set e = 'binary_sensor.p2s_hms_errors' %}
+          {% set ns = namespace(serious=false) %}
+          {% for i in range(1, state_attr(e, 'Count') | int(0) + 1) %}
+            {% if state_attr(e, i ~ '-Severity') in ['serious', 'fatal'] %}{% set ns.serious = true %}{% endif %}
+          {% endfor %}
+          {{ is_state('binary_sensor.p2s_print_error', 'on')
+             or is_state('sensor.p2s_print_status', 'failed')
+             or ns.serious }}
+        attributes:
+          reason: >-
+            {% set ns = namespace(items=[]) %}
+            {% if is_state('binary_sensor.p2s_print_error', 'on') %}
+              {% set ns.items = ns.items + ['print error ' ~ state_attr('binary_sensor.p2s_print_error', 'code') ~ ': ' ~ state_attr('binary_sensor.p2s_print_error', 'error')] %}
+            {% endif %}
+            {% if is_state('sensor.p2s_print_status', 'failed') %}
+              {% set ns.items = ns.items + ['print status is failed'] %}
+            {% endif %}
+            {% set e = 'binary_sensor.p2s_hms_errors' %}
+            {% for i in range(1, state_attr(e, 'Count') | int(0) + 1) %}
+              {% if state_attr(e, i ~ '-Severity') in ['serious', 'fatal'] %}
+                {% set ns.items = ns.items + ['HMS ' ~ state_attr(e, i ~ '-Severity') ~ ' ' ~ state_attr(e, i ~ '-Code') ~ ': ' ~ state_attr(e, i ~ '-Error')] %}
+              {% endif %}
+            {% endfor %}
+            {{ ns.items | join(' · ') if ns.items else 'no print error, status not failed, no serious/fatal HMS message' }}
+
+  - sensor:
+      - name: P2S LED layers
+        unique_id: p2s_led_layers
+        icon: mdi:layers-triple
+        unit_of_measurement: "%"
+        state_class: measurement
+        # DECISION 2: the night mix this strip follows (state) and the three opacities it implies
+        state: "{{ states('sensor.sun_night_mix') | int(0) }}"
+        attributes:
+          day_bri: >-
+            {% set m = states('sensor.sun_night_mix') | float(0) / 100 %}
+            {{ (255 * (1 - m) ** 2.8) | round(0) | int }}
+          night_bri: >-
+            {% set m = states('sensor.sun_night_mix') | float(0) / 100 %}
+            {{ (255 * m ** 2.8) | round(0) | int }}
+          cap_bri: >-
+            {% set m = states('sensor.sun_night_mix') | float(0) / 100 %}
+            {% set f = (states('input_number.p2s_led_cap_night_brightness') | float(50) / 100) ** (1 / 2.8) %}
+            {{ (255 * (1 - m * (1 - f)) ** 2.8) | round(0) | int }}
+          cap_night_pct: "{{ states('input_number.p2s_led_cap_night_brightness') | float(50) }}"
+          reason: >-
+            {% set m = states('sensor.sun_night_mix') | float(0) / 100 %}
+            {% set f = (states('input_number.p2s_led_cap_night_brightness') | float(50) / 100) ** (1 / 2.8) %}
+            {{ (m * 100) | round(0) | int }} % night → day layer {{ ((1 - m) * 100) | round(0) | int }} % · night layer {{ (m * 100) | round(0) | int }} % · cap/plate {{ ((1 - m * (1 - f)) * 100) | round(0) | int }} % of its day level (perceptual %; sun: {{ state_attr('sensor.sun_night_mix', 'reason') }})
+
+      - name: P2S LED preset
+        unique_id: p2s_led_preset
+        icon: mdi:led-strip-variant
+        # DECISION 1: state = the WLED preset id the strip should be on right now
+        state: >-
+          {{ '5' if is_state('binary_sensor.p2s_door', 'on')
+             else ('3' if is_state('binary_sensor.p2s_print_issue', 'on') else '4') }}
+        attributes:
+          # the preset's current name, read from the strip (sensor.wled_65_presets)
+          preset_name: >-
+            {% set id = '5' if is_state('binary_sensor.p2s_door', 'on')
+               else ('3' if is_state('binary_sensor.p2s_print_issue', 'on') else '4') %}
+            {{ (state_attr('sensor.wled_65_presets', id) or {}).get('n', 'preset ' ~ id ~ ' (name unknown)') }}
+          because: >-
+            {% if is_state('binary_sensor.p2s_door', 'on') %}the door is open (an open door wins over everything)
+            {% elif is_state('binary_sensor.p2s_print_issue', 'on') %}print issue — {{ state_attr('binary_sensor.p2s_print_issue', 'reason') }}
+            {% else %}door closed and no print issue; blend at {{ states('sensor.sun_night_mix') }} % night ({{ state_attr('sensor.sun_night_mix', 'reason') }}){% endif %}
+          rule: >-
+            door open → 5 "{{ (state_attr('sensor.wled_65_presets', '5') or {}).get('n', '?') }}"
+            · else print issue → 3 "{{ (state_attr('sensor.wled_65_presets', '3') or {}).get('n', '?') }}"
+            · else → 4 "{{ (state_attr('sensor.wled_65_presets', '4') or {}).get('n', '?') }}" with the night look blended in by the sun (now {{ states('sensor.sun_night_mix') }} %)
+          door: "{{ 'open' if is_state('binary_sensor.p2s_door', 'on') else 'closed' }}"
+          print_issue: "{{ 'yes' if is_state('binary_sensor.p2s_print_issue', 'on') else 'no' }}"
+          night_mix: "{{ states('sensor.sun_night_mix') }}"
+
+automation:
+  - id: p2s_led_apply_preset
+    alias: P2S LED apply preset
+    description: >-
+      Executor only — the decisions are sensor.p2s_led_preset (which preset) and
+      sensor.p2s_led_layers (the three layer opacities), both in packages/p2s_led.yaml.
+      Forwards the preset id whenever it changes (or HA starts, the strip reconnects, the
+      link is switched on) and, while the decision is preset 4, the three opacities: a 5 s
+      crossfade right after a preset change, 20 s for a dial step. Turn
+      input_boolean.p2s_led_link off to stop it.
+    mode: queued
+    max_exceeded: silent
+    trigger:
+      # `to:` left empty = fire on state changes only, not on the attributes that follow the sun
+      - platform: state
+        entity_id: sensor.p2s_led_preset
+        to:
+        id: preset
+      - platform: state
+        entity_id: sensor.p2s_led_layers
+        to:
+        id: layers
+      - platform: homeassistant
+        event: start
+        id: start
+      - platform: state
+        entity_id: select.wled_65_preset
+        from: unavailable
+        id: reconnect
+      - platform: state
+        entity_id: input_boolean.p2s_led_link
+        to: "on"
+        id: link
+    condition:
+      - condition: state
+        entity_id: input_boolean.p2s_led_link
+        state: "on"
+      - condition: template
+        value_template: "{{ states('sensor.p2s_led_preset') in ['3', '4', '5'] }}"
+      - condition: template
+        value_template: "{{ states('select.wled_65_preset') not in ['unavailable'] }}"
+    action:
+      # 1. the preset (not for a pure dial step — the strip is already on preset 4 then)
+      - if:
+          - condition: template
+            value_template: "{{ trigger.id != 'layers' }}"
+        then:
+          - service: rest_command.wled_65_preset
+            data:
+              preset: "{{ states('sensor.p2s_led_preset') }}"
+      # 2. the dial, only while the strip is meant to be on the blend preset
+      - if:
+          - condition: state
+            entity_id: sensor.p2s_led_preset
+            state: "4"
+        then:
+          - if:
+              - condition: template
+                value_template: "{{ trigger.id != 'layers' }}"
+            then:
+              # let the preset load (it resets the layers to pure day) before dialling
+              - delay:
+                  milliseconds: 500
+          - variables:
+              mix: "{{ states('sensor.p2s_led_layers') | int(0) }}"
+              day: "{{ state_attr('sensor.p2s_led_layers', 'day_bri') | int(255) }}"
+              night: "{{ state_attr('sensor.p2s_led_layers', 'night_bri') | int(0) }}"
+              cap: "{{ state_attr('sensor.p2s_led_layers', 'cap_bri') | int(255) }}"
+          - service: rest_command.wled_65_mix
+            data:
+              day: "{{ day }}"
+              night: "{{ night }}"
+              cap: "{{ cap }}"
+              tt: "{{ 200 if trigger.id == 'layers' else 50 }}"
+          # closed loop: a WLED strip was seen on 2026-09-08 answering "success" and keeping its
+          # old value for a while, so read the strip back after 3 s (segments 0/1/2 = day / night /
+          # cap-plate; a layer at bri 0 must be off) and, if it does not show the three values —
+          # and the dial has not moved on meanwhile (a queued run handles that) — send them once
+          # more and count it (counter.p2s_led_resends, on the Printer dashboard).
+          - delay:
+              seconds: 3
+          - service: rest_command.wled_65_state
+            response_variable: after
+          - if:
+              - condition: template
+                value_template: >-
+                  {% set ok = namespace(v=true) %}
+                  {% set segs = after.content.seg if after.status == 200 else [] %}
+                  {% for i, b in [(0, day), (1, night), (2, cap)] %}
+                    {% set s = segs[i] if segs | length > i else {} %}
+                    {% if b == 0 %}{% if s.get('on', true) %}{% set ok.v = false %}{% endif %}
+                    {% elif not (s.get('on', false) and (s.get('bri', -99) | int(-99) - b) | abs <= 2) %}{% set ok.v = false %}{% endif %}
+                  {% endfor %}
+                  {{ after.status == 200 and not ok.v
+                     and states('sensor.p2s_led_layers') | int(0) == mix
+                     and is_state('sensor.p2s_led_preset', '4') }}
+            then:
+              - service: rest_command.wled_65_mix
+                data:
+                  day: "{{ day }}"
+                  night: "{{ night }}"
+                  cap: "{{ cap }}"
+                  tt: 100
+              - service: counter.increment
+                target:
+                  entity_id: counter.p2s_led_resends

@@ -1,0 +1,592 @@
+# "Printer" dashboard (sidebar 'Printer', url_path 3d-printer) — the mia Bambu Lab P2S 3D printer
+# (model N7, serial 22E8AJ581301903, fw 01.02.00.00, hw AP02; LAN 192.168.2.72 = UCG reservation `bambu-p2s`,
+# MAC 60:32:3b:9f:fc:f8, SSID Cenci-IoT). HA integration: HACS greghesp/ha-bambulab v2.2.25 (`bambu_lab`,
+# entry 01M1T7HD30E09JP6FGS1H2FR2M) in LAN mode — local MQTT :8883, user `bblp`, password = the printer's LAN
+# access code (`MIA_BAMBU_P2S_ACCESS_CODE` in the root .env); the printer itself stays bound to the Bambu cloud.
+# Entity ids were shortened from `p2s_22e8aj581301903_*` to `p2s_*` (device names "P2S" / "P2S External Spool",
+# 2026-09-05) — if the entry is ever re-created, rename again or update the ids below.
+# One page: status heading + progress gauge + cover image on top, then Job · Temperatures & fans ·
+# Filament (external spool + AMS 2 Pro `p2s_ams_1_*`, 4 trays) / Health columns, 24 h history and the identity
+# card at the bottom. HMS / print errors and the tray list are rendered from entity attributes by markdown
+# templates. No control buttons (pause/resume/stop, fans, speed): fw 01.02.00.00 wants signed MQTT commands
+# unless Developer Mode is enabled on the printer — the integration then creates them (rename + add here).
+# Camera: needs *LAN Mode Liveview* ON at the printer (enabled 2026-09-05 → rtsps://192.168.2.72:322/streaming/live/1;
+# with it off ha-bambulab 2.2.25 fails to add camera.p2s_camera — urlparse TypeError, see README). Top row: the
+# integration's bundled print_status-card in `graphic` style (P2S rendering with live overlays; resource
+# /bambu_lab/ha-bambulab-cards.js, bundled cards take HA *device ids*) beside the HACS PrintWatch card
+# (drkpxl/printwatch-card 1.2.0, stills every 5 s — kept for comparison, see README), both pinned to 12 rows so the
+# grid does not stretch; then a native picture-entity of camera.p2s_camera in `auto` mode (a still every 10 s,
+# tap for the live view) and the native tiles/gauge. `auto`, not `live`: the printer accepts ONE RTSPS client and
+# the frontend's WebRTC→HLS fallback spawns HA's legacy stream worker, which then fights go2rtc for that slot
+# (blank card, "i/o timeout" / "Error demuxing stream" in the log); stills go through go2rtc alone and are stable.
+# The bundled `minimal` style was dropped: its camera pane is HA's MJPEG proxy, which for this integration returns
+# the black "!" placeholder from camera_image(). The Filament column opens with the ams-card (vector) and the
+# external spool-card. The bundled print_control-card is left out: it drives buttons that only exist with Developer
+# Mode. Layout: this first section spans 3 columns, so its grid has 36 columns (tiles clamp to a 6-column minimum) —
+# size cards there in 36ths and give auto-height custom cards explicit rows.
+# "LED strip .65 (rack) ← P2S" section (2026-09-06): the strip follows the printer and the sun (a continuous day/night blend) through packages/p2s_led.yaml
+# (door open → preset 5 · else print issue → 3 · else 4); the section lists the inputs, the decision
+# (sensor.p2s_led_preset + attributes), what the strip reports, the executor automation, and a markdown card that
+# re-states the rule with the active branch marked — the logic is meant to be readable here, not hidden.
+# Storage-mode dashboard: applied over the websocket API by apply_dashboard.py in this folder
+# (`python apply_dashboard.py dashboard-printer.yaml`), not read by HA. This yaml is the source of truth.
+dashboard:
+  url_path: 3d-printer
+  title: Printer
+  icon: mdi:printer-3d-nozzle
+  show_in_sidebar: true
+  require_admin: false
+  mode: storage
+config:
+  title: Printer
+  views:
+  - title: P2S
+    path: p2s
+    icon: mdi:printer-3d
+    type: sections
+    max_columns: 3
+    sections:
+    - type: grid
+      column_span: 3
+      cards:
+      - type: heading
+        heading: Bambu Lab P2S
+        heading_style: title
+        icon: mdi:printer-3d-nozzle
+        badges:
+        - type: entity
+          entity: sensor.p2s_print_status
+          name: Status
+        - type: entity
+          entity: sensor.p2s_current_stage
+          name: Stage
+        - type: entity
+          entity: sensor.p2s_print_progress
+          name: Progress
+        - type: entity
+          entity: sensor.p2s_remaining_time
+          name: Remaining
+        - type: entity
+          entity: binary_sensor.p2s_online
+          name: Online
+        - type: entity
+          entity: binary_sensor.p2s_print_error
+          name: Error
+          visibility:
+          - condition: state
+            entity: binary_sensor.p2s_print_error
+            state: 'on'
+      - type: custom:ha-bambulab-print_status-card
+        printer: 5a92453b8636dc5faa910b499a41f3e9
+        style: graphic
+        grid_options:
+          columns: 18
+          rows: 12
+      - type: custom:printwatch-card
+        printer_name: P2S
+        camera_refresh_rate: 5000
+        print_status_entity: sensor.p2s_print_status
+        current_stage_entity: sensor.p2s_current_stage
+        task_name_entity: sensor.p2s_task_name
+        progress_entity: sensor.p2s_print_progress
+        current_layer_entity: sensor.p2s_current_layer
+        total_layers_entity: sensor.p2s_total_layer_count
+        remaining_time_entity: sensor.p2s_remaining_time
+        bed_temp_entity: sensor.p2s_bed_temperature
+        nozzle_temp_entity: sensor.p2s_nozzle_temperature
+        bed_target_temp_entity: sensor.p2s_bed_target_temperature
+        nozzle_target_temp_entity: sensor.p2s_nozzle_target_temperature
+        speed_profile_entity: sensor.p2s_speed_profile
+        ams_slot1_entity: sensor.p2s_ams_1_tray_1
+        ams_slot2_entity: sensor.p2s_ams_1_tray_2
+        ams_slot3_entity: sensor.p2s_ams_1_tray_3
+        ams_slot4_entity: sensor.p2s_ams_1_tray_4
+        camera_entity: camera.p2s_camera
+        cover_image_entity: image.p2s_cover_image
+        chamber_light_entity: light.p2s_chamber_light
+        online_entity: binary_sensor.p2s_online
+        print_weight_entity: sensor.p2s_print_weight
+        print_length_entity: sensor.p2s_print_length
+        grid_options:
+          columns: 18
+          rows: 12
+      - type: picture-entity
+        entity: camera.p2s_camera
+        name: Chamber camera
+        camera_view: auto
+        show_state: false
+        show_name: true
+        fit_mode: cover
+        grid_options:
+          columns: 18
+          rows: 5
+      - type: tile
+        entity: sensor.p2s_print_status
+        name: Print status
+        icon: mdi:printer-3d-nozzle
+        state_content:
+        - state
+        - last_changed
+        grid_options:
+          columns: 9
+          rows: 2
+      - type: tile
+        entity: sensor.p2s_current_stage
+        name: Stage
+        icon: mdi:progress-wrench
+        grid_options:
+          columns: 9
+          rows: 2
+      - type: tile
+        entity: sensor.p2s_task_name
+        name: Task
+        icon: mdi:cube-outline
+        grid_options:
+          columns: 9
+          rows: 2
+      - type: gauge
+        entity: sensor.p2s_print_progress
+        name: Print progress
+        min: 0
+        max: 100
+        needle: false
+        grid_options:
+          columns: 9
+          rows: 4
+      - type: conditional
+        conditions:
+        - condition: state
+          entity: image.p2s_cover_image
+          state_not:
+          - unavailable
+          - unknown
+        card:
+          type: picture-entity
+          entity: image.p2s_cover_image
+          name: Current model
+          show_state: false
+          show_name: true
+          fit_mode: contain
+          grid_options:
+            columns: 9
+            rows: 4
+      - type: tile
+        entity: light.p2s_chamber_light
+        name: Chamber light
+        features_position: bottom
+        features:
+        - type: toggle
+        grid_options:
+          columns: 9
+          rows: 2
+      - type: tile
+        entity: binary_sensor.p2s_door
+        name: Door
+        icon: mdi:door
+        grid_options:
+          columns: 9
+          rows: 2
+    - type: grid
+      cards:
+      - type: heading
+        heading: Print job
+        heading_style: title
+        icon: mdi:file-document-outline
+        badges:
+        - type: entity
+          entity: sensor.p2s_print_type
+          name: Source
+      - type: entities
+        state_color: true
+        entities:
+        - entity: sensor.p2s_task_name
+          name: Task
+        - entity: sensor.p2s_gcode_filename
+          name: G-code file
+        - entity: sensor.p2s_print_status
+          name: Status
+        - entity: sensor.p2s_current_stage
+          name: Stage
+        - entity: sensor.p2s_print_progress
+          name: Progress
+        - entity: sensor.p2s_current_layer
+          name: Current layer
+        - entity: sensor.p2s_total_layer_count
+          name: Total layers
+        - entity: sensor.p2s_start_time
+          name: Started
+        - entity: sensor.p2s_end_time
+          name: Estimated end
+        - entity: sensor.p2s_remaining_time
+          name: Remaining
+        - type: divider
+        - entity: sensor.p2s_speed_profile
+          name: Speed profile
+        - entity: sensor.p2s_print_weight
+          name: Filament weight (job)
+        - entity: sensor.p2s_print_length
+          name: Filament length (job)
+        - entity: sensor.p2s_printable_objects
+          name: Printable objects
+        - entity: sensor.p2s_skipped_objects
+          name: Skipped objects
+        - entity: binary_sensor.p2s_timelapse
+          name: Timelapse
+        - type: divider
+        - entity: sensor.p2s_model_download
+          name: Model download
+        - entity: sensor.p2s_gcode_file_downloaded
+          name: G-code downloaded
+      - type: heading
+        heading: Controls
+        heading_style: subtitle
+        icon: mdi:tune
+      - type: entities
+        state_color: true
+        entities:
+        - entity: light.p2s_chamber_light
+          name: Chamber light
+        - entity: switch.p2s_camera
+          name: Camera feed in HA
+    - type: grid
+      cards:
+      - type: heading
+        heading: Temperatures & fans
+        heading_style: title
+        icon: mdi:thermometer
+        badges:
+        - type: entity
+          entity: sensor.p2s_nozzle_temperature
+          name: Nozzle
+        - type: entity
+          entity: sensor.p2s_bed_temperature
+          name: Bed
+        - type: entity
+          entity: sensor.p2s_chamber_temperature
+          name: Chamber
+      - type: entities
+        state_color: true
+        entities:
+        - entity: sensor.p2s_nozzle_temperature
+          name: Nozzle
+        - entity: sensor.p2s_nozzle_target_temperature
+          name: '      target'
+        - entity: sensor.p2s_bed_temperature
+          name: Bed
+        - entity: sensor.p2s_bed_target_temperature
+          name: '      target'
+        - entity: sensor.p2s_chamber_temperature
+          name: Chamber
+        - type: divider
+        - entity: sensor.p2s_cooling_fan_speed
+          name: Part cooling fan
+        - entity: sensor.p2s_aux_fan_speed
+          name: Aux fan
+        - entity: sensor.p2s_secondary_aux_fan_speed
+          name: Secondary aux fan
+        - entity: sensor.p2s_chamber_fan_speed
+          name: Chamber fan
+        - entity: sensor.p2s_heatbreak_fan_speed
+          name: Heatbreak fan
+        - entity: sensor.p2s_airduct_mode
+          name: Air duct mode
+        - type: divider
+        - entity: sensor.p2s_nozzle_type
+          name: Nozzle type
+        - entity: sensor.p2s_nozzle_size
+          name: Nozzle size
+        - entity: sensor.p2s_print_bed_type
+          name: Bed plate
+      - type: history-graph
+        title: Temperatures · 6 h
+        hours_to_show: 6
+        entities:
+        - entity: sensor.p2s_nozzle_temperature
+          name: Nozzle
+        - entity: sensor.p2s_bed_temperature
+          name: Bed
+        - entity: sensor.p2s_chamber_temperature
+          name: Chamber
+    - type: grid
+      cards:
+      - type: heading
+        heading: Filament
+        heading_style: title
+        icon: mdi:printer-3d-nozzle-outline
+        badges:
+        - type: entity
+          entity: binary_sensor.p2s_extruder_filament
+          name: In extruder
+      - type: custom:ha-bambulab-ams-card
+        ams: 7bd5e08d9e4778b3e176c3e4396b519b
+        style: vector
+        show_info_bar: true
+        show_type: true
+        subtitle: AMS 2 Pro
+      - type: custom:ha-bambulab-spool-card
+        spool: de2b262f530e160ad93a1f4f6a074ada
+        show_info_bar: true
+        show_type: true
+        subtitle: External spool
+      - type: entities
+        state_color: true
+        entities:
+        - entity: sensor.p2s_externalspool_external_spool
+          name: External spool
+        - entity: binary_sensor.p2s_externalspool_active
+          name: External spool active
+        - entity: binary_sensor.p2s_extruder_filament
+          name: Filament in extruder
+      - type: markdown
+        title: External spool details
+        content: >-
+          {% set e = 'sensor.p2s_externalspool_external_spool' %}
+          **{{ state_attr(e, 'name') or '?' }}** · type {{ state_attr(e, 'type') or '?' }} ·
+          color {{ (state_attr(e, 'color') or '?')[:7] }} · nozzle {{ state_attr(e, 'nozzle_temp_min') }}–{{
+          state_attr(e, 'nozzle_temp_max') }} °C{% if state_attr(e, 'remain_enabled') %} · {{
+          state_attr(e, 'remain') }} % left{% endif %}
+      - type: heading
+        heading: AMS 2 Pro
+        heading_style: subtitle
+        icon: mdi:package-variant-closed
+        badges:
+        - type: entity
+          entity: sensor.p2s_ams_1_humidity_index
+          name: Humidity
+        - type: entity
+          entity: sensor.p2s_ams_1_temperature
+          name: Temp
+      - type: markdown
+        title: AMS trays
+        content: |-
+          {% for t in ['sensor.p2s_ams_1_tray_1', 'sensor.p2s_ams_1_tray_2', 'sensor.p2s_ams_1_tray_3', 'sensor.p2s_ams_1_tray_4'] %}
+          - **{{ loop.index }}** · {{ states(t) }} · {{ state_attr(t, 'type') or '?' }} {{ (state_attr(t, 'color') or '')[:7] }}{% if state_attr(t, 'remain_enabled') %} · {{ state_attr(t, 'remain') }} % left{% endif %}{% if state_attr(t, 'active') %} · **active**{% endif %}{% if state_attr(t, 'empty') %} · empty{% endif %}
+          {% endfor %}
+      - type: entities
+        state_color: true
+        entities:
+        - entity: binary_sensor.p2s_ams_1_active
+          name: AMS active
+        - entity: sensor.p2s_ams_1_humidity
+          name: Humidity
+        - entity: sensor.p2s_ams_1_humidity_index
+          name: Humidity index
+        - entity: sensor.p2s_ams_1_temperature
+          name: Temperature
+        - type: divider
+        - entity: sensor.p2s_ams_1_tray_1
+          name: Tray 1
+        - entity: sensor.p2s_ams_1_tray_2
+          name: Tray 2
+        - entity: sensor.p2s_ams_1_tray_3
+          name: Tray 3
+        - entity: sensor.p2s_ams_1_tray_4
+          name: Tray 4
+        - type: divider
+        - entity: binary_sensor.p2s_ams_1_drying
+          name: Drying
+        - entity: sensor.p2s_ams_1_drying_filament
+          name: Drying filament
+        - entity: sensor.p2s_ams_1_drying_temperature
+          name: Drying temperature
+        - entity: sensor.p2s_ams_1_drying_duration
+          name: Drying duration
+        - entity: sensor.p2s_ams_1_remaining_drying_time
+          name: Drying time left
+      - type: heading
+        heading: Health
+        heading_style: title
+        icon: mdi:heart-pulse
+        badges:
+        - type: entity
+          entity: binary_sensor.p2s_hms_errors
+          name: HMS
+      - type: markdown
+        title: Print error
+        content: >-
+          {% if is_state('binary_sensor.p2s_print_error', 'on') %}⚠️ **{{
+          state_attr('binary_sensor.p2s_print_error', 'code') }}** — {{
+          state_attr('binary_sensor.p2s_print_error', 'error') }}{% else %}✅ No print error.{% endif %}
+      - type: markdown
+        title: HMS messages
+        content: |-
+          {% set e = 'binary_sensor.p2s_hms_errors' %}
+          {% set n = state_attr(e, 'Count') | int(0) %}
+          {% if n == 0 %}✅ No HMS messages.{% else %}
+          {% for i in range(1, n + 1) %}- **{{ state_attr(e, i ~ '-Severity') }}** · {{ state_attr(e, i ~ '-Error') }} ([{{ state_attr(e, i ~ '-Code') }}]({{ state_attr(e, i ~ '-Wiki') }}))
+          {% endfor %}{% endif %}
+      - type: entities
+        state_color: true
+        entities:
+        - entity: binary_sensor.p2s_online
+          name: Online
+        - entity: binary_sensor.p2s_door
+          name: Door
+        - entity: binary_sensor.p2s_firmware
+          name: Firmware update available
+        - entity: sensor.p2s_sd_card_status
+          name: SD card
+        - entity: sensor.p2s_wi_fi_signal
+          name: Wi-Fi signal
+        - entity: sensor.p2s_total_usage
+          name: Total usage
+        - type: divider
+        - entity: sensor.p2s_mqtt_connection_mode
+          name: MQTT mode
+        - entity: binary_sensor.p2s_mqtt_encryption
+          name: MQTT encryption
+        - entity: binary_sensor.p2s_hybrid_mqtt_control_blocked
+          name: Control blocked
+        - entity: binary_sensor.p2s_developer_lan_mode
+          name: Developer / LAN mode
+    - type: grid
+      column_span: 3
+      cards:
+      - type: heading
+        heading: LED strip .65 (rack) ← P2S + sun
+        heading_style: title
+        icon: mdi:led-strip-variant
+        badges:
+        - type: entity
+          entity: sensor.p2s_led_preset
+          name: Decided
+        - type: entity
+          entity: sensor.sun_night_mix
+          name: Night mix
+        - type: entity
+          entity: input_boolean.p2s_led_link
+          name: Link
+      - type: entities
+        state_color: true
+        title: Inputs → decisions → strip
+        entities:
+        - entity: input_boolean.p2s_led_link
+          name: Link P2S → strip (off = manual)
+        - type: divider
+        - entity: binary_sensor.p2s_door
+          name: 'Input 1 · door'
+        - entity: binary_sensor.p2s_print_issue
+          name: 'Input 2 · print issue'
+        - type: attribute
+          entity: binary_sensor.p2s_print_issue
+          attribute: reason
+          name: '      why'
+        - entity: sensor.sun_night_mix
+          name: 'Input 3 · night mix (sun dial)'
+        - type: attribute
+          entity: sensor.sun_night_mix
+          attribute: reason
+          name: '      why'
+        - type: attribute
+          entity: sensor.sun_night_mix
+          attribute: elevation_now
+          name: '      sun elevation now (interpolated)'
+          suffix: '°'
+        - entity: input_number.sun_day_elevation
+          name: '      fully day above'
+        - entity: input_number.sun_night_elevation
+          name: '      fully night below'
+        - entity: input_number.p2s_led_cap_night_brightness
+          name: '      cap/plate brightness at night'
+        - type: divider
+        - entity: sensor.p2s_led_preset
+          name: 'Decision 1 · preset id'
+        - type: attribute
+          entity: sensor.p2s_led_preset
+          attribute: preset_name
+          name: '      preset name'
+        - type: attribute
+          entity: sensor.p2s_led_preset
+          attribute: because
+          name: '      because'
+        - entity: sensor.p2s_led_layers
+          name: 'Decision 2 · layers (night mix)'
+        - type: attribute
+          entity: sensor.p2s_led_layers
+          attribute: reason
+          name: '      opacities'
+        - type: attribute
+          entity: sensor.p2s_led_layers
+          attribute: day_bri
+          name: '      day layer bri sent (0-255)'
+        - type: attribute
+          entity: sensor.p2s_led_layers
+          attribute: night_bri
+          name: '      night layer bri sent (0-255)'
+        - type: attribute
+          entity: sensor.p2s_led_layers
+          attribute: cap_bri
+          name: '      cap/plate bri sent (0-255)'
+        - type: divider
+        - entity: select.wled_65_preset
+          name: 'Strip · active preset (blank = preset 4 + dial)'
+        - entity: light.wled_65
+          name: 'Strip · day layer'
+        - entity: light.wled_65_segment_1
+          name: 'Strip · night layer'
+        - entity: light.wled_65_segment_2
+          name: 'Strip · cap/plate'
+        - entity: automation.p2s_led_apply_preset
+          name: 'Executor automation'
+        - entity: counter.p2s_led_resends
+          name: '      commands the strip did not take (re-sent)'
+        grid_options:
+          columns: 18
+      - type: markdown
+        title: How it decides
+        content: |-
+          {% set door = is_state('binary_sensor.p2s_door', 'on') %}{% set issue = is_state('binary_sensor.p2s_print_issue', 'on') %}{% set mix = states('sensor.sun_night_mix') | int(0) %}{% set n = namespace(p={}) %}{% for id in ['3', '4', '5'] %}{% set n.p = dict(n.p, **{id: (state_attr('sensor.wled_65_presets', id) or {}).get('n', '?')}) %}{% endfor %}{% set rep = states('select.wled_65_preset') %}{% set rep_known = rep not in ['unknown', 'unavailable', 'none', ''] %}
+          The whole rule is three templates: `sensor.sun_night_mix` (the sun dial, `packages/sun_night_mix.yaml`), `sensor.p2s_led_preset` (which preset) and `sensor.p2s_led_layers` (the three layer opacities), both in `packages/p2s_led.yaml`; the automation only forwards them to the strip. Preset names below are read from the strip.
+
+          1. **Door open → preset 5 · {{ n.p['5'] }}** — {{ '✅ active now' if door else 'not now (door closed)' }}
+          2. **else print issue → preset 3 · {{ n.p['3'] }}** — {{ ('✅ active now' if not door else '⏸ true, but overruled by the open door') if issue else 'not now (' ~ state_attr('binary_sensor.p2s_print_issue', 'reason') ~ ')' }}
+          3. **else → preset 4 · {{ n.p['4'] }}**, day and night looks blended by the sun — {{ '✅ active now at ' ~ mix ~ ' % night (' ~ state_attr('sensor.sun_night_mix', 'phase') ~ ')' if (not door and not issue) else 'not now' }}
+
+          **Now:** preset **{{ states('sensor.p2s_led_preset') }} · {{ state_attr('sensor.p2s_led_preset', 'preset_name') }}** because {{ state_attr('sensor.p2s_led_preset', 'because') }}. Layers: {{ state_attr('sensor.p2s_led_layers', 'reason') }}.
+          Strip reports **{{ rep if rep_known else 'preset 4 with the dial applied' }}** · link **{{ states('input_boolean.p2s_led_link') }}** · last applied {{ relative_time(state_attr('automation.p2s_led_apply_preset', 'last_triggered')) ~ ' ago' if state_attr('automation.p2s_led_apply_preset', 'last_triggered') else 'never' }}{{ ' · ⚠️ strip and decision differ' if (rep_known and rep != state_attr('sensor.p2s_led_preset', 'preset_name') and states('input_boolean.p2s_led_link') == 'on') else '' }}.
+
+          *Night mix* = where the sun sits between the two sliders: 0 % while its elevation is above *fully day above* ({{ states('input_number.sun_day_elevation') }}°), 100 % below *fully night below* ({{ states('input_number.sun_night_elevation') }}°), linear in between in 1 % steps. Home Assistant only samples the sun every 2 minutes in twilight, so the dial uses the sun's elevation *now*, interpolated between HA's own sunset and dusk (or dawn and sunrise) times, and re-evaluates every 20 s — about one step every 14 s over Miami's 24-minute twilight (next sunset {{ as_timestamp(state_attr('sun.sun', 'next_setting')) | timestamp_custom('%H:%M') }}, dusk {{ as_timestamp(state_attr('sun.sun', 'next_dusk')) | timestamp_custom('%H:%M') }}, dawn {{ as_timestamp(state_attr('sun.sun', 'next_dawn')) | timestamp_custom('%H:%M') }}, sunrise {{ as_timestamp(state_attr('sun.sun', 'next_rising')) | timestamp_custom('%H:%M') }}). Preset 4 holds both looks as two full-length layers — *Day (Flow Stripe)* and *Night (Colorwaves)*, the look of preset 7, blended additively — plus the *Cap/Plate* segment, which stays lit at night at the level of its slider. Each step sets the day layer's opacity to 255·(1−mix)^2.8, the night layer's to 255·mix^2.8 and the cap/plate's between its day and night levels (WLED composites in gamma space, so that is a plain linear dissolve) and crossfades over 20 s, so the day look melts into the night look continuously. A *print issue* = the printer's print error is on, or print status is `failed`, or an HMS message of severity serious/fatal ("common" reminders such as lubrication do not count). Presets are sent by WLED id; keep 3, 4 and 5 for issue / blend / door.
+        grid_options:
+          columns: 18
+      - type: history-graph
+        title: Night mix, last 24 h
+        hours_to_show: 24
+        entities:
+        - entity: sensor.sun_night_mix
+          name: night mix
+        grid_options:
+          columns: full
+    - type: grid
+      column_span: 3
+      cards:
+      - type: heading
+        heading: Last 24 h
+        heading_style: title
+        icon: mdi:chart-timeline-variant
+      - type: history-graph
+        hours_to_show: 24
+        entities:
+        - entity: sensor.p2s_print_status
+          name: Status
+        - entity: sensor.p2s_current_stage
+          name: Stage
+        - entity: sensor.p2s_print_progress
+          name: Progress
+        - entity: sensor.p2s_nozzle_temperature
+          name: Nozzle
+        - entity: sensor.p2s_bed_temperature
+          name: Bed
+        grid_options:
+          columns: full
+      - type: markdown
+        title: Device
+        content: >-
+          **Bambu Lab P2S** · model `N7` · serial `22E8AJ581301903` · firmware 01.02.00.00 · hardware AP02 · 0.4 mm
+          hardened-steel nozzle. LAN **192.168.2.72** (UCG reservation `bambu-p2s`, MAC `60:32:3b:9f:fc:f8`,
+          SSID Cenci-IoT, IoT-other block). HA talks to it locally over MQTT/TLS 8883 (user `bblp`, password = the
+          printer's LAN access code) while the printer stays bound to the Bambu cloud; FTPS 990 and the chamber
+          camera 6000 use the same code. Integration: HACS `greghesp/ha-bambulab` (`bambu_lab`). The camera
+          entity does not load in v2.2.25 for this model (setup TypeError) — no camera card until a fix ships.
+          Source: `scripts/proxmox/homeassistant/mia-homeassistant/dashboards/dashboard-printer.yaml`.
+        grid_options:
+          columns: full
