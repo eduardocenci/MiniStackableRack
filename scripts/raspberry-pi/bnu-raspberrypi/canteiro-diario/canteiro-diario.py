@@ -24,7 +24,8 @@ Pack layout (Drive CeuAzul/Diario/<D>/pack/, all files public "anyone with the l
   plan.json          PlanejadoRealizado row of the week (planned / realized)
   whatsapp.md/.json  obra-group messages of the day (waha-listener archive)
   sheets/hour_HH.jpg contact sheets (6 cols) of every Frigate snapshot, per hour
-  snaps/<id>.jpg     every event snapshot (640×480)
+  snaps.zip          every event snapshot (snaps/<id>.jpg, 640×480) in one object — Drive
+                     creates files one API call at a time, ~500 loose files took 20 min
   vehicles_sheet.jpg / people_sheet.jpg   quick-scan sheets (car events ≥20 s / person close-ups)
   frames/<D>_HHMM.jpg (1152×648) + frames_sheet.jpg   timelapse frames of the day
   montage.jpg        Timelapse/DiaDeTrabalho/<D>.jpg (ontem × hoje, 3 posições) when present
@@ -248,6 +249,12 @@ def collect_frigate(d: dt.date, pack: Path) -> dict:
     if ppl:
         contact_sheet([(f"{dt.datetime.fromtimestamp(e['start_time'], TZ):%H:%M:%S} per", snaps / f"{e['id']}.jpg", False)
                        for e in ppl[:96]], pack / "people_sheet.jpg", cols=6, tw=320, th=240)
+    # one object instead of ~500: Drive creates files one API call at a time (~0.4 files/s observed)
+    import zipfile  # noqa: WPS433
+    with zipfile.ZipFile(pack / "snaps.zip", "w", zipfile.ZIP_STORED) as zf:
+        for p in sorted(snaps.glob("*.jpg")):
+            zf.write(p, f"snaps/{p.name}")
+    shutil.rmtree(snaps, ignore_errors=True)
     persons = [e for e in ev if e["label"] == "person"]
     return {"events": len(ev), "person_events": len(persons), "car_events": sum(e["label"] == "car" for e in ev),
             "first_person": dt.datetime.fromtimestamp(persons[0]["start_time"], TZ).strftime("%H:%M") if persons else None,
@@ -286,32 +293,35 @@ def collect_presence(d: dt.date, pack: Path) -> dict:
 
 
 CONDFY_QUERY = """
-import sqlite3, json, sys
+import sqlite3, json
 c = sqlite3.connect("file:/data/condfy.db?mode=ro", uri=True)
 rows = [dict(zip(("ts_local","person","gate","method"), r)) for r in c.execute(
-    "select ts_local, person, gate, method from events where ts_local >= ? and ts_local < ? order by ts_utc", (sys.argv[1], sys.argv[2]))]
-print(json.dumps(rows, ensure_ascii=False))
+    "select ts_local, person, gate, method from events where ts_local >= '{d0}' and ts_local < '{d1}' order by ts_utc")]
+print("TAGS_JSON=" + json.dumps(rows, ensure_ascii=False))
 """
 
 
 def collect_tags(d: dt.date, pack: Path) -> dict:
-    """Gate passes via bnu-proxmox → pct exec <LXC> → docker exec condfy-bridge (paramiko, password)."""
+    """Gate passes via bnu-proxmox → pct exec <LXC> → docker exec condfy-bridge (paramiko, password).
+    The dates are baked into the base64 payload so the remote command carries no nested quotes."""
     if not PROXMOX_PW:
         (pack / "tags.json").write_text("null", encoding="utf-8")
         return {"tags": None, "reason": "PROXMOX_PW not set"}
     try:
         import paramiko  # noqa: WPS433
-        b64 = base64.b64encode(CONDFY_QUERY.encode()).decode()
         d1 = d + dt.timedelta(days=1)
-        inner = (f"python3 -c \"import base64,sys;exec(base64.b64decode('{b64}').decode())\" "
-                 f"{d.isoformat()} {d1.isoformat()}")
-        cmd = f"pct exec {CONDFY_LXC} -- docker exec condfy-bridge sh -c '{inner}'"
+        b64 = base64.b64encode(CONDFY_QUERY.format(d0=d.isoformat(), d1=d1.isoformat()).encode()).decode()
+        cmd = (f"pct exec {CONDFY_LXC} -- docker exec condfy-bridge python3 -c "
+               f"\"import base64;exec(base64.b64decode('{b64}').decode())\"")
         cli = paramiko.SSHClient()
         cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         cli.connect(PROXMOX_HOST, username=PROXMOX_USER, password=PROXMOX_PW, timeout=30, allow_agent=False, look_for_keys=False)
         _, out, err = cli.exec_command(cmd, timeout=90)
         txt = out.read().decode(); e = err.read().decode(); cli.close()
-        rows = json.loads(txt.strip().splitlines()[-1]) if txt.strip() else []
+        line = next((ln for ln in txt.splitlines() if ln.startswith("TAGS_JSON=")), None)
+        if line is None:
+            raise RuntimeError(f"no TAGS_JSON in output; stderr: {e.strip()[-160:]}")
+        rows = json.loads(line[len("TAGS_JSON="):])
         (pack / "tags.json").write_text(json.dumps(rows, ensure_ascii=False, indent=0), encoding="utf-8")
         return {"tags": len(rows)}
     except Exception as ex:  # noqa: BLE001
@@ -529,15 +539,22 @@ def cmd_publish(d: dt.date, test: bool, force: bool) -> int:
         pack = tmp / "pack"; pack.mkdir()
         run(["rclone", "copy", rc_remote(DIARIO_DIR, d.isoformat(), "pack"), str(pack), "--transfers", "8",
              "--exclude", "snaps/**"], timeout=900, check=True)
-        # only the snapshots the routine picked
-        wanted = set()
-        for s in diario.get("snaps", []):
-            if s.get("event_id"):
-                wanted.add(s["event_id"])
+        # only the snapshots the routine picked (from snaps.zip; legacy packs have snaps/ files)
+        wanted = {s["event_id"] for s in diario.get("snaps", []) if s.get("event_id")}
         if wanted:
             (pack / "snaps").mkdir(exist_ok=True)
-            for eid in wanted:
-                drive_get(rc_remote(DIARIO_DIR, d.isoformat(), "pack", "snaps", f"{eid}.jpg"), pack / "snaps" / f"{eid}.jpg", 120)
+            zpath = pack / "snaps.zip"
+            if zpath.exists():
+                import zipfile  # noqa: WPS433
+                with zipfile.ZipFile(zpath) as zf:
+                    for eid in wanted:
+                        try:
+                            (pack / "snaps" / f"{eid}.jpg").write_bytes(zf.read(f"snaps/{eid}.jpg"))
+                        except KeyError:
+                            print(f"snap {eid} not in zip", file=sys.stderr)
+            else:
+                for eid in wanted:
+                    drive_get(rc_remote(DIARIO_DIR, d.isoformat(), "pack", "snaps", f"{eid}.jpg"), pack / "snaps" / f"{eid}.jpg", 120)
         import diario_render  # noqa: WPS433
         out = tmp / "out"; out.mkdir()
         res = diario_render.render(diario, pack, out)
