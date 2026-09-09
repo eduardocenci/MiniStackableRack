@@ -1096,3 +1096,24 @@ Closed on 2026-07-30: `FLN_HA_URL`/`FLN_HA_TOKEN` added (fleet test is now
 | Fleet dashboard, per-node runbooks, `architecture.yaml` | `globalnet/` |
 | Synology/DSM specifics, Copyparty | `scripts/synology/README.md` |
 | WhatsApp gateway, listener, condfy bridge | `scripts/proxmox/docker/bnu-docker/*/README.md` |
+
+## Paper printers (recorded 2026-09-09 — Diário de Obra print leg)
+
+Both sites already expose their HP printers as **driverless CUPS queues on the site's
+Raspberry Pi** (cups-browsed auto-discovery). Print from the Pi with `lp`; never send
+PDFs raw to `:9100` — both printers accept only PCLm/URF/PWG-raster/JPEG natively, CUPS
+converts. Neither is on the tailnet; reach the queue through the Pi.
+
+| Site | Printer | LAN | Queue on the Pi | Notes |
+|---|---|---|---|---|
+| bnu | HP Smart Tank 580-590 | `10.1.1.143` (IPP :631, web :80) | `lpstat -p` on bnu-raspberrypi → `HP_Smart_Tank_580_590_series_ACD97F` | A4 default media |
+| mia | HP OfficeJet Pro 6970 | `192.168.2.74` (IPP :631) | mia-raspberrypi → `HP_OfficeJet_Pro_6970_03F83E_` | **Letter** default; use `-o fit-to-page` for A4 pages; ink low warning on 2026-09-09 |
+
+```bash
+python scripts/devtool.py run bnu-raspberrypi "lpstat -p; lp -d HP_Smart_Tank_580_590_series_ACD97F -o media=A4 /path/file.pdf"
+python scripts/devtool.py run mia-raspberrypi "ipptool -tv ipp://192.168.2.74:631/ipp/print get-printer-attributes.test | grep -E 'printer-state|media-default'"
+```
+
+Containers print through the host socket bind-mounted at `/run/cups/cups.sock`
+(world-writable) with `cups-client` installed in the image — see
+`scripts/raspberry-pi/bnu-raspberrypi/canteiro-diario/README.md`.

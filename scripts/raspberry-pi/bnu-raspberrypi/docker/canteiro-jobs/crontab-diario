@@ -1,0 +1,10 @@
+# canteiro-diario — Diário de Obra ARA, weekdays only (decisão Eduardo 09/09/2026).
+# Times are America/Sao_Paulo (container TZ env).
+#   20:15  collect  — evidence pack of today → Drive CeuAzul/Diario/<date>/pack (after the
+#                     20:00 timelapse upload from the ara Pi and the 20:10 montage)
+#   20:50→23:50 every 10 min  publish — waits for diario.json (cloud routine, 20:45),
+#                     renders, sends the JPG to WhatsApp and prints; idempotent (sent.json)
+#   07:30 Tue–Sat  catch-up publish of yesterday, in case the routine ran late
+15 20 * * 1-5      python3 /app/canteiro-diario.py collect
+*/10 20-23 * * 1-5 python3 /app/canteiro-diario.py publish
+30 7 * * 2-6       python3 /app/canteiro-diario.py publish --date "$(date -d yesterday +%F)"

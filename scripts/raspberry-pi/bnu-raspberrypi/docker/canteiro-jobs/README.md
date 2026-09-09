@@ -8,6 +8,7 @@ systemd timers on 2026-08-29 (decisão Eduardo):
 | `canteiro-watchdog` | 60 s loop (shell loop, script stays a oneshot) | WhatsApp alert with the last cached frame when the ARA canteiro relay drops; recovery message when it returns. Also auto-heals the /live HLS wedge: relay up + muxer crash-looping → restarts go2rtc then canteiro-hls via the mounted docker socket (`group_add` 984 = host `docker` group), notes to the SmokeTests group (`HEAL_JID`) |
 | `canteiro-presenca` | supercronic, daily 20:00 America/Sao_Paulo | "who was at the obra today" report from ara netoverview `/api/presence` |
 | `canteiro-sunset-compare` | supercronic, Mon–Fri 20:10 America/Sao_Paulo | yesterday-vs-today sunset montage (rclone ⇄ Drive, ffmpeg vstack), archived to Drive + sent to WhatsApp |
+| `canteiro-diario` | supercronic, Mon–Fri 20:15 collect · every 10 min 20:50→23:50 publish | Diário de Obra ARA: evidence pack → Drive (Frigate, timelapse, Wi-Fi, tags, plan, WhatsApp); after the cloud routine writes `diario.json`, renders the one-pager (Chromium), sends the JPG to the group and prints on the BNU HP (host CUPS socket). Added 2026-09-09 — see [`../../canteiro-diario/`](../../canteiro-diario/) |
 
 The scripts themselves stay authoritative in their sibling folders
 ([`../../canteiro-watchdog/`](../../canteiro-watchdog/),

@@ -1,0 +1,23 @@
+# canteiro-diario-print — prints the day's Diário de Obra (resumo.pdf from Drive
+# CeuAzul/Diario/<D>/) on the MIA HP OfficeJet Pro 6970 through the host CUPS queue.
+# Decisão Eduardo 09/09/2026. Live copy: mia-raspberrypi:~/canteiro-diario-print/
+services:
+  canteiro-diario-print:
+    build: .
+    image: canteiro-diario-print:local
+    container_name: canteiro-diario-print
+    network_mode: host
+    user: "1000:1000"
+    restart: unless-stopped
+    init: true
+    env_file: env/canteiro-diario-print.env
+    environment:
+      TZ: America/Sao_Paulo
+      PYTHONUNBUFFERED: "1"
+      RCLONE_CONFIG: /config/rclone/rclone.conf
+      STATE_DIR: /tmp/canteiro-diario
+    volumes:
+      # /run/cups/cups.sock is world-writable on the host — no group needed
+      - /home/eduardocenci/.config/rclone:/config/rclone
+      - /run/cups/cups.sock:/run/cups/cups.sock
+    command: ["supercronic", "-passthrough-logs", "/app/crontab-diario-print"]

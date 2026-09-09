@@ -62,3 +62,28 @@ services:
       # keeps the host file owned by eduardocenci
       - /home/eduardocenci/.config/rclone:/config/rclone
     command: ["supercronic", "-passthrough-logs", "/app/crontab-sunset-compare"]
+
+  canteiro-diario:
+    # Diário de Obra ARA (decisão Eduardo 09/09/2026): Mon–Fri 20:15 evidence pack →
+    # Drive; every 10 min 20:50→23:50 publish (render + WhatsApp + print). The narrative
+    # in between is the Claude Code cloud routine "Diário de Obra ARA" (home-ara repo).
+    image: canteiro-jobs:local
+    container_name: canteiro-diario
+    network_mode: host
+    user: "1000:1000"
+    restart: unless-stopped
+    init: true
+    env_file: env/canteiro-diario.env
+    environment:
+      TZ: America/Sao_Paulo
+      PYTHONUNBUFFERED: "1"
+      RCLONE_CONFIG: /config/rclone/rclone.conf
+      GSA_KEYFILE: /config/gsa.json
+      STATE_DIR: /var/lib/canteiro-diario
+    volumes:
+      # /run/cups/cups.sock is srw-rw-rw- on the host — no group needed
+      - /home/eduardocenci/.config/rclone:/config/rclone
+      - /home/eduardocenci/canteiro-jobs/env/gsa.json:/config/gsa.json:ro
+      - /run/cups/cups.sock:/run/cups/cups.sock
+      - /var/lib/canteiro-diario:/var/lib/canteiro-diario
+    command: ["supercronic", "-passthrough-logs", "/app/crontab-diario"]

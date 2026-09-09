@@ -1,0 +1,5 @@
+# canteiro-diario-print — weekdays, every 10 min 21:00→23:50 America/Sao_Paulo
+# (= 20:00→22:50 Miami): prints Diario/<today>/resumo.pdf once it exists.
+# 07:40 Tue–Sat: catch-up for yesterday.
+*/10 21-23 * * 1-5 python3 /app/canteiro-diario.py print
+40 7 * * 2-6       python3 /app/canteiro-diario.py print --date "$(date -d yesterday +%F)"
