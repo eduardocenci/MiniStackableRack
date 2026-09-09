@@ -70,7 +70,7 @@ those names do not exist.
 | `bnu_docker` | `10.1.1.126` | **LXC 101** — hosts waha, waha-listener, condfy-bridge, netoverview-agent, psvis-tracker, weather-fusion (`:8791`) |
 | `bnu_waha` / `bnu_listener` / `bnu_nta` | `10.1.1.126:3000/:8788/:5005` | the containers inside LXC 101 |
 | `bnu_ollama` | `10.1.1.50:11434` | Ollama LXC 106 |
-| `bnu_frigate` | `10.1.1.160` | Frigate LXC 105 — *also* a tailnet node (`bnu-frigate`), so either route works |
+| `bnu_frigate` | `10.1.1.160` | Frigate LXC 105 — *also* a tailnet node (`bnu-frigate`), so either route works. **REST API without auth at `http://bnu-frigate:5000/api`** (Frigate 0.17.1, used 2026-09-08 to find who held a tablet at the ARA canteiro): `/api/events?camera=canteiro&after=<epoch>&before=<epoch>&label=person` → `/api/events/<id>/snapshot.jpg?bbox=1&crop=0` (640×480, the *detect* substream); `/api/canteiro/recordings/<epoch, fractional ok>/snapshot.jpg` → **full-res 2304×1296** frame from the *record* stream (404 where nothing was recorded — recordings only exist around motion/alerts; `/api/canteiro/recordings?after&before` lists the 10 s segments); `/api/review?cameras=canteiro&after&before` (GenAI `metadata` was null). Fetch frames every 2–15 s in a 4-thread loop, tile them with PIL and read the sheet — the 15-min Drive timelapse almost never catches the moment |
 | `bnu_zb` | `10.1.1.132` | SLZB-06 Zigbee gateway (same pattern at other sites) |
 | `bnu_nvr` | `192.168.0.22` | Hikvision NVR + 8 cameras |
 | `bnu_doorbell` | `10.1.1.65` | Hikvision doorbell (ISAPI) |
@@ -132,7 +132,7 @@ became a **dashboard site** in `globalnet/architecture.yaml` (`home: true` —
 nodes `ara_rpi`/`ara_nto`, camera + Starlink router via `netoverview_probe`;
 audited by `make fleet`), and the ara netoverview's `/api/presence` feeds
 the daily 20:00 obra-presence WhatsApp report (`canteiro-presenca` container
-on bnu-raspberrypi):
+on bnu-raspberrypi). `/api/presence?from=<ISO UTC>&to=<ISO UTC>` accepts **short windows** (5 min) — slice the day to pin a device's join/leave minute; `/api/events` only returns the last 10 rows, the full `device_events` table is in the container's SQLite (`docker exec -i netoverview python3 -`). **Plain `ssh eduardocenci@ara-raspberrypi` hung twice on 2026-09-08** (BatchMode, no banner within 90 s) while HTTP `:5000` answered instantly — prefer the APIs, and treat a hang as the Starlink path, not a key problem. Who-was-there questions: cross netoverview presence with the condfy-bridge gate tags (LXC 101, `/data/condfy.db`) and the Frigate recordings above (visitor devices are the ones never seen before; Ênio Faqueti = `192.168.1.109`, own gate tag):
 
 | ARA LAN-only device | Address | What it is |
 |---|---|---|
