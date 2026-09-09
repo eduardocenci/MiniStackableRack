@@ -10,9 +10,9 @@
 # into the helper for you.
 #
 # Two refinements over the first cut:
-#   * the gap is now a 30-min rolling MEAN (sensor.sen55_venstar_gap_avg) instead
-#     of the instantaneous difference, which was jittery enough to short-cycle
-#     the compressor; and
+#   * a 30-min rolling MEAN of the gap (sensor.sen55_venstar_gap_avg) is computed
+#     for the model but NOT used by the loop: it lagged ~15 min and oscillated the
+#     setpoint (2026-09-09), so Phase 0 offsets by the instantaneous gap; and
 #   * the control loop no longer triggers on the thermostat's own sensor, so its
 #     ~0.56 °C stair-steps no longer kick the automation.
 #
@@ -119,8 +119,9 @@ template:
         state: >-
           {{ 1 if state_attr('climate.thermostat', 'hvac_action') in ['cooling', 'heating'] else 0 }}
       # Instantaneous room-vs-thermostat gap, (SEN55 - Venstar own sensor), in °C.
-      # This is the RAW signal; the controller consumes its 30-min mean below, not
-      # this. Positive => the room reads warmer than the thermostat's own sensor.
+      # The Phase 0 controller uses this instantaneous gap directly (2026-09-09);
+      # the 30-min mean below is kept as a model input. Positive => the room reads
+      # warmer than the thermostat's own sensor.
       # NAME chosen so slugify(name) == sen55_venstar_gap (see ENTITY-ID CONTRACT).
       - name: "SEN55 Venstar gap"
         unique_id: sen55_venstar_gap
@@ -136,10 +137,10 @@ template:
 
 # Platform sensors — REQUIRE A RESTART to load.
 sensor:
-  # 30-minute rolling mean of the raw gap. Smoothing here is what stops the
-  # controller from chasing every SEN55 tick and short-cycling the compressor.
-  # NAME chosen so slugify(name) == sen55_venstar_gap_avg (the id the controller
-  # reads); its source is the template sensor sensor.sen55_venstar_gap above.
+  # 30-minute rolling mean of the raw gap -- a MODEL input, not used by the
+  # controller: it lagged ~15 min and oscillated the setpoint (reverted 2026-09-09).
+  # NAME chosen so slugify(name) == sen55_venstar_gap_avg (the id the dashboard and
+  # model read); its source is the template sensor sensor.sen55_venstar_gap above.
   - platform: statistics
     name: "SEN55 Venstar gap avg"
     unique_id: sen55_venstar_gap_avg
@@ -163,7 +164,7 @@ automation:
   - id: thermostat_follows_sen55
     alias: Thermostat follows SEN55 temperature
     description: >-
-      Offsets the Venstar setpoint by the 30-min-average gap between the room
+      Offsets the Venstar setpoint by the gap between the room
       (SEN55) and the thermostat's own sensor so the room reaches
       input_number.room_target_temperature. Triggers on the room temperature and
       the target/gap helpers only — never on the thermostat's own sensor, whose
@@ -175,25 +176,26 @@ automation:
           - sensor.apollo_air_1_305e6c_sen55_temperature
           - input_number.room_target_temperature
           - input_number.venstar_deadband
-          - sensor.sen55_venstar_gap_avg
       - platform: time_pattern
         minutes: "/5"
     condition:
       - condition: template
         value_template: >-
-          {{ is_number(states('sensor.sen55_venstar_gap_avg'))
+          {{ is_number(states('sensor.apollo_air_1_305e6c_sen55_temperature'))
+             and is_number(states('sensor.thermostat_thermostat_temperature'))
              and is_number(state_attr('climate.thermostat', 'temperature'))
              and states('climate.thermostat') in ['heat', 'cool'] }}
     action:
       - variables:
           want: "{{ states('input_number.room_target_temperature') | float }}"
-          gap_avg: "{{ states('sensor.sen55_venstar_gap_avg') | float }}"
-          # sensor.sen55_venstar_gap_avg is (SEN55 - Venstar). The shift we ADD to
-          # `want` has to be (Venstar - SEN55) = -gap, so that when the Venstar
-          # stops on its own sensor the room (SEN55) is sitting at `want`. Hence
-          # the negation — feeding +gap here would invert the loop into positive
-          # feedback. Still clamped to +/-4 °C so a bad sensor can't run away.
-          offset: "{{ [[(gap_avg * -1), -4] | max, 4] | min }}"
+          room: "{{ states('sensor.apollo_air_1_305e6c_sen55_temperature') | float }}"
+          tstat: "{{ states('sensor.thermostat_thermostat_temperature') | float }}"
+          # Phase 0 uses the INSTANTANEOUS gap. The 30-min mean (sensor.sen55_venstar_gap_avg,
+          # still computed for the model) lagged ~15 min and walked the setpoint between
+          # 19.5 and 22.0 C against a constant 21.0 target -- reverted 2026-09-09.
+          # offset = Venstar - SEN55 so the room (SEN55) lands on `want` when the
+          # Venstar stops on its own sensor. Clamped to +/-4 C so a bad sensor can't run away.
+          offset: "{{ [[tstat - room, -4] | max, 4] | min }}"
           # The Venstar stores whole °F. Compare in that unit and send the exact °C
           # value of the chosen °F, otherwise HA's 0.5 °C display rounding vs the
           # device's 1 °F rounding disagree and the automation rewrites the same
