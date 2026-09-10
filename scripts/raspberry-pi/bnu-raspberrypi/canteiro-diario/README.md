@@ -17,6 +17,9 @@ what the cameras show, who was there, what came in, what the group said.
  20:50→ bnu-pi   canteiro-diario publish (every 10 min): render resumo/completo (Chromium),
                  upload, WhatsApp image → obra group (Cenci Céu Azul Casa-Hangar); no BNU print; marker sent.json
  21:00→ mia-pi   canteiro-diario-print: lp resumo.pdf → HP OfficeJet 6970 (MIA); marker printed-<host>.json
+ Fridays         diario.json carries a `semana` block (home-ara skill §7): the renderer adds a one-page
+                 "Resumo da semana" — semana.jpg goes to the group as a 2nd image, resumo.pdf becomes
+                 daily + weekly (2 pages, both printed in MIA), the completo gets it as last page
 ```
 
 Weekdays only (`1-5` in every crontab). A weekday holiday still produces a page;
@@ -33,7 +36,7 @@ group commentary on the one-pager; the one-pager is exactly one A4 page.
 | File | Role |
 |---|---|
 | `canteiro-diario.py` | `collect` / `publish` / `print` sub-commands (see module docstring) |
-| `diario_render.py` | diario.json + pack → resumo.html/pdf/jpg, completo.html/pdf (Chromium + poppler) |
+| `diario_render.py` | diario.json + pack → resumo.html/pdf/jpg, completo.html/pdf (Chromium + poppler); Fridays also semana.html/pdf/jpg (`semana` block) |
 | `canteiro-diario.env.example` | env template (live: `~/canteiro-jobs/env/canteiro-diario.env`) |
 | `../docker/canteiro-jobs/{Dockerfile,compose.yml,crontab-diario}` | container packaging (bnu) |
 | `../../mia-raspberrypi/docker/canteiro-diario-print/` | print-only container (mia) |

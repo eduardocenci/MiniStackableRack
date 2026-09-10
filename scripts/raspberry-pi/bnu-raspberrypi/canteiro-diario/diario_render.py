@@ -161,7 +161,7 @@ header{border-bottom:2pt solid var(--ink);padding-bottom:5pt;margin-bottom:6pt}
 .verdict{font-size:9.9pt;line-height:1.28;margin:0} .verdict b{color:var(--accent)}
 .meta{display:flex;flex-wrap:wrap;gap:1pt 12pt;margin-top:4pt;color:var(--ink2);font-size:7.9pt} .meta span b{color:var(--ink);font-weight:600}
 section{margin:0 0 6pt}
-.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:5pt;margin:2pt 0 0}
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:5pt;margin:2pt 0 0} .stats.n4{grid-template-columns:repeat(4,1fr)}
 .stat{background:var(--panel);border-top:1.4pt solid var(--line);padding:3pt 6pt}
 .stat b{display:block;font-size:17pt;line-height:1;font-weight:700;font-variant-numeric:tabular-nums}
 .stat span{font-size:7.2pt;color:var(--ink2);line-height:1.2;display:block;margin-top:1pt}
@@ -282,6 +282,9 @@ def build_html(diario: dict, pack: Path, full: bool, body_class: str = "") -> st
     head = f"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Diário de Obra {esc(date)}</title>{CSS}</head><body class="{body_class}">"""
     if not full:
         return head + page1 + "</body></html>"
+    week_page = ""
+    if d.get("semana"):   # Friday: the weekly page closes the completo too (the Drive copy stays self-contained)
+        week_page = f'<section class="pg"><div class="pgtitle">Diário de Obra · {esc(date)} · resumo da semana</div>{week_inner_html(d)}</section>'
     hours = json.loads((pack / "hist15.json").read_text(encoding="utf-8")) if (pack / "hist15.json").exists() else []
     hh: dict[int, list[int]] = {}
     for b in hours:
@@ -320,7 +323,54 @@ def build_html(diario: dict, pack: Path, full: bool, body_class: str = "") -> st
   <h2 style="margin-top:10pt">Fontes e limites</h2><div class="two"><div class="src">{fontes}</div><div><h3>Pendências para o próximo diário</h3><ul>{proximo}</ul></div></div>
 </section>
 """
-    return head + page1 + pages + "</body></html>"
+    return head + page1 + pages + week_page + "</body></html>"
+
+
+# ---------------------------------------------------------------- Friday: resumo da semana
+def week_inner_html(d: dict) -> str:
+    """One A4 page (decisão Eduardo 10/09/2026): checklist of the week's plan, deliveries, day by day,
+    carry-overs and next week's plan. Data = diario["semana"] (schema in the home-ara skill, §7)."""
+    w = d.get("semana") or {}
+    week = w.get("week") or d.get("week")
+    nums = (w.get("numeros") or [])[:5]
+    cls4 = " n4" if len(nums) == 4 else ""
+    numeros = "".join(f'<div class="stat"><b>{esc(x.get("value"))}</b><span>{esc(x.get("label"))}</span></div>' for x in nums)
+    check = "".join(f'<tr><td><b>{esc(r.get("item"))}</b></td><td>{chip(r.get("status", "na"), r.get("status_label"))}</td>'
+                    f'<td>{esc(r.get("quando"))}</td><td>{rich(r.get("evidencia"))}</td></tr>' for r in w.get("checklist") or [])
+    entregas = "".join(f'<tr><td><b>{esc(r.get("contrato"))}</b></td><td>{esc(r.get("o_que"))}</td>'
+                       f'<td>{chip(r.get("status", "na"), r.get("status_label"))} {rich(r.get("nota"))}</td></tr>' for r in w.get("entregas") or [])
+    dias = "".join(f'<tr><td><b>{esc(r.get("dia"))}</b></td><td>{esc(r.get("jornada"))}</td><td>{esc(r.get("equipe"))}</td>'
+                   f'<td>{rich(r.get("destaque"))}</td></tr>' for r in w.get("dias") or [])
+    pend = "".join(f"<li>{rich(x)}</li>" for x in w.get("pendencias") or []) or "<li>nada pendente</li>"
+    prox = ("".join(f"<li>{rich(x)}</li>" for x in w.get("proxima_semana") or [])
+            or "<li>plano da próxima semana ainda não preenchido no PlanejadoRealizado</li>")
+    eyebrow = w.get("eyebrow") or f"Casa Hangar · Aeródromo Céu Azul, Araquari · resumo da semana {week} de obra"
+    fontes = w.get("fontes") or "diários de obra da semana · PlanejadoRealizado · contratos · câmera"
+    return f"""
+<header>
+  <div class="eyebrow">{esc(eyebrow)}</div>
+  <h1>Resumo da semana {esc(week)} — {esc(w.get("range") or d.get("week_range"))}</h1>
+  <p class="verdict"><b>{esc(w.get("headline"))}</b> {rich(w.get("resumo"))}</p>
+  <div class="meta"><span><b>Período</b> {rich(w.get("period"))}</span><span><b>Fontes</b> {rich(fontes)}</span></div>
+</header>
+<section><div class="eyebrow">A semana em números</div><div class="stats{cls4}">{numeros}</div></section>
+<section><h2>Checklist do plano da semana</h2>
+  <table><thead><tr><th style="width:30%">Plano da semana (Ênio, PlanejadoRealizado)</th><th style="width:13%">Semana</th><th style="width:11%">Quando</th><th>Evidência</th></tr></thead><tbody>{check}</tbody></table>
+</section>
+<section><h2>Entregas da semana</h2>
+  <table><thead><tr><th style="width:24%">Contrato</th><th style="width:34%">O que</th><th>Na câmera</th></tr></thead><tbody>{entregas}</tbody></table>
+</section>
+<section><h2>Dia a dia</h2>
+  <table><thead><tr><th style="width:13%">Dia</th><th style="width:17%">Jornada</th><th style="width:12%">Equipe</th><th>Destaque</th></tr></thead><tbody>{dias}</tbody></table>
+</section>
+<section><div class="two"><div><h2>Fica para a próxima semana</h2><ul>{pend}</ul></div><div><h2>Plano da próxima semana</h2><ul>{prox}</ul></div></div></section>
+"""
+
+
+def build_week_html(diario: dict, body_class: str = "") -> str:
+    date = diario.get("date", "")
+    head = f"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Resumo da semana · {esc(date)}</title>{CSS}</head><body class="{body_class}">"""
+    return head + week_inner_html(diario) + "</body></html>"
 
 
 # ---------------------------------------------------------------- PDF / JPG
@@ -377,10 +427,25 @@ def render(diario: dict, pack: Path, out: Path) -> dict:
         res["resumo_pages"], res["resumo_class"] = n, cls or "normal"
         if n == 1:
             break
+    if diario.get("semana"):
+        # Friday: "Resumo da semana" — its own one-page discipline, its own JPG (2nd WhatsApp image),
+        # and appended as page 2 of resumo.pdf (what MIA prints). Decisão Eduardo 10/09/2026.
+        for cls in ("", "compact", "compact2", "compact2 z94", "compact2 z88", "compact2 z82", "compact2 z76"):
+            (out / "semana.html").write_text(build_week_html(diario, cls), encoding="utf-8")
+            chromium_pdf(out / "semana.html", out / "semana.pdf")
+            n = pdf_pages(out / "semana.pdf")
+            res["semana_pages"], res["semana_class"] = n, cls or "normal"
+            if n == 1:
+                break
+        pdf_to_jpg(out / "semana.pdf", out / "semana.jpg")
+        daily = out / "resumo-dia.pdf"
+        shutil.move(out / "resumo.pdf", daily)
+        subprocess.run(["pdfunite", str(daily), str(out / "semana.pdf"), str(out / "resumo.pdf")], check=True, capture_output=True, timeout=120)
+        res["resumo_pages"] = pdf_pages(out / "resumo.pdf")   # daily + weekly
     (out / "completo.html").write_text(build_html(diario, pack, True), encoding="utf-8")
     chromium_pdf(out / "completo.html", out / "completo.pdf")
     res["completo_pages"] = pdf_pages(out / "completo.pdf")
-    pdf_to_jpg(out / "resumo.pdf", out / "resumo.jpg")
+    pdf_to_jpg(out / "resumo.pdf", out / "resumo.jpg")       # page 1 = the daily page
     res["resumo_jpg_kb"] = round((out / "resumo.jpg").stat().st_size / 1024)
     return res
 

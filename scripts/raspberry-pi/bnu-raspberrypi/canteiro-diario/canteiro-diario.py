@@ -345,7 +345,7 @@ def collect_plan(d: dt.date, pack: Path) -> dict:
         rows = gc.open_by_key(SHEET_ID).worksheet(SHEET_TAB).get_all_values()
         year = 2026
         prev_month = 0
-        found = None
+        weeks = []
         for r in rows[2:]:
             if len(r) < 2 or not r[0].strip().isdigit():
                 continue
@@ -358,9 +358,16 @@ def collect_plan(d: dt.date, pack: Path) -> dict:
             prev_month = m1 or prev_month
             y2 = year + 1 if (m2 and m2 < m1) else year
             start, end = dt.date(year, m1, d1), dt.date(y2, m2, d2)
-            if start <= d <= end:
-                found = {"week": int(r[0]), "range": r[1].strip(), "start": start.isoformat(), "end": end.isoformat(),
-                         "planned": r[2] if len(r) > 2 else "", "realized": r[3] if len(r) > 3 else ""}
+            weeks.append({"week": int(r[0]), "range": r[1].strip(), "start": start.isoformat(), "end": end.isoformat(),
+                          "planned": r[2] if len(r) > 2 else "", "realized": r[3] if len(r) > 3 else ""})
+        found = None
+        for i, w in enumerate(weeks):
+            if w["start"] <= d.isoformat() <= w["end"]:
+                found = dict(w)
+                # next week's row → Friday "Resumo da semana" / "Plano da próxima semana"; null while Ênio has not filled it
+                nxt = weeks[i + 1] if i + 1 < len(weeks) else None
+                found["next"] = ({k: nxt[k] for k in ("week", "range", "start", "end", "planned")}
+                                 if nxt and nxt["planned"].strip() else None)
                 break
         (pack / "plan.json").write_text(json.dumps(found, ensure_ascii=False, indent=1), encoding="utf-8")
         return {"plan_week": found["week"] if found else None}
@@ -577,7 +584,7 @@ def cmd_publish(d: dt.date, test: bool, force: bool) -> int:
         out = tmp / "out"; out.mkdir()
         res = diario_render.render(diario, pack, out)
         log(f"render: {res}")
-        for name in ("resumo.pdf", "completo.pdf", "resumo.jpg", "resumo.html", "completo.html"):
+        for name in ("resumo.pdf", "completo.pdf", "resumo.jpg", "resumo.html", "completo.html", "semana.pdf", "semana.jpg", "semana.html"):
             p = out / name
             if p.exists():
                 run(["rclone", "copyto", str(p), rc_remote(DIARIO_DIR, d.isoformat(), name)], timeout=300, check=True)
@@ -590,6 +597,14 @@ def cmd_publish(d: dt.date, test: bool, force: bool) -> int:
             log(f"whatsapp → {chat}: {status['whatsapp']['http']}")
         except Exception as ex:  # noqa: BLE001
             fail(f"whatsapp sendImage: {ex}"); status["whatsapp"] = {"error": str(ex)[:200]}
+        if (out / "semana.jpg").exists():   # Friday: the weekly page as a 2nd image (decisão Eduardo 10/09/2026)
+            sem = diario.get("semana") or {}
+            cap2 = sem.get("caption") or f"📋 Resumo da semana {sem.get('week') or diario.get('week')}"
+            try:
+                status["whatsapp_semana"] = {"chat": chat, "http": send_image(chat, out / "semana.jpg", cap2)}
+                log(f"whatsapp (semana) → {chat}: {status['whatsapp_semana']['http']}")
+            except Exception as ex:  # noqa: BLE001
+                fail(f"whatsapp sendImage semana: {ex}"); status["whatsapp_semana"] = {"error": str(ex)[:200]}
         status["print"] = do_print(out / "resumo.pdf")
         if not FAILURES or force:
             mp = tmp / "sent.json"; mp.write_text(json.dumps(status, ensure_ascii=False, indent=1), encoding="utf-8")
