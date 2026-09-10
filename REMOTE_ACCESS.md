@@ -1106,8 +1106,8 @@ converts. Neither is on the tailnet; reach the queue through the Pi.
 
 | Site | Printer | LAN | Queue on the Pi | Notes |
 |---|---|---|---|---|
-| bnu | HP Smart Tank 580-590 | `10.1.1.143` (IPP :631, web :80) | `lpstat -p` on bnu-raspberrypi → `HP_Smart_Tank_580_590_series_ACD97F` | A4 default media |
-| mia | HP OfficeJet Pro 6970 | `192.168.2.74` (IPP :631) | mia-raspberrypi → `HP_OfficeJet_Pro_6970_03F83E_` | **Letter** default; use `-o fit-to-page` for A4 pages; ink low warning on 2026-09-09 |
+| bnu | HP Smart Tank 580-590 | `10.1.1.143` (IPP :631, web :80) | bnu-raspberrypi → **`HP_SmartTank_IPP`** (direct `ipp://10.1.1.143/ipp/print`, added 2026-09-09); the cups-browsed class `HP_Smart_Tank_580_590_series_ACD97F` also exists but lost its host at print time and got disabled — don't rely on it | A4 default media |
+| mia | HP OfficeJet Pro 6970 | `192.168.2.74` (IPP :631) | mia-raspberrypi → **`HP_OfficeJet_IPP`** (direct, added 2026-09-09); browsed class `HP_OfficeJet_Pro_6970_03F83E_` kept | **Letter** default; use `-o fit-to-page` for A4 pages; ink low warning on 2026-09-09 |
 
 ```bash
 python scripts/devtool.py run bnu-raspberrypi "lpstat -p; lp -d HP_Smart_Tank_580_590_series_ACD97F -o media=A4 /path/file.pdf"

@@ -276,10 +276,12 @@ def build_html(diario: dict, pack: Path, full: bool, body_class: str = "") -> st
 </section>
 <section><h2>Antes e depois</h2>{antes}</section>
 """
-    foot = f'<div class="foot"><span>Diário de Obra · Casa Hangar (ARA) · {esc(date[8:10]+"/"+date[5:7]+"/"+date[:4])}</span><span>gerado automaticamente</span></div>'
+    # no fixed footer: a position:fixed element with a negative bottom offset spilled past the page box and
+    # produced a second, footer-only page on every print (1st automatic run, 09/09/2026), which also made the
+    # one-page check fall through to the compact classes for nothing.
     head = f"""<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Diário de Obra {esc(date)}</title>{CSS}</head><body class="{body_class}">"""
     if not full:
-        return head + page1 + foot + "</body></html>"
+        return head + page1 + "</body></html>"
     hours = json.loads((pack / "hist15.json").read_text(encoding="utf-8")) if (pack / "hist15.json").exists() else []
     hh: dict[int, list[int]] = {}
     for b in hours:
@@ -318,7 +320,7 @@ def build_html(diario: dict, pack: Path, full: bool, body_class: str = "") -> st
   <h2 style="margin-top:10pt">Fontes e limites</h2><div class="two"><div class="src">{fontes}</div><div><h3>Pendências para o próximo diário</h3><ul>{proximo}</ul></div></div>
 </section>
 """
-    return head + page1 + pages + foot + "</body></html>"
+    return head + page1 + pages + "</body></html>"
 
 
 # ---------------------------------------------------------------- PDF / JPG
