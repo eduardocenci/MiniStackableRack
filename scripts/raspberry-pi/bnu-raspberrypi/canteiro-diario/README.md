@@ -15,7 +15,7 @@ what the cameras show, who was there, what came in, what the group said.
                  .claude/skills/diario-de-obra) reads the pack, writes docs/diario/<D>.md + .json
                  in home-ara and Drive Diario/<D>/diario.json
  20:50→ bnu-pi   canteiro-diario publish (every 10 min): render resumo/completo (Chromium),
-                 upload, WhatsApp image → group, lp → HP Smart Tank (BNU); marker sent.json
+                 upload, WhatsApp image → grupo "Casa Céu Azul"; no print on BNU (PRINTER empty); marker sent.json
  21:00→ mia-pi   canteiro-diario-print: lp resumo.pdf → HP OfficeJet 6970 (MIA); marker printed-<host>.json
 ```
 
@@ -97,6 +97,9 @@ manifest-latest.json          stable file (overwritten daily) — the routine's 
 
 ## Printers (recorded 09/09/2026)
 
+- **Only MIA prints the Diário** (decisão Eduardo 09/09/2026, from 10/09): `PRINTER=` is empty in
+  the bnu env, so `publish` skips `lp` (`sent.json` shows `"print": {"skipped": …}`). The BNU
+  queues below stay for manual `lp`.
 - BNU: HP Smart Tank 580-590 (10.1.1.143) — CUPS queue `HP_Smart_Tank_580_590_series_ACD97F`
   on bnu-raspberrypi (cups-browsed, driverless). Native formats PCLm/URF/JPEG only — PDFs
   must go through CUPS (`lp`), never raw to :9100.
