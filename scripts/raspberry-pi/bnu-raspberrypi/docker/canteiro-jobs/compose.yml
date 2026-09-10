@@ -80,6 +80,11 @@ services:
       RCLONE_CONFIG: /config/rclone/rclone.conf
       GSA_KEYFILE: /config/gsa.json
       STATE_DIR: /var/lib/canteiro-diario
+      # uid 1000 has no passwd entry in the image → Docker sets HOME=/ (read-only for it) and
+      # Chromium headless dies with "Failed to create headless user data directory container"
+      # (1st automatic publish, 09/09/2026). /tmp is writable; the render also passes an
+      # explicit --user-data-dir (diario_render.py), this is the belt to that suspenders.
+      HOME: /tmp
     volumes:
       # /run/cups/cups.sock is srw-rw-rw- on the host — no group needed
       - /home/eduardocenci/.config/rclone:/config/rclone

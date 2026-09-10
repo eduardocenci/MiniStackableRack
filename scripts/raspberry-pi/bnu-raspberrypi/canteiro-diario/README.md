@@ -76,6 +76,25 @@ manifest-latest.json          stable file (overwritten daily) — the routine's 
 <D>/sent.json  <D>/printed-<host>.json   idempotency markers
 ```
 
+## Troubleshooting (what already broke)
+
+- **`chromium rc=1: Failed to create headless user data directory container`** (1st automatic
+  publish, 09/09/2026 21:13): the container runs as uid 1000, which has no passwd entry in the
+  image, so Docker sets `HOME=/` — not writable — and Chromium's new headless mode cannot create
+  its temporary profile under `~/.config/chromium`. Fixed twice over: `HOME: /tmp` in
+  `compose.yml` and an explicit, throw-away `--user-data-dir` in `diario_render.chromium_pdf`
+  (plus a writable HOME for the subprocess). Reproduce/verify inside the container:
+  `docker exec canteiro-diario chromium --headless=new --no-sandbox --print-to-pdf=/tmp/t.pdf about:blank`.
+- **Cron tick vs manual run**: `publish` takes a per-day `flock` in `STATE_DIR`
+  (`publish-<D>.lock`); a second `publish` of the same day logs "outro publish em andamento" and
+  exits 0 instead of sending/printing twice. Safe to `docker exec … publish` at any time.
+- **Failure alerts**: every rc≠0 posts to `ALERT_JID` (Casa SmokeTests) — check there first;
+  WAHA's request log on LXC 101 (`docker logs waha | grep sendText`) is the proof of delivery.
+- **Cloud routine cannot `curl` the pack**: the routine's egress proxy blocks
+  `drive.google.com` (CONNECT 403); it reads the pack through the Google Drive connector
+  instead (recipe in the home-ara skill `diario-de-obra` §1). The public links are still the
+  right thing for humans and for the Pi.
+
 ## Printers (recorded 09/09/2026)
 
 - BNU: HP Smart Tank 580-590 (10.1.1.143) — CUPS queue `HP_Smart_Tank_580_590_series_ACD97F`

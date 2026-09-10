@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from PIL import Image
@@ -149,6 +150,8 @@ CSS = r"""
 *{box-sizing:border-box} html,body{margin:0;padding:0;background:#fff}
 body{color:var(--ink);font-family:"Source Sans 3","Segoe UI",system-ui,sans-serif;font-size:9pt;line-height:1.3;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 body.compact{font-size:8.5pt} body.compact2{font-size:8pt}
+/* last resort for the one-pager: scale the whole page (Chromium honours zoom in print) */
+body.z94{zoom:.94} body.z88{zoom:.88} body.z82{zoom:.82} body.z76{zoom:.76}
 h1,h2,h3,.eyebrow,.chip,.stat b,.rowlab,.pgtitle{font-family:"Barlow Condensed","Arial Narrow",sans-serif}
 h1{font-size:23pt;line-height:.95;margin:2pt 0 4pt;font-weight:700;letter-spacing:-.01em}
 h2{font-size:12.5pt;margin:0 0 3pt;font-weight:600} h3{font-size:10.5pt;margin:0 0 3pt;font-weight:600}
@@ -319,11 +322,27 @@ def build_html(diario: dict, pack: Path, full: bool, body_class: str = "") -> st
 
 
 # ---------------------------------------------------------------- PDF / JPG
+def _chromium_env() -> dict:
+    """Chromium (new headless) builds its temporary profile under the default user-data dir (~/.config/chromium)
+    and its NSS db under ~/.local — in the container uid 1000 has no passwd entry, so HOME=/ and is not
+    writable: "Failed to create headless user data directory container" (1st automatic run, 09/09/2026).
+    Hand it a writable HOME whenever the real one is not."""
+    env = dict(os.environ)
+    home = env.get("HOME") or ""
+    if not (home and os.access(home, os.W_OK)):
+        env["HOME"] = tempfile.gettempdir()
+    return env
+
+
 def chromium_pdf(html_path: Path, pdf_path: Path) -> None:
+    profile = Path(tempfile.mkdtemp(prefix="chromium-profile-"))   # explicit, writable, removed afterwards
     cmd = [CHROMIUM, "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--no-pdf-header-footer",
-           "--run-all-compositor-stages-before-draw", "--virtual-time-budget=15000",
+           f"--user-data-dir={profile}", "--run-all-compositor-stages-before-draw", "--virtual-time-budget=15000",
            f"--print-to-pdf={pdf_path}", html_path.resolve().as_uri()]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=240, env=_chromium_env())
+    finally:
+        shutil.rmtree(profile, ignore_errors=True)
     if r.returncode or not pdf_path.exists():
         raise RuntimeError(f"chromium rc={r.returncode}: {(r.stderr or r.stdout)[-300:]}")
 
@@ -347,8 +366,9 @@ def pdf_to_jpg(pdf_path: Path, jpg_path: Path, dpi: int = 200, max_h: int = 2400
 def render(diario: dict, pack: Path, out: Path) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     res: dict = {}
-    # resumo: must be exactly one page — tighten twice if needed
-    for cls in ("", "compact", "compact2"):
+    # resumo: must be exactly one page — tighten twice, then scale the page down step by step
+    # (09/09/2026: 8 plan rows + 6 deliveries still spilled a few points into a 2nd page at compact2)
+    for cls in ("", "compact", "compact2", "compact2 z94", "compact2 z88", "compact2 z82", "compact2 z76"):
         (out / "resumo.html").write_text(build_html(diario, pack, False, cls), encoding="utf-8")
         chromium_pdf(out / "resumo.html", out / "resumo.pdf")
         n = pdf_pages(out / "resumo.pdf")

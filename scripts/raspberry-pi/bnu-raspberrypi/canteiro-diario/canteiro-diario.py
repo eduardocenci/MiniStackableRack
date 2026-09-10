@@ -524,9 +524,27 @@ def fetch_diario_json(d: dt.date, dest: Path) -> bool:
     return False
 
 
+def publish_lock(d: dt.date):
+    """One publish of a day at a time: the */10 cron tick and a manual `docker exec … publish` must not
+    overlap (both would send the image and print before sent.json exists). Non-blocking — the loser logs
+    and exits 0. Returns the open lock file (held until the process exits) or None."""
+    import fcntl  # noqa: WPS433  (POSIX only — the script runs on the Pis)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    fh = open(STATE_DIR / f"publish-{d.isoformat()}.lock", "w")  # noqa: SIM115
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
+    return fh
+
+
 def cmd_publish(d: dt.date, test: bool, force: bool) -> int:
     if d.weekday() >= 5 and not force:
         return 0
+    lock = publish_lock(d)
+    if lock is None:
+        log(f"{d}: outro publish em andamento — nada a fazer."); return 0
     marker = rc_remote(DIARIO_DIR, d.isoformat(), "sent.json")
     if not force and drive_exists(marker):
         return 0
