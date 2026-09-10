@@ -117,6 +117,16 @@ RELAY_PT = "rtsp://127.0.0.1:8554/canteiro"
 RELAY_FIXA = "rtsp://127.0.0.1:8554/canteiro-alt"
 PTZ = "/usr/local/bin/canteiro-ptz"
 
+# Tentativas por foto. A câmera some da LAN por ~40 s várias vezes ao dia
+# (relay: "dial tcp 192.168.1.56:554: no route to host"; 3 quedas em
+# 10/09/2026) — o grab das 15:15 morreu com 3 × 5 s e a câmera voltou 12 s
+# depois. 6 × 10 s cobre ~60–90 s de queda; GRAB_BUDGET_S limita o pior
+# caso (relay travado, ffmpeg estourando os 75 s) ao mesmo teto de antes
+# (~4 min), para não empurrar as janelas solares.
+GRAB_TRIES = 6
+GRAB_RETRY_S = 10
+GRAB_BUDGET_S = 240
+
 # Lote 56, Cond. Aeronáutico Céu Azul, Araquari SC — aerodrome coordinates
 LAT = -(26 + 33 / 60 + 41 / 3600)
 LON = -(48 + 41 / 60 + 46 / 3600)
@@ -241,10 +251,15 @@ def sunrise_minutes(d):
     return noon - half_arc
 
 
-def _grab_abs(url, dest, tries=3):
-    """One keyframe JPEG from `url` into an absolute path."""
+def _grab_abs(url, dest, tries=GRAB_TRIES):
+    """One keyframe JPEG from `url` into an absolute path.
+
+    Retries up to `tries` times, GRAB_RETRY_S apart, but never past
+    GRAB_BUDGET_S of wall-clock (see the constants for the why).
+    """
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     tmp = dest + ".part"
+    t0 = time.monotonic()
     for attempt in range(1, tries + 1):
         try:
             r = subprocess.run(
@@ -260,15 +275,21 @@ def _grab_abs(url, dest, tries=3):
                 return True
         except subprocess.TimeoutExpired:
             pass
+        if attempt == tries:
+            break
+        if time.monotonic() - t0 > GRAB_BUDGET_S:
+            print(f"grab budget {GRAB_BUDGET_S}s exceeded after {attempt} tries {dest}",
+                  file=sys.stderr)
+            break
         print(f"retry {attempt}/{tries} {dest}", file=sys.stderr)
-        time.sleep(5)
+        time.sleep(GRAB_RETRY_S)
     if os.path.exists(tmp):
         os.remove(tmp)
     print(f"FAILED {dest}", file=sys.stderr)
     return False
 
 
-def grab(url, rel_dest, tries=3):
+def grab(url, rel_dest, tries=GRAB_TRIES):
     return _grab_abs(url, os.path.join(OUTBOX, rel_dest), tries)
 
 

@@ -87,7 +87,7 @@ outbox acumula (SD de 58 GB ≈ anos) e o próximo upload drena.
 
 | Arquivo | Cópia viva |
 |---|---|
-| [`timelapse-capture.py`](timelapse-capture.py) | `~/canteiro-timelapse/timelapse-capture` (COPY no build, vira `/usr/local/bin/timelapse-capture` na imagem) |
+| [`timelapse-capture.py`](timelapse-capture.py) | `~/canteiro-timelapse/timelapse-capture` (COPY no build, vira `/usr/local/bin/timelapse-capture` na imagem). Atualizar = copiar **com LF** (`git cat-file -p HEAD:<path> \| ssh … 'cat > ~/canteiro-timelapse/timelapse-capture'` — a árvore Windows é CRLF e o shebang morre com `env: 'python3\r'`, lição 10/09/2026; na dúvida `sed -i 's/\r$//'` no Pi) → `cd ~/canteiro-timelapse && docker compose build && docker compose up -d`, **fora das 05:00–07:00 e 16:40–18:30** (o `up -d` mata a sequência solar que estiver dormindo no container) e longe dos `:00/:15/:30/:45` |
 | [`../ptz/canteiro-ptz.py`](../ptz/canteiro-ptz.py) | idem (`/usr/local/bin/canteiro-ptz` na imagem); credenciais em `~/canteiro-timelapse/env/canteiro-ptz.env`, montado ro em `/etc/canteiro-ptz.env` |
 | remote rclone `ceuazul` | `~eduardocenci/.config/rclone/rclone.conf` (600, montado rw no container — uid 1000 preserva o dono no refresh do token) — OAuth Google de eduardocenci@gmail.com, `root_folder_id` apontando para a pasta **CeuAzul**; backup do conf em `gitignore/ara-rclone.conf` no repo raiz |
 
@@ -110,6 +110,7 @@ reinicia o container, que recalcula a agenda.
 
 ```bash
 ssh eduardocenci@ara-raspberrypi "docker logs canteiro-timelapse --tail 30"
+ssh eduardocenci@ara-raspberrypi "docker logs canteiro-relay --tail 200"      # lado da câmera; SÓ --tail pequeno (log corrompido, ver REMOTE_ACCESS.md)
 ssh eduardocenci@ara-raspberrypi "ls -R /var/lib/timelapse/outbox | head"
 ssh eduardocenci@ara-raspberrypi "docker restart canteiro-timelapse"   # drenar agora (upload na partida)
 ```
@@ -118,6 +119,20 @@ O subcomando `trabalho` recusa rodar fora de 07:00–18:00 (guarda no
 script); para exercitar a captura fora do expediente use `docker exec
 canteiro-timelapse timelapse-capture pos2test` (mexe a câmera!) ou um grab
 ffmpeg direto do relay.
+
+**Tentativas por foto** (`GRAB_TRIES`/`GRAB_RETRY_S`/`GRAB_BUDGET_S` no
+script, desde 10/09/2026): 6 tentativas com 10 s de pausa (≈ 60–90 s de
+cobertura), teto de 4 min de parede por foto. Motivo: a câmera some da LAN
+por ~40 s várias vezes ao dia — o relay loga `dial tcp 192.168.1.56:554:
+connect: no route to host` (3 quedas em 10/09; 5–8 reconexões/dia da lente
+principal desde 31/08) — e o `trabalho` das 15:15 de 10/09 morreu com as
+antigas 3 × 5 s, a câmera voltando 12 s depois. Assinatura no log de uma
+queda dessas: 1ª tentativa termina com `Non full-range YUV is
+non-standard` / `Could not open encoder before EOF` (o RTSP abriu mas o
+stream acabou antes do keyframe — ffmpeg 7.1 tenta abrir o MJPEG no EOF
+sem frame e recusa; não é bug de cor), as seguintes com `DESCRIBE failed:
+404` (relay sem fonte). O teto mantém o pior caso (relay travado, ffmpeg
+estourando 75 s) igual ao de antes, para não empurrar as janelas solares.
 
 Lição operacional (30/08/2026): sessão manual de calibração/testes SEM
 tracking ativo (domingo) acumulou ~5% de tilt após 3 vai-e-voltas — sempre
