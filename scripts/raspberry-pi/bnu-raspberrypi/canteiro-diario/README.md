@@ -15,7 +15,7 @@ what the cameras show, who was there, what came in, what the group said.
                  .claude/skills/diario-de-obra) reads the pack, writes docs/diario/<D>.md + .json
                  in home-ara and Drive Diario/<D>/diario.json
  20:50→ bnu-pi   canteiro-diario publish (every 10 min): render resumo/completo (Chromium),
-                 upload, WhatsApp image → grupo "Casa Céu Azul"; no print on BNU (PRINTER empty); marker sent.json
+                 upload, WhatsApp image → obra group (Cenci Céu Azul Casa-Hangar); no BNU print; marker sent.json
  21:00→ mia-pi   canteiro-diario-print: lp resumo.pdf → HP OfficeJet 6970 (MIA); marker printed-<host>.json
 ```
 
