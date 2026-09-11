@@ -13,7 +13,7 @@ Three sub-commands, one script (decisão Eduardo 09/09/2026, "execute, deploy"):
                                  uploads the outputs, sends the JPG to the WhatsApp group and
                                  prints the PDF on the BNU printer. Idempotent via sent.json.
   print [--date D]               Print-only role (mia-raspberrypi): prints Diario/<D>/resumo.pdf
-                                 once (marker printed-<host>.json).
+                                 once (marker printed-<host>.json; per-day flock like publish).
 
 Pack layout (Drive CeuAzul/Diario/<D>/pack/, all files public "anyone with the link"):
   manifest.json      counts, first/last person event, file index {name: {id, url}}
@@ -531,13 +531,14 @@ def fetch_diario_json(d: dt.date, dest: Path) -> bool:
     return False
 
 
-def publish_lock(d: dt.date):
-    """One publish of a day at a time: the */10 cron tick and a manual `docker exec … publish` must not
-    overlap (both would send the image and print before sent.json exists). Non-blocking — the loser logs
-    and exits 0. Returns the open lock file (held until the process exits) or None."""
+def day_lock(role: str, d: dt.date):
+    """One <role> (publish | print) of a day at a time: the */10 cron tick and a manual `docker exec …`
+    must not overlap (both would send the image / print before the Drive marker exists — a `print`
+    run spends ~1½ min in rclone before `lp`). Non-blocking — the loser logs and exits 0. Returns the
+    open lock file (held until the process exits) or None."""
     import fcntl  # noqa: WPS433  (POSIX only — the script runs on the Pis)
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    fh = open(STATE_DIR / f"publish-{d.isoformat()}.lock", "w")  # noqa: SIM115
+    fh = open(STATE_DIR / f"{role}-{d.isoformat()}.lock", "w")  # noqa: SIM115
     try:
         fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
@@ -549,7 +550,7 @@ def publish_lock(d: dt.date):
 def cmd_publish(d: dt.date, test: bool, force: bool) -> int:
     if d.weekday() >= 5 and not force:
         return 0
-    lock = publish_lock(d)
+    lock = day_lock("publish", d)
     if lock is None:
         log(f"{d}: outro publish em andamento — nada a fazer."); return 0
     marker = rc_remote(DIARIO_DIR, d.isoformat(), "sent.json")
@@ -624,7 +625,15 @@ def do_print(pdf: Path) -> dict:
     cmd = ["lp", "-d", PRINTER] + PRINT_OPTIONS.split() + [str(pdf)]
     r = run(cmd, timeout=120)
     if r.returncode:
-        fail(f"lp rc={r.returncode}: {(r.stderr or r.stdout)[-200:]}"); return {"error": (r.stderr or r.stdout)[-200:]}
+        err = (r.stderr or r.stdout).strip()[-200:]
+        # `lp -d X` says "The printer or class does not exist" whenever it cannot look X up — also when
+        # cupsd itself is unreachable (10/09/2026: the container held a dead /run/cups/cups.sock after the
+        # host's midnight `cups restart` by logrotate, while the host queue was fine). Tell them apart.
+        probe = run(["lpstat", "-r"], timeout=30)
+        if "not running" in (probe.stdout + probe.stderr):
+            err += (" | lpstat -r: scheduler is not running — cupsd inacessível de dentro do container"
+                    " (socket do CUPS morto? recriar o container: docker compose up -d)")
+        fail(f"lp rc={r.returncode}: {err}"); return {"error": err[-300:]}
     log(f"print: {r.stdout.strip()}")
     return {"job": r.stdout.strip()}
 
@@ -632,6 +641,9 @@ def do_print(pdf: Path) -> dict:
 def cmd_print(d: dt.date, force: bool) -> int:
     if d.weekday() >= 5 and not force:
         return 0
+    lock = day_lock("print", d)
+    if lock is None:
+        log(f"{d}: outro print em andamento — nada a fazer."); return 0
     host = socket.gethostname()
     marker = rc_remote(DIARIO_DIR, d.isoformat(), f"printed-{host}.json")
     if not force and drive_exists(marker):

@@ -86,9 +86,11 @@ services:
       # explicit --user-data-dir (diario_render.py), this is the belt to that suspenders.
       HOME: /tmp
     volumes:
-      # /run/cups/cups.sock is srw-rw-rw- on the host — no group needed
       - /home/eduardocenci/.config/rclone:/config/rclone
       - /home/eduardocenci/canteiro-jobs/env/gsa.json:/config/gsa.json:ro
-      - /run/cups/cups.sock:/run/cups/cups.sock
+      # CUPS: the DIRECTORY, never the .sock file — cupsd is restarted every midnight by logrotate
+      # and re-creates the socket; a bind-mounted socket file goes dead (mia, 10/09/2026, see
+      # canteiro-diario/README.md). cups.sock is srw-rw-rw- on the host — no group needed.
+      - /run/cups:/run/cups
       - /var/lib/canteiro-diario:/var/lib/canteiro-diario
     command: ["supercronic", "-passthrough-logs", "/app/crontab-diario"]

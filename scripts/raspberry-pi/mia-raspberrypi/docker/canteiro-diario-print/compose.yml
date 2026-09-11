@@ -17,7 +17,12 @@ services:
       RCLONE_CONFIG: /config/rclone/rclone.conf
       STATE_DIR: /tmp/canteiro-diario
     volumes:
-      # /run/cups/cups.sock is world-writable on the host — no group needed
       - /home/eduardocenci/.config/rclone:/config/rclone
-      - /run/cups/cups.sock:/run/cups/cups.sock
+      # The DIRECTORY, never the .sock file: the host cupsd is restarted every midnight by
+      # logrotate (/etc/logrotate.d/cups-daemon → `cups restart`) and re-creates the socket, so a
+      # bind-mounted socket FILE keeps pointing at the dead inode — on 10/09/2026 every print tick
+      # died with "lp: The printer or class does not exist" (= lp could not reach the scheduler
+      # at all; `lpstat -r` inside said "scheduler is not running") while the host queue was fine.
+      # /run/cups is root-owned and cups.sock is srw-rw-rw- — uid 1000 needs no group.
+      - /run/cups:/run/cups
     command: ["supercronic", "-passthrough-logs", "/app/crontab-diario-print"]

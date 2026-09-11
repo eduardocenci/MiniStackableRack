@@ -1135,6 +1135,9 @@ python scripts/devtool.py run bnu-raspberrypi "lpstat -p; lp -d HP_Smart_Tank_58
 python scripts/devtool.py run mia-raspberrypi "ipptool -tv ipp://192.168.2.74:631/ipp/print get-printer-attributes.test | grep -E 'printer-state|media-default'"
 ```
 
-Containers print through the host socket bind-mounted at `/run/cups/cups.sock`
-(world-writable) with `cups-client` installed in the image — see
-`scripts/raspberry-pi/bnu-raspberrypi/canteiro-diario/README.md`.
+Containers print through the host CUPS socket with `cups-client` installed in the image —
+bind-mount the **directory** `/run/cups`, never the `cups.sock` file: Debian's logrotate restarts
+cupsd every midnight (`/etc/logrotate.d/cups-daemon`) and re-creates the socket, and a
+socket-file bind mount keeps the dead inode (mia, 10/09/2026: every `lp` failed with the
+misleading "The printer or class does not exist" — `lpstat -r` inside the container is the real
+test). See `scripts/raspberry-pi/bnu-raspberrypi/canteiro-diario/README.md` (Troubleshooting).

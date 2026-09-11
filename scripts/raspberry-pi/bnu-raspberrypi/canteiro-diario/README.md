@@ -88,9 +88,19 @@ manifest-latest.json          stable file (overwritten daily) — the routine's 
   `compose.yml` and an explicit, throw-away `--user-data-dir` in `diario_render.chromium_pdf`
   (plus a writable HOME for the subprocess). Reproduce/verify inside the container:
   `docker exec canteiro-diario chromium --headless=new --no-sandbox --print-to-pdf=/tmp/t.pdf about:blank`.
-- **Cron tick vs manual run**: `publish` takes a per-day `flock` in `STATE_DIR`
-  (`publish-<D>.lock`); a second `publish` of the same day logs "outro publish em andamento" and
-  exits 0 instead of sending/printing twice. Safe to `docker exec … publish` at any time.
+- **Cron tick vs manual run**: `publish` and `print` take a per-day `flock` in `STATE_DIR`
+  (`publish-<D>.lock` / `print-<D>.lock`); a second run of the same day and role logs "outro
+  publish|print em andamento" and exits 0 instead of sending/printing twice. Safe to
+  `docker exec … publish|print` at any time (print lock added 10/09/2026 — before it, a manual
+  `print` overlapping the */10 tick would have printed twice, both runs spend ~1½ min in rclone
+  before `lp`).
+- **`lp: Error - The printer or class does not exist.` on every tick while the host queue is
+  fine** (mia, 10/09/2026 — first unattended day): the container held a dead
+  `/run/cups/cups.sock`. Debian's logrotate restarts cupsd every midnight
+  (`/etc/logrotate.d/cups-daemon`) and the socket is re-created; a bind mount of the socket
+  **file** keeps the old inode. `lp -d X` says "does not exist" for any lookup failure, including
+  no scheduler at all — `lpstat -r` inside the container is the real test. Both compose files now
+  mount the **directory** `/run/cups`; `do_print` appends the `lpstat -r` verdict to the alert.
 - **Failure alerts**: every rc≠0 posts to `ALERT_JID` (Casa SmokeTests) — check there first;
   WAHA's request log on LXC 101 (`docker logs waha | grep sendText`) is the proof of delivery.
 - **Cloud routine cannot `curl` the pack**: the routine's egress proxy blocks
@@ -106,5 +116,8 @@ manifest-latest.json          stable file (overwritten daily) — the routine's 
 - BNU: HP Smart Tank 580-590 (10.1.1.143) — CUPS queue `HP_Smart_Tank_580_590_series_ACD97F`
   on bnu-raspberrypi (cups-browsed, driverless). Native formats PCLm/URF/JPEG only — PDFs
   must go through CUPS (`lp`), never raw to :9100.
-- MIA: HP OfficeJet Pro 6970 (192.168.2.74) — queue `HP_OfficeJet_Pro_6970_03F83E_` on
-  mia-raspberrypi; default media Letter (A4 page printed fit-to-page).
+- MIA: HP OfficeJet Pro 6970 (192.168.2.74) — direct IPP queue `HP_OfficeJet_IPP` on
+  mia-raspberrypi (the browsed class `HP_OfficeJet_Pro_6970_03F83E_` exists but is not used);
+  default media Letter (A4 page printed fit-to-page). Printed by `canteiro-diario-print`
+  (`../../mia-raspberrypi/docker/canteiro-diario-print/`), whose failure alerts reach SmokeTests
+  through the tailnet relay `bnu-proxmox:3001 → WAHA` (filled 10/09/2026; empty before = silent).
