@@ -40,6 +40,38 @@ as coordenadas do aeródromo Céu Azul — 26°33'41"S 48°41'46"W, UTC−3 fixo
 `trabalho/` contém imagens de trabalhadores: manter a pasta **não
 compartilhada** no Drive (uso interno de gestão da obra).
 
+## Luminancia125 — a janela do pôr do sol com a luz certa (desde 11/09/2026)
+
+A luz em `por-do-sol` (T) depende do clima: 08/09 encoberto deu luminância
+média 125, 09/09 céu limpo deu 100 na mesma hora (a lente fixa e as fotos de
+trabalho do dia inteiro provaram que era o céu, não a câmera). As grades
+Dia/Semana/Mês de Trabalho tremiam de brilho entre dias. Pedido Eduardo
+09–11/09/2026: fixar a **luz** em vez da hora.
+
+- No fim de `sunset`, `luminancia` mede a luminância média Rec.601 (quadro
+  inteiro menos 100 px de borda) da **pos1** de cada janela do pôr do sol e
+  escolhe a de L mais perto de **125**; copia a foto dessa janela das 4
+  posições (posicao1/2/3 + lentefixa) para `<pos>/Luminancia125/`, mesmo
+  nome de arquivo, ainda no outbox — o upload das 20:00 leva junto. As
+  janelas originais ficam intactas.
+- **Quadro inteiro, não o pilar** (decisão Eduardo 11/09/2026): a luz do
+  galpão dominaria a ROI do pilar. Consequência conhecida: a média depende
+  da própria obra (materiais claros/escuros em cena), então a janela
+  escolhida caminha com o canteiro — no fim de agosto, com a cena mais
+  clara, a regra escolheu T+10; em setembro escolhe T−20/T−10/T.
+- Resultado nos 9 dias medidos (01–09/09): L entre 123 e 126 (em T fixo:
+  100 a 128). Dia muito fechado não chega a 125 — 11/09 escolheu T−20 com
+  L=114, o melhor possível; não há fallback porque "mais perto" sempre
+  escolhe algo.
+- Retroativo: `timelapse-capture luminancia --backfill 2026-08-26 2026-09-10`
+  (roda no container; baixa as pos1 para medir e copia server-side no Drive;
+  idempotente — pula dias já presentes em `posicao1/Luminancia125`). Feito
+  em 11/09/2026 para 26/08–10/09.
+- Consumidor: `canteiro-sunset-compare` (bnu) lê `<pos>/Luminancia125/` e,
+  se um dia não tiver a pasta, cai para `por-do-sol` avisando no SmokeTests.
+- Manual: `docker exec canteiro-timelapse timelapse-capture luminancia
+  [--day YYYY-MM-DD] [--root DIR]`.
+
 ## Posições 2 e 3 (dead-reckoning calibrado)
 
 Este firmware não tem preset ONVIF ([`../ptz/README.md`](../ptz/README.md)),

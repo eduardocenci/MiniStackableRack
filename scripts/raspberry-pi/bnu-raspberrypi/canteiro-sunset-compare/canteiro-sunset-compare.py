@@ -20,6 +20,11 @@ posicao2 = esquerda→centro→direita da obra; 800 px/célula → 2400×900):
 
 Fotos vêm do timelapse do ara Pi (upload às 20:00 — daí a folga de 10 min
 + retries; cache local reusa downloads entre produtos da mesma execução).
+Desde 11/09/2026 a fonte é `<pos>/Luminancia125/` — a janela do pôr do sol
+cujo frame de pos1 tem luminância mais perto de 125, escolhida no ara ao fim
+da sequência (decisão Eduardo: a luz em T varia com o clima, 100 a 128;
+com a seleção fica entre 123 e 126). Se um dia não tiver a pasta (seleção
+não rodou), cai para `por-do-sol` e avisa no SmokeTests.
 Cada grade é arquivada no topo do Timelapse em
 `<DiaDeTrabalho|SemanaDeTrabalho|MesDeTrabalho>/YYYY-MM-DD.jpg` e enviada
 no WhatsApp via WAHA `sendImage` (base64 — funciona neste Core build,
@@ -66,16 +71,18 @@ GROUP_JID    = os.environ["GROUP_JID"]
 TEST_JID     = os.environ.get("TEST_JID", GROUP_JID)
 REMOTE       = os.environ.get("RCLONE_REMOTE", "ceuazul:Timelapse")
 POSITIONS    = ["posicao3", "posicao1", "posicao2"]   # ordem das colunas
+LUM_FOLDER   = "Luminancia125"   # janela escolhida por luminancia (ara: timelapse-capture luminancia)
+FALLBACK_WIN = "por-do-sol"      # quando a selecao nao rodou naquele dia
 CELL_W       = 800
 RETRIES      = 8      # fotos de hoje: espera o upload das 20:00 até ~20:35
 RETRY_WAIT_S = 180
 
 
-def rclone_fetch(pos, day, dest_dir, retries=1):
-    """Baixa o pôr do sol de `pos` no dia `day`; retorna caminho local ou None.
-    Checa o cache local primeiro — vários produtos na mesma execução reusam
-    o que já foi baixado."""
-    sub = os.path.join(dest_dir, f"{pos}-{day:%Y%m%d}")
+def rclone_fetch(pos, day, dest_dir, retries=1, window=LUM_FOLDER):
+    """Baixa a foto de `pos` no dia `day` da pasta `window` (Luminancia125 por
+    padrão); retorna caminho local ou None. Checa o cache local primeiro —
+    vários produtos na mesma execução reusam o que já foi baixado."""
+    sub = os.path.join(dest_dir, f"{pos}-{window}-{day:%Y%m%d}")
     os.makedirs(sub, exist_ok=True)
     pat = day.strftime("%Y-%m-%d") + "_*.jpg"
 
@@ -88,17 +95,17 @@ def rclone_fetch(pos, day, dest_dir, retries=1):
         f = found()
         if f:
             return f
-        r = subprocess.run(["rclone", "copy", f"{REMOTE}/{pos}/por-do-sol",
+        r = subprocess.run(["rclone", "copy", f"{REMOTE}/{pos}/{window}",
                             sub, "--include", pat],
                            capture_output=True, timeout=180)
         if r.returncode != 0:
-            print(f"rclone copy {pos} rc={r.returncode}: "
+            print(f"rclone copy {pos}/{window} rc={r.returncode}: "
                   f"{r.stderr.decode(errors='replace')[-300:]}", file=sys.stderr)
         f = found()
         if f:
             return f
         if i + 1 < retries:
-            print(f"{pos} de {day:%d/%m} ainda nao esta no Drive; aguardando {RETRY_WAIT_S}s")
+            print(f"{pos}/{window} de {day:%d/%m} ainda nao esta no Drive; aguardando {RETRY_WAIT_S}s")
             time.sleep(RETRY_WAIT_S)
     return None
 
@@ -250,15 +257,21 @@ def month_caption_range(today):
 
 
 def make_grid_cells(day_top, day_bottom, tmp, retries_bottom):
-    cells, faltam = [], []
+    """6 celulas na ordem linha1(p3,p1,p2)+linha2(idem). Fonte Luminancia125;
+    sem ela naquele dia, cai para por-do-sol (listado em `fallback`)."""
+    cells, faltam, fallback = [], [], []
     for day, retries in ((day_top, 1), (day_bottom, retries_bottom)):
         for pos in POSITIONS:
             f = rclone_fetch(pos, day, tmp, retries)
+            if not f:
+                f = rclone_fetch(pos, day, tmp, 1, window=FALLBACK_WIN)
+                if f:
+                    fallback.append(f"{pos} {day:%d/%m}")
             if f:
                 cells.append(f)
             else:
                 faltam.append(f"{pos} {day:%d/%m}")
-    return cells, faltam
+    return cells, faltam, fallback
 
 
 def main():
@@ -298,7 +311,11 @@ def main():
             print("align: refs indisponiveis, grades sairao sem alinhamento", file=sys.stderr)
         for nome, day_top, caption, pasta in products:
             titulo = caption.split("*")[1]
-            cells, faltam = make_grid_cells(day_top, today, tmp, 1 if test else RETRIES)
+            cells, faltam, fallback = make_grid_cells(day_top, today, tmp, 1 if test else RETRIES)
+            if fallback:
+                st = send_text(TEST_JID, prefix + f"ℹ️ {titulo}: sem {LUM_FOLDER} para "
+                               f"{', '.join(fallback)} — usei {FALLBACK_WIN}.")
+                print(f"{nome}: fallback {FALLBACK_WIN} em {', '.join(fallback)}, aviso HTTP {st}")
             if faltam:
                 st = send_text(chat, prefix + f"⚠️ {titulo} não saiu — "
                                f"faltando no Drive: {', '.join(faltam)}.")

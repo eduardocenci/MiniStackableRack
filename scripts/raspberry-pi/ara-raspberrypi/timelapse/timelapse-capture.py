@@ -25,6 +25,10 @@ Drive/outbox layout (decisão Eduardo 27/08/2026; posicao3 added 30/08/2026):
                                           posicao2, ~T+2:00)
   lentefixa/<janela>/...                  fixed lens, shot with the main
   trabalho/YYYY-MM/...                    presence log, every 15 min 07:00-18:00
+  <pos>/Luminancia125/YYYY-MM-DD_HHMM.jpg copy of the sunset window whose
+                                          posicao1 luminance is closest to
+                                          125 (chosen at the end of `sunset`;
+                                          the bnu grids read from here)
 
 <janela> = nascer-do-sol / nascer-do-sol-mais-10min / nascer-do-sol-mais-20min
 and por-do-sol-menos-20min / -menos-10min / por-do-sol / -mais-10min /
@@ -45,7 +49,15 @@ Subcommands
              the Céu Azul aerodrome 26°33'41"S 48°41'46"W, UTC-3 fixed);
              per window: posicao1 + lentefixa, wait 30 s, then for each of
              posicao2/posicao3: recipe -> shot -> reverse. The 16:40 start
-             covers the earliest T-20 (17:09, June).
+             covers the earliest T-20 (17:09, June). Ends with `luminancia`.
+  luminancia [--day YYYY-MM-DD] [--root DIR]
+             picks, among today's sunset windows, the one whose posicao1
+             frame has mean luminance closest to 125 and copies that window's
+             frame of every position into <pos>/Luminancia125/ (same file
+             name) — on the local outbox, so the 20:00 upload carries it.
+  luminancia --backfill YYYY-MM-DD YYYY-MM-DD
+             same, retroactively and directly on the Drive (server-side
+             copies); skips days already present in posicao1/Luminancia125.
   sunrise    same for the sunrise windows T T+10 T+20; the 05:00 start
              covers the earliest sunrise of the year (~05:15, December).
   pos2test / pos3test
@@ -65,8 +77,10 @@ Subcommands
              on reversal — measured 01/09/2026) and the firmware's guard
              baseline walks on busy days (chained auto-tracking, 31/08).
 """
+import glob
 import math
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -144,6 +158,21 @@ SUNRISE_WINDOWS = [
     (10, "nascer-do-sol-mais-10min"),
     (20, "nascer-do-sol-mais-20min"),
 ]
+
+# Luminancia125 (pedido Eduardo 09-11/09/2026): a luz no por do sol depende do
+# clima — 08/09 encoberto deu L=125 em T, 09/09 ceu limpo deu L=100 — e as
+# grades Dia/Semana/Mes de Trabalho tremiam de brilho entre dias. No fim da
+# sequencia do por do sol mede-se a luminancia media (Rec.601, quadro inteiro
+# menos LUM_BORDER_PX de borda) da pos1 de cada janela e copia-se, para as 4
+# posicoes, a foto da janela cujo L fica mais perto do alvo em
+# <pos>/Luminancia125/ (mesmo nome de arquivo). Quadro inteiro e nao o pilar:
+# a luz do galpao dominaria a ROI do pilar (decisao Eduardo 11/09/2026).
+# Nos 9 dias medidos (01-09/09) a regra deu L entre 123 e 126 (sempre T-20,
+# T-10 ou T); em T fixo variava de 100 a 128.
+LUM_TARGET = 125.0
+LUM_FOLDER = "Luminancia125"
+LUM_POSITIONS = ["posicao1", "posicao2", "posicao3", "lentefixa"]
+LUM_BORDER_PX = 100
 
 # Burst recipes from the guard (pos2 calibrated 27/08/2026, pos3 = mirror to
 # the other side 30/08/2026 — Eduardo). Originally 2 x 0.5 s of pan; merged
@@ -559,6 +588,120 @@ def cmd_reanchor(dry=False, tag="", sweep=False, home=False):
     return 1
 
 
+def luminance(path):
+    """Luminancia media Rec.601 (0-255) do quadro sem LUM_BORDER_PX de borda."""
+    import numpy as np
+    from PIL import Image
+    a = np.asarray(Image.open(path).convert("RGB"), dtype=np.float32)
+    b = LUM_BORDER_PX
+    a = a[b:-b, b:-b]
+    return float((0.299 * a[:, :, 0] + 0.587 * a[:, :, 1] + 0.114 * a[:, :, 2]).mean())
+
+
+def _day_files(root, pos, window, day_str):
+    return sorted(glob.glob(os.path.join(root, pos, window, f"{day_str}_*.jpg")))
+
+
+def select_lum_window(root, day_str):
+    """Entre as janelas do por do sol com foto de pos1 em `root`, a de L mais
+    perto de LUM_TARGET. Devolve (janela, L) ou None."""
+    best = None
+    for _off, w in SUNSET_WINDOWS:
+        fs = _day_files(root, "posicao1", w, day_str)
+        if not fs:
+            continue
+        lum = luminance(fs[-1])
+        print(f"luminancia {day_str} {w}: L={lum:.0f}")
+        if best is None or abs(lum - LUM_TARGET) < abs(best[1] - LUM_TARGET):
+            best = (w, lum)
+    return best
+
+
+def cmd_luminancia(day_str=None, root=None):
+    """Copia, para cada posicao, a foto da janela escolhida para
+    <root>/<pos>/Luminancia125/ (mesmo nome). Roda no fim do `sunset`, com
+    os arquivos ainda locais (o upload das 20:00 esvazia o outbox)."""
+    day_str = day_str or datetime.now().strftime("%Y-%m-%d")
+    root = root or OUTBOX
+    best = select_lum_window(root, day_str)
+    if not best:
+        fail(f"luminancia {day_str}: nenhuma foto de pos1 do por do sol em {root}")
+        return 1
+    w, lum = best
+    print(f"luminancia {day_str}: escolhida {w} (L={lum:.0f}, alvo {LUM_TARGET:.0f})")
+    copied = 0
+    for pos in LUM_POSITIONS:
+        fs = _day_files(root, pos, w, day_str)
+        if not fs:
+            print(f"luminancia {day_str}: {pos}/{w} sem foto, pulando", file=sys.stderr)
+            continue
+        dst = os.path.join(root, pos, LUM_FOLDER)
+        os.makedirs(dst, exist_ok=True)
+        shutil.copy2(fs[-1], os.path.join(dst, os.path.basename(fs[-1])))
+        copied += 1
+    if not copied:
+        fail(f"luminancia {day_str}: nada copiado")
+        return 1
+    print(f"luminancia {day_str}: {copied} posicoes copiadas para {LUM_FOLDER}/")
+    return 0
+
+
+def cmd_luminancia_backfill(day_from, day_to):
+    """Retroativo, direto no Drive: baixa as pos1 do por do sol do intervalo
+    para medir, escolhe a janela de cada dia e copia server-side (rclone
+    copyto) as 4 posicoes para <pos>/Luminancia125/. Idempotente: pula os
+    dias que ja tem pos1 na pasta."""
+    import tempfile
+    from datetime import timedelta
+    remote = "ceuazul:Timelapse"
+    d0 = datetime.strptime(day_from, "%Y-%m-%d").date()
+    d1 = datetime.strptime(day_to, "%Y-%m-%d").date()
+    days = []
+    d = d0
+    while d <= d1:
+        days.append(d.isoformat())
+        d += timedelta(days=1)
+    done = subprocess.run(["rclone", "lsf", f"{remote}/posicao1/{LUM_FOLDER}"],
+                          capture_output=True, text=True).stdout.split()
+    done_days = {f[:10] for f in done}
+    todo = [x for x in days if x not in done_days]
+    print(f"luminancia backfill {day_from}..{day_to}: {len(todo)} dias a fazer, "
+          f"{len(days) - len(todo)} ja feitos")
+    if not todo:
+        return 0
+    rc = 0
+    with tempfile.TemporaryDirectory(prefix="lum-") as tmp:
+        for _off, w in SUNSET_WINDOWS:
+            args = ["rclone", "copy", f"{remote}/posicao1/{w}",
+                    os.path.join(tmp, "posicao1", w), "-q"]
+            for x in todo:
+                args += ["--include", f"{x}_*.jpg"]
+            subprocess.run(args, check=False)
+        for ds in todo:
+            best = select_lum_window(tmp, ds)
+            if not best:
+                print(f"luminancia {ds}: sem pos1 no Drive, pulando", file=sys.stderr)
+                continue
+            w, lum = best
+            print(f"luminancia {ds}: escolhida {w} (L={lum:.0f})")
+            for pos in LUM_POSITIONS:
+                names = subprocess.run(["rclone", "lsf", f"{remote}/{pos}/{w}",
+                                        "--include", f"{ds}_*.jpg"],
+                                       capture_output=True, text=True).stdout.split()
+                if not names:
+                    print(f"luminancia {ds}: {pos}/{w} sem foto no Drive, pulando",
+                          file=sys.stderr)
+                    continue
+                name = sorted(names)[-1]
+                r = subprocess.run(["rclone", "copyto", f"{remote}/{pos}/{w}/{name}",
+                                    f"{remote}/{pos}/{LUM_FOLDER}/{name}"],
+                                   capture_output=True, text=True)
+                if r.returncode != 0:
+                    fail(f"luminancia {ds}: copyto {pos} falhou: {r.stderr[-200:]}")
+                    rc = 1
+    return rc
+
+
 def cmd_trabalho():
     now = datetime.now()
     mins = now.hour * 60 + now.minute
@@ -650,7 +793,15 @@ def main():
     if cmd == "trabalho":
         return cmd_trabalho()
     if cmd == "sunset":
-        return run_windows(sunset_minutes(date.today()), SUNSET_WINDOWS, "sunset")
+        rc = run_windows(sunset_minutes(date.today()), SUNSET_WINDOWS, "sunset")
+        return max(rc, cmd_luminancia())   # 1 se a captura OU a selecao falhar
+    if cmd == "luminancia":
+        args = sys.argv[2:]
+        if args[:1] == ["--backfill"] and len(args) >= 3:
+            return cmd_luminancia_backfill(args[1], args[2])
+        day = args[args.index("--day") + 1] if "--day" in args else None
+        root = args[args.index("--root") + 1] if "--root" in args else None
+        return cmd_luminancia(day, root)
     if cmd == "sunrise":
         return run_windows(sunrise_minutes(date.today()), SUNRISE_WINDOWS, "sunrise")
     if cmd == "pos2test":

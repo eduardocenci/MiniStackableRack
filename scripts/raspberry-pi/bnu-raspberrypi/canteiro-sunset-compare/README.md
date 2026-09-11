@@ -48,6 +48,19 @@ Pedido Eduardo 27/08/2026. Roda em bnu (e não no ara Pi) porque o WAHA
   grupo **Cenci Céu Azul Casa-Hangar** (`120363402090094156@g.us`). O JID
   do Casa SmokeTests fica comentado no env como rollback/staging.
 
+## Fonte das fotos: `Luminancia125` (desde 11/09/2026)
+
+As células vêm de `<pos>/Luminancia125/YYYY-MM-DD_HHMM.jpg` — a janela do pôr
+do sol cujo frame de pos1 tem luminância média mais perto de 125, escolhida
+no ara ao fim da sequência (`timelapse-capture luminancia`; doutrina e
+números em [`../../ara-raspberrypi/timelapse/`](../../ara-raspberrypi/timelapse/)).
+Motivo: em `por-do-sol` fixo a luz variava de 100 a 128 conforme o clima;
+com a seleção fica entre 123 e 126. Se um dia não tiver a pasta (seleção não
+rodou), `make_grid_cells` cai para `por-do-sol` naquela célula e manda um
+aviso ao SmokeTests (`ℹ️ … sem Luminancia125 para … — usei por-do-sol`). A
+espera pelo upload das 20:00 (retries) vale para a pasta nova; o fallback é
+tentado uma vez, no fim.
+
 ## Alinhamento por software (desde 07/09/2026)
 
 Mesmo com a re-âncora da câmera, a guarda (pos1) varia até ~170 px de um dia
