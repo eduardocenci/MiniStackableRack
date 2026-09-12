@@ -242,7 +242,9 @@ def build_html(diario: dict, pack: Path, full: bool, body_class: str = "") -> st
     d = diario
     date = d.get("date", "")
     events = json.loads((pack / "events.json").read_text(encoding="utf-8")) if (pack / "events.json").exists() else []
-    stats = "".join(f'<div class="stat"><b>{esc(s.get("value"))}</b><span>{esc(s.get("label"))}</span></div>' for s in (d.get("stats") or [])[:5])
+    stat_items = (d.get("stats") or [])[:5]
+    stats_cls4 = " n4" if len(stat_items) == 4 else ""   # 4 stats since 12/09/2026: no Frigate-events stat (skill, regra 14)
+    stats = "".join(f'<div class="stat"><b>{esc(s.get("value"))}</b><span>{esc(s.get("label"))}</span></div>' for s in stat_items)
     entregas = "".join(f'<tr><td><b>{esc(r.get("contrato"))}</b></td><td>{esc(r.get("o_que"))}</td><td>{esc(r.get("previsto"))}</td>'
                        f'<td>{chip(r.get("status","na"), r.get("status_label"))} {rich(r.get("nota"))}</td></tr>' for r in d.get("entregas") or [])
     plano_slim = "".join(f'<tr><td><b>{esc(r.get("item"))}</b></td><td>{chip(r.get("status","na"), r.get("status_label"))}</td><td>{rich(r.get("evidencia_curta") or r.get("evidencia"))}</td></tr>'
@@ -267,9 +269,9 @@ def build_html(diario: dict, pack: Path, full: bool, body_class: str = "") -> st
     <span><b>Fontes</b> {rich(d.get("fontes") or "Frigate bnu · timelapse Drive · WhatsApp · tags do portão · Wi-Fi do canteiro · PlanejadoRealizado")}</span>
   </div>
 </header>
-<section><div class="eyebrow">Em números</div><div class="stats">{stats}</div></section>
+<section><div class="eyebrow">Em números</div><div class="stats{stats_cls4}">{stats}</div></section>
 <section><h2>Entregas esperadas pelos contratos</h2>
-  <table><thead><tr><th style="width:21%">Contrato</th><th style="width:31%">O que</th><th style="width:18%">Previsto</th><th>{esc(date[8:10]+"/"+date[5:7])} na câmera</th></tr></thead><tbody>{entregas}</tbody></table>
+  <table><thead><tr><th style="width:21%">Contrato</th><th style="width:31%">O que</th><th style="width:18%">Previsto</th><th>{esc(date[8:10]+"/"+date[5:7])} · evidência</th></tr></thead><tbody>{entregas}</tbody></table>
 </section>
 <section><h2>Planejado × realizado — semana {esc(week)} ({esc(d.get("week_range"))})</h2>
   <table><thead><tr><th style="width:29%">Plano da semana (Ênio, PlanejadoRealizado)</th><th style="width:11%">{esc(date[8:10]+"/"+date[5:7])}</th><th>Evidência</th></tr></thead><tbody>{plano_slim}</tbody></table>
@@ -358,7 +360,7 @@ def week_inner_html(d: dict) -> str:
   <table><thead><tr><th style="width:30%">Plano da semana (Ênio, PlanejadoRealizado)</th><th style="width:13%">Semana</th><th style="width:11%">Quando</th><th>Evidência</th></tr></thead><tbody>{check}</tbody></table>
 </section>
 <section><h2>Entregas da semana</h2>
-  <table><thead><tr><th style="width:24%">Contrato</th><th style="width:34%">O que</th><th>Na câmera</th></tr></thead><tbody>{entregas}</tbody></table>
+  <table><thead><tr><th style="width:24%">Contrato</th><th style="width:34%">O que</th><th>Evidência</th></tr></thead><tbody>{entregas}</tbody></table>
 </section>
 <section><h2>Dia a dia</h2>
   <table><thead><tr><th style="width:13%">Dia</th><th style="width:17%">Jornada</th><th style="width:12%">Equipe</th><th>Destaque</th></tr></thead><tbody>{dias}</tbody></table>
