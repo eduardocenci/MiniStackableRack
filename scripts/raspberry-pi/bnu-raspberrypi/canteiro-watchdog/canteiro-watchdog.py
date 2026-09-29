@@ -6,7 +6,7 @@ docker/canteiro-jobs/ (até 2026-08-29 era um systemd timer):
   1. Cacheia um frame da câmera (go2rtc local, produtor mantido ativo pelo
      Frigate e pelo canteiro-hls) em STATE_DIR/lastframe.jpg — vira a
      "última imagem antes da queda".
-  2. Testa o relay do canteiro (TCP ara-raspberrypi:8554 pela tailnet).
+  2. Testa o relay do canteiro (TCP ara-raspberrypi2:8554 pela tailnet).
   3. Máquina de estados com debounce: FAILS_TO_ALERT falhas seguidas
      (~3 min) → alerta de QUEDA no grupo WhatsApp (via WAHA, imagem com o
      último frame + caption); primeira volta → mensagem de RECUPERAÇÃO com
@@ -55,7 +55,7 @@ WAHA_URL = os.environ.get("WAHA_URL", "http://10.1.1.126:3000")
 WAHA_KEY = os.environ["WAHA_KEY"]
 WAHA_SESSION = os.environ.get("WAHA_SESSION", "default")
 GROUP_JID = os.environ["GROUP_JID"]
-ARA_HOST = os.environ.get("ARA_HOST", "100.66.255.82")
+ARA_HOST = os.environ.get("ARA_HOST", "100.65.218.33")
 ARA_PORT = int(os.environ.get("ARA_PORT", "8554"))
 FAILS_TO_ALERT = int(os.environ.get("FAILS_TO_ALERT", "3"))
 

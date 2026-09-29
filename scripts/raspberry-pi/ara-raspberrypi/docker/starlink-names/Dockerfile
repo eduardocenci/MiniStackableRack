@@ -4,7 +4,7 @@
 # and rebuilds independently.
 #
 # Authoritative copy: scripts/raspberry-pi/ara-raspberrypi/docker/starlink-names/
-# Live build context:  ara-raspberrypi:~/starlink-names/ (this folder plus
+# Live build context:  ara-raspberrypi2:~/starlink-names/ (this folder plus
 # starlink-names.py copied in)
 FROM python:3.13-slim
 

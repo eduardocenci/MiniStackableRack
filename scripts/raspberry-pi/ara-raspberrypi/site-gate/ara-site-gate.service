@@ -1,0 +1,13 @@
+# Authoritative copy: scripts/raspberry-pi/ara-raspberrypi/site-gate/
+# Live copy:          /etc/systemd/system/ara-site-gate.service
+# Triggered by ara-site-gate.timer; see ara-site-gate.sh for the why.
+[Unit]
+Description=ara site gate - start the ara stack only on the ara house LAN
+Wants=network-online.target
+After=network-online.target docker.service
+ConditionPathExists=!/var/lib/ara-site/armed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/ara-site-gate
+TimeoutStartSec=10min

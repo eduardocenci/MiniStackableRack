@@ -2,10 +2,10 @@
 
 socat container bridging the Starlink **dish** local gRPC API
 (`192.168.100.1:9200`, plaintext gRPC, no auth, server reflection on) to
-the tailnet as `ara-raspberrypi:9200`.
+the tailnet as `ara-raspberrypi2:9200`.
 
 Consumer: **globalnet** on bnu-raspberrypi (`ARA_STARLINK_GRPC=
-ara-raspberrypi:9200` in `~/globalnet/.env`). One `get_history` call gives
+ara-raspberrypi2:9200` in `~/globalnet/.env`). One `get_history` call gives
 900 s of 1 Hz ring buffers — downlink/uplink throughput and `powerIn` —
 which the dashboard renders as the ARA WAN card's "live ▼ ▲ Mbps" line and
 the `ara_starlink` ⚡ W badge (globalnet `docs/runbooks/monitoring.md`) —

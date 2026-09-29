@@ -62,9 +62,9 @@ _SEVERITY_EMOJI = {"alert": "🟡", "detection": "🔵"}
 
 # ── ARA (obra) routing + presence gate ────────────────────────────────────────
 CEUAZUL_CAMERAS = {"canteiro", "canteiro_sub"}
-# Tailnet IP of ara-raspberrypi — MagicDNS names may not resolve inside the
+# Tailnet IP of ara-raspberrypi2 — MagicDNS names may not resolve inside the
 # HA container (same reason canteiro-watchdog defaults to the IP)
-ARA_NTO_DEVICES = "http://100.66.255.82:5000/api/devices"
+ARA_NTO_DEVICES = "http://100.65.218.33:5000/api/devices"
 ARA_FIXED_MACS  = {"74:24:9f:c5:b2:5f", "54:ba:d9:bd:34:e3"}  # Starlink router, iM9 camera
 ARA_FIXED_HOSTS = ("ara-raspberrypi",)
 

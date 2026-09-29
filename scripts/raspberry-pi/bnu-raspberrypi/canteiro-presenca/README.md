@@ -4,7 +4,7 @@ Every day at **20:00 America/Sao_Paulo** the `canteiro-presenca` container
 on bnu-raspberrypi (supercronic — see
 [`../docker/canteiro-jobs/`](../docker/canteiro-jobs/); a systemd timer
 until 2026-08-29) asks the ara Pi's netoverview who was on the canteiro
-Starlink LAN since 00:00 (`GET http://ara-raspberrypi:5000/api/presence`)
+Starlink LAN since 00:00 (`GET http://ara-raspberrypi2:5000/api/presence`)
 and posts the summary to the WhatsApp group via WAHA — same LAN path, env
 pattern and test convention as [`../canteiro-watchdog/`](../canteiro-watchdog/).
 
@@ -52,7 +52,7 @@ syncs the Starlink router's client names into netoverview nicknames every
 5 min, so a phone shows up as "Galaxy-A54-5G"/"A23-de-Edy" minutes after
 it first joins the Wi-Fi. Phones use per-SSID random but **stable** MACs,
 so the name sticks. Manual renames in the ara netoverview UI
-(`http://ara-raspberrypi:5000`, MAC-keyed) always win — the sync never
+(`http://ara-raspberrypi2:5000`, MAC-keyed) always win — the sync never
 overwrites them. (Names are display-only: the bnu HA Frigate gate
 suppresses on ANY non-fixed device online, nicknamed or not — see
 `frigate_whatsapp.py`.)

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """timelapse-capture — daily construction-timelapse frames of the ARA canteiro.
 
-Runs ENTIRELY on ara-raspberrypi (supercronic inside the canteiro-timelapse
+Runs ENTIRELY on ara-raspberrypi2 (supercronic inside the canteiro-timelapse
 container — see ../docker/canteiro-timelapse/; until 2026-08-29 it was four
 systemd timers): frame grabs hit the LOCAL mediamtx relay (127.0.0.1:8554)
 and PTZ moves go from the Pi to the camera over the house LAN via

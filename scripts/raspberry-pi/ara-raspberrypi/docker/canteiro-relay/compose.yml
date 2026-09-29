@@ -2,7 +2,7 @@
 # containerized 2026-08-29 (was mediamtx.service + hand-downloaded binary).
 #
 # Authoritative copy: scripts/raspberry-pi/ara-raspberrypi/docker/canteiro-relay/
-# Live copy:          ara-raspberrypi:~/canteiro-relay/
+# Live copy:          ara-raspberrypi2:~/canteiro-relay/
 #   mediamtx.yml here is the repo TEMPLATE (__ARA_CANTEIRO_CAM_KEY__); the
 #   live ~/canteiro-relay/mediamtx.yml carries the real camera key (moved
 #   from /etc/mediamtx/mediamtx.yml — REMOTE_ACCESS.md drift list).

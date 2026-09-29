@@ -2,7 +2,7 @@
 # MediaMTX — RTSP relay of the ARA canteiro camera onto the tailnet
 #
 # Authoritative copy: scripts/raspberry-pi/ara-raspberrypi/docker/canteiro-relay/mediamtx.yml
-# Live copy:          ara-raspberrypi:~/canteiro-relay/mediamtx.yml
+# Live copy:          ara-raspberrypi2:~/canteiro-relay/mediamtx.yml
 #                     (600 eduardocenci, ro-mounted into the canteiro-relay
 #                     container — the live copy carries the real access key
 #                     in place of __ARA_CANTEIRO_CAM_KEY__, value from

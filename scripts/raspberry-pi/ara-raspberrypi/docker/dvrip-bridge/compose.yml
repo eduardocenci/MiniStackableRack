@@ -2,7 +2,7 @@
 # containerized 2026-08-29 (was a socat systemd unit).
 #
 # Authoritative copy: scripts/raspberry-pi/ara-raspberrypi/docker/dvrip-bridge/
-# Live copy:          ara-raspberrypi:~/dvrip-bridge/
+# Live copy:          ara-raspberrypi2:~/dvrip-bridge/
 services:
   dvrip-bridge:
     image: alpine/socat:1.8.0.3   # pinned; entrypoint is socat, command = its args

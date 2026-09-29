@@ -1,12 +1,12 @@
-# canteiro-ptz — remote aiming of the iM9's PT lens (ara-raspberrypi)
+# canteiro-ptz — remote aiming of the iM9's PT lens (ara-raspberrypi2)
 
 CLI for nudging the canteiro camera's motorized PT lens over ONVIF and
 checking the result, from anywhere on the tailnet:
 
 ```bash
-ssh eduardocenci@ara-raspberrypi "canteiro-ptz move -0.4 0 1"   # pan burst
-ssh eduardocenci@ara-raspberrypi "canteiro-ptz snap"            # keyframe JPEG
-ssh eduardocenci@ara-raspberrypi "canteiro-ptz stop"
+ssh eduardocenci@ara-raspberrypi2 "canteiro-ptz move -0.4 0 1"   # pan burst
+ssh eduardocenci@ara-raspberrypi2 "canteiro-ptz snap"            # keyframe JPEG
+ssh eduardocenci@ara-raspberrypi2 "canteiro-ptz stop"
 ```
 
 | File | Live copy |

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """canteiro-presenca — relatório diário (20:00) de presença na obra ARA.
 
-Pergunta ao netoverview do ara-raspberrypi quem esteve na rede Starlink do
+Pergunta ao netoverview do ara-raspberrypi2 quem esteve na rede Starlink do
 canteiro hoje (GET /api/presence, janela 00:00 → agora, America/Sao_Paulo)
 e manda o resumo no grupo WhatsApp via WAHA. Aparelhos fixos (Pi, câmera
 Intelbras, roteador Starlink) ficam de fora — o que sobra são celulares e
@@ -34,7 +34,7 @@ WAHA_KEY     = os.environ["WAHA_KEY"]
 WAHA_SESSION = os.environ.get("WAHA_SESSION", "default")
 GROUP_JID    = os.environ["GROUP_JID"]
 TEST_JID     = os.environ.get("TEST_JID", GROUP_JID)
-ARA_NTO_URL  = os.environ.get("ARA_NTO_URL", "http://ara-raspberrypi:5000")
+ARA_NTO_URL  = os.environ.get("ARA_NTO_URL", "http://ara-raspberrypi2:5000")
 EXCLUDE_MACS = {m.strip().lower() for m in os.environ.get("EXCLUDE_MACS", "").split(",") if m.strip()}
 EXCLUDE_HOSTNAMES = [h.strip().lower() for h in
                      os.environ.get("EXCLUDE_HOSTNAMES", "ara-raspberrypi").split(",") if h.strip()]

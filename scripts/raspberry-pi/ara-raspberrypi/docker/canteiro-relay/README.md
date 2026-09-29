@@ -1,4 +1,4 @@
-# canteiro-relay — canteiro camera relay (mediamtx, ara-raspberrypi)
+# canteiro-relay — canteiro camera relay (mediamtx, ara-raspberrypi2)
 
 Relays the Intelbras iM9+ Full Color site camera (`192.168.1.56`, Wi-Fi,
 LAN-only) onto the tailnet so any fleet node can watch the obra without
@@ -7,7 +7,7 @@ touching the camera or the house LAN. Docker container since 2026-08-29
 unit + hand-downloaded binary, left disabled on the Pi one wave as rollback):
 
 ```
-iM9 camera ──RTSP 554 (LAN)──▶ canteiro-relay on ara-raspberrypi ──RTSP 8554 (tailnet)──▶ go2rtc on bnu-raspberrypi
+iM9 camera ──RTSP 554 (LAN)──▶ canteiro-relay on ara-raspberrypi2 ──RTSP 8554 (tailnet)──▶ go2rtc on bnu-raspberrypi
                                                                       (single consumer)     ├─ TV cast + /live HLS page
                                                                                             └─ bnu Frigate (record + detect)
 ```
@@ -21,9 +21,9 @@ timestamp is impossible to handle", /live answers 500) —
 
 | Path | What it is |
 |---|---|
-| `rtsp://ara-raspberrypi:8554/canteiro` | lens on `channel=1`, main stream (HEVC 2304×1296) — pulled 24/7 (`sourceOnDemand: no`) |
-| `rtsp://ara-raspberrypi:8554/canteiro-alt` | lens on `channel=2`, main stream — pulled on demand |
-| `rtsp://ara-raspberrypi:8554/canteiro-sub` | lens on `channel=1`, substream (H264 640×480) — on demand; bnu Frigate's detect feed (held open 24/7 while Frigate is up, added 2026-08-26) |
+| `rtsp://ara-raspberrypi2:8554/canteiro` | lens on `channel=1`, main stream (HEVC 2304×1296) — pulled 24/7 (`sourceOnDemand: no`) |
+| `rtsp://ara-raspberrypi2:8554/canteiro-alt` | lens on `channel=2`, main stream — pulled on demand |
+| `rtsp://ara-raspberrypi2:8554/canteiro-sub` | lens on `channel=1`, substream (H264 640×480) — on demand; bnu Frigate's detect feed (held open 24/7 while Frigate is up, added 2026-08-26) |
 
 The relay has no reader auth: it is reachable only from the tailnet and the
 house LAN, and the camera credential stays on this Pi.
@@ -45,8 +45,8 @@ the key is real. To install the key (from repo root, key in `.env`):
 
 ```bash
 sed "s/__ARA_CANTEIRO_CAM_KEY__/<CHAVE>/g" scripts/raspberry-pi/ara-raspberrypi/docker/canteiro-relay/mediamtx.yml \
-  | ssh eduardocenci@ara-raspberrypi "cat > ~/canteiro-relay/mediamtx.yml && chmod 600 ~/canteiro-relay/mediamtx.yml && docker restart canteiro-relay"
-ssh eduardocenci@ara-raspberrypi "docker logs canteiro-relay --tail 20"   # expect "[path canteiro] source ready"
+  | ssh eduardocenci@ara-raspberrypi2 "cat > ~/canteiro-relay/mediamtx.yml && chmod 600 ~/canteiro-relay/mediamtx.yml && docker restart canteiro-relay"
+ssh eduardocenci@ara-raspberrypi2 "docker logs canteiro-relay --tail 20"   # expect "[path canteiro] source ready"
 ```
 
 URL-encode the key first if it contains symbols. Keep the key in the

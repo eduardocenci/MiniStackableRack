@@ -141,10 +141,10 @@ reinicia o container, que recalcula a agenda.
 ## Operação
 
 ```bash
-ssh eduardocenci@ara-raspberrypi "docker logs canteiro-timelapse --tail 30"
-ssh eduardocenci@ara-raspberrypi "docker logs canteiro-relay --tail 200"      # lado da câmera; SÓ --tail pequeno (log corrompido, ver REMOTE_ACCESS.md)
-ssh eduardocenci@ara-raspberrypi "ls -R /var/lib/timelapse/outbox | head"
-ssh eduardocenci@ara-raspberrypi "docker restart canteiro-timelapse"   # drenar agora (upload na partida)
+ssh eduardocenci@ara-raspberrypi2 "docker logs canteiro-timelapse --tail 30"
+ssh eduardocenci@ara-raspberrypi2 "docker logs canteiro-relay --tail 200"      # lado da câmera; SÓ --tail pequeno (log corrompido, ver REMOTE_ACCESS.md)
+ssh eduardocenci@ara-raspberrypi2 "ls -R /var/lib/timelapse/outbox | head"
+ssh eduardocenci@ara-raspberrypi2 "docker restart canteiro-timelapse"   # drenar agora (upload na partida)
 ```
 
 O subcomando `trabalho` recusa rodar fora de 07:00–18:00 (guarda no
@@ -188,7 +188,7 @@ rc ≠ 0 vira uma mensagem no grupo Casa SmokeTests** — nada falha em silênci
   (registrado no `globalnet/architecture.yaml`, nó `bnu_prx`). Testado do
   próprio ara em 04/09/2026: HTTP 200 em 0,25 s, sessão `WORKING`.
 - Config no env do container, **fora do git**:
-  `ara-raspberrypi:~/canteiro-timelapse/env/alerts.env` (chmod 600) —
+  `ara-raspberrypi2:~/canteiro-timelapse/env/alerts.env` (chmod 600) —
   `ALERT_WAHA_URL=http://bnu-proxmox:3001`, `ALERT_WAHA_KEY` (cópia viva de
   `BNU_WAHA_API_KEY` do `.env` raiz), `ALERT_WAHA_SESSION=default`,
   `ALERT_CHAT_JID=120363410899542847@g.us` (Casa SmokeTests). Sem as

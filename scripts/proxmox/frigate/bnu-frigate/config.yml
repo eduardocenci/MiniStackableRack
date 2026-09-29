@@ -467,7 +467,7 @@ cameras:
   canteiro:
     enabled: true
     friendly_name: Canteiro ARA
-    # ARA site camera (Intelbras iM9+ PT lens) relayed ara-raspberrypi ->
+    # ARA site camera (Intelbras iM9+ PT lens) relayed ara-raspberrypi2 ->
     # go2rtc on bnu-raspberrypi (10.1.1.123, shared single Starlink pull) ->
     # here. Record = HEVC main stream; detect = 640x480 H264 substream.
     ffmpeg:

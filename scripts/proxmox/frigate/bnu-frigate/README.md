@@ -60,12 +60,12 @@ entertainment-room TV (see `scripts/proxmox/mia-proxmox/README.md`).
 **plus the ARA canteiro camera** (added 2026-08-26):
 
 ```
-iM9+ camera (ARA LAN) ─▶ mediamtx on ara-raspberrypi ─tailnet/Starlink─▶ go2rtc on bnu-raspberrypi (10.1.1.123)
+iM9+ camera (ARA LAN) ─▶ mediamtx on ara-raspberrypi2 ─tailnet/Starlink─▶ go2rtc on bnu-raspberrypi (10.1.1.123)
                                                      (1 copy per stream)      └─▶ this LXC: canteiro (HEVC main, record)
                                                                                   canteiro_sub (H264 640×480, detect)
 ```
 
-**Never point this LXC at `ara-raspberrypi` directly** — the bnu-raspberrypi
+**Never point this LXC at `ara-raspberrypi2` directly** — the bnu-raspberrypi
 go2rtc is the single shared Starlink pull; a second main-stream reader
 saturates the canteiro uplink (incident 2026-08-26, see
 `scripts/raspberry-pi/bnu-raspberrypi/go2rtc/README.md`). Canteiro events

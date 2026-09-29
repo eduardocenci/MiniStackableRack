@@ -121,24 +121,47 @@ falls back to `PROXMOX_PW` automatically; plain `ssh` in Git Bash is unaffected.
 
 ### ARA (home build — dashboard site `home: true`, still not in devtool.py)
 
-`ara-raspberrypi` is a tailnet node (the "computadorzinho" in the canteiro
-shed): reach it with plain `ssh eduardocenci@ara-raspberrypi` (key auth since
-2026-08-24; COMMON `RASPBERRYPI_LOGIN/PW` is the password fallback via
-paramiko). `devtool.py` does **not** know ara — `devtool.py lan` cannot hop
+`ara-raspberrypi2` is a tailnet node (the "computadorzinho" in the canteiro
+shed): reach it with plain `ssh eduardocenci@ara-raspberrypi2`.
+
+**Replacement unit since 2026-09-28.** The original `ara-raspberrypi`
+(`100.66.255.82`) went offline around 2026-09-21 and was declared dead. Its
+node still sits offline in the tailnet. The successor joined as its own
+node, **`ara-raspberrypi2` (`100.65.218.33`)**, and every consumer was
+repointed the same day:
+- bnu go2rtc;
+- the bnu canteiro-jobs env: `ARA_NTO_URL` and the watchdog's `ARA_HOST`;
+- globalnet `ARA_STARLINK_GRPC`, `architecture.yaml` and `app.py`;
+- HA `frigate_whatsapp.py`.
+
+It was staged on the mia LAN (`ara-raspberrypi2.local` over mDNS there).
+- **SSH is key only.** Imager's public-key mode writes
+  `/etc/ssh/sshd_config.d/50-cloud-init.conf` = `PasswordAuthentication
+  no`, so the COMMON `RASPBERRYPI_PW` works for local/console login and
+  sudo, but not over SSH. Sudo is NOPASSWD.
+- **The containers start only on the ara LAN**
+  (`scripts/raspberry-pi/ara-raspberrypi/site-gate/`). `sudo ara-site-gate
+  --check` shows the decision.
+- **Hostname filters match both units.** The presence report's
+  `EXCLUDE_HOSTNAMES`, HA's `ARA_FIXED_HOSTS` and the diário's `startswith`
+  match on the `ara-raspberrypi` prefix, so the Pi's own row is excluded
+  either way.
+
+`devtool.py` does **not** know ara — `devtool.py lan` cannot hop
 here; hop manually through the Pi for the ara LAN-only devices. The Pi runs
 the standard netoverview container (since 2026-08-26): what is on the house
-LAN is visible at `http://ara-raspberrypi:5000` without SSH. Same day, ara
+LAN is visible at `http://ara-raspberrypi2:5000` without SSH. Same day, ara
 became a **dashboard site** in `globalnet/architecture.yaml` (`home: true` —
 nodes `ara_rpi`/`ara_nto`, camera + Starlink router via `netoverview_probe`;
 audited by `make fleet`), and the ara netoverview's `/api/presence` feeds
 the daily 20:00 obra-presence WhatsApp report (`canteiro-presenca` container
-on bnu-raspberrypi). `/api/presence?from=<ISO UTC>&to=<ISO UTC>` accepts **short windows** (5 min) — slice the day to pin a device's join/leave minute; `/api/events` only returns the last 10 rows, the full `device_events` table is in the container's SQLite (`docker exec -i netoverview python3 -`). **Plain `ssh eduardocenci@ara-raspberrypi` hung twice on 2026-09-08** (BatchMode, no banner within 90 s) while HTTP `:5000` answered instantly — prefer the APIs, and treat a hang as the Starlink path, not a key problem (plain `ssh` with `-o BatchMode=yes -o ConnectTimeout=25` answered in ~1 s all through 2026-09-10). **`docker logs` on `canteiro-relay` is half-broken (seen 2026-09-10)**: its json-file log (`/var/lib/docker/containers/<id>/<id>-json.log`, ~6.7 MB) carries a NUL byte from a shed power cut, so `docker logs --since …` silently returns **nothing** and a full/large-`--tail` read stops at 2026-08-30 15:45 — only a small `--tail N` (≤ a few hundred) reads the current end. For history, grep the raw file as root: `ID=$(docker inspect -f '{{.Id}}' canteiro-relay); sudo grep -a "no route to host" /var/lib/docker/containers/$ID/$ID-json.log` (`sudo -n` is passwordless on ara; timestamps are UTC). That is also where camera dropouts show: `[path canteiro] [RTSP source] dial tcp 192.168.1.56:554: connect: no route to host` = the camera left the LAN (ARP failure, ~40 s at a time, several times a day since 2026-08-31) — a `canteiro-timelapse` grab that lands on one fails with `DESCRIBE failed: 404` (relay has no source); the ffmpeg `Non full-range YUV` / `Could not open encoder before EOF` lines that can precede it are a side effect of the stream ending before a keyframe, not an encoder problem. `docker logs --since` works normally on the other ara containers. Who-was-there questions: cross netoverview presence with the condfy-bridge gate tags (LXC 101, `/data/condfy.db`) and the Frigate recordings above (visitor devices are the ones never seen before; Ênio Faqueti = `192.168.1.109`, own gate tag; Jorge Cenci = `192.168.1.213` / `22:17:94:50:d1:b3`, nickname `iPhone (Jorge)`, NO gate tag of his own — confirmed by Eduardo 2026-09-16, iOS private MAC so it may rotate). Naming a device by hand: `POST http://ara-raspberrypi:5000/api/nickname` with JSON `{"mac":"<mac>","nickname":"<name>"}` (persists in the container's SQLite; `starlink-names` never overwrites it):
+on bnu-raspberrypi). `/api/presence?from=<ISO UTC>&to=<ISO UTC>` accepts **short windows** (5 min) — slice the day to pin a device's join/leave minute; `/api/events` only returns the last 10 rows, the full `device_events` table is in the container's SQLite (`docker exec -i netoverview python3 -`). **Plain `ssh eduardocenci@ara-raspberrypi` hung twice on 2026-09-08** (BatchMode, no banner within 90 s) while HTTP `:5000` answered instantly — prefer the APIs, and treat a hang as the Starlink path, not a key problem (plain `ssh` with `-o BatchMode=yes -o ConnectTimeout=25` answered in ~1 s all through 2026-09-10). **`docker logs` on `canteiro-relay` is half-broken (seen 2026-09-10)**: its json-file log (`/var/lib/docker/containers/<id>/<id>-json.log`, ~6.7 MB) carries a NUL byte from a shed power cut, so `docker logs --since …` silently returns **nothing** and a full/large-`--tail` read stops at 2026-08-30 15:45 — only a small `--tail N` (≤ a few hundred) reads the current end. For history, grep the raw file as root: `ID=$(docker inspect -f '{{.Id}}' canteiro-relay); sudo grep -a "no route to host" /var/lib/docker/containers/$ID/$ID-json.log` (`sudo -n` is passwordless on ara; timestamps are UTC). That is also where camera dropouts show: `[path canteiro] [RTSP source] dial tcp 192.168.1.56:554: connect: no route to host` = the camera left the LAN (ARP failure, ~40 s at a time, several times a day since 2026-08-31) — a `canteiro-timelapse` grab that lands on one fails with `DESCRIBE failed: 404` (relay has no source); the ffmpeg `Non full-range YUV` / `Could not open encoder before EOF` lines that can precede it are a side effect of the stream ending before a keyframe, not an encoder problem. `docker logs --since` works normally on the other ara containers. Who-was-there questions: cross netoverview presence with the condfy-bridge gate tags (LXC 101, `/data/condfy.db`) and the Frigate recordings above (visitor devices are the ones never seen before; Ênio Faqueti = `192.168.1.109`, own gate tag; Jorge Cenci = `192.168.1.213` / `22:17:94:50:d1:b3`, nickname `iPhone (Jorge)`, NO gate tag of his own — confirmed by Eduardo 2026-09-16, iOS private MAC so it may rotate). Naming a device by hand: `POST http://ara-raspberrypi2:5000/api/nickname` with JSON `{"mac":"<mac>","nickname":"<name>"}` (persists in the container's SQLite; `starlink-names` never overwrites it):
 
 | ARA LAN-only device | Address | What it is |
 |---|---|---|
-| Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by the `canteiro-relay` container on the Pi (`rtsp://ara-raspberrypi:8554/canteiro`). Each lens also has a 640×480 H264 substream (`subtype=1`; channel 1's is relayed as `canteiro-sub` — the bnu Frigate detect feed since 2026-08-26). ONVIF **events work** (PullPoint, probed 2026-08-26): topics are motion/tamper/scene-change only — **no person/vehicle classification locally** (that stays in the Imou cloud/Mibo app; CGI remains 401) |
+| Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by the `canteiro-relay` container on the Pi (`rtsp://ara-raspberrypi2:8554/canteiro`). Each lens also has a 640×480 H264 substream (`subtype=1`; channel 1's is relayed as `canteiro-sub` — the bnu Frigate detect feed since 2026-08-26). ONVIF **events work** (PullPoint, probed 2026-08-26): topics are motion/tamper/scene-change only — **no person/vehicle classification locally** (that stays in the Imou cloud/Mibo app; CGI remains 401) |
 | Starlink router | `192.168.1.1` | house LAN gateway (DHCP for the whole `192.168.1.0/24`). **Local gRPC API works** (`192.168.1.1:9000`, reflection on): `grpcurl -plaintext -d '{"wifi_get_clients":{}}' 192.168.1.1:9000 SpaceX.API.Device.Device/Handle` → associated clients with **name+MAC+IP** (what the app shows; `wifi_set_client_given_name` also exists). No local roster of DISCONNECTED clients (that list lives in the Starlink cloud — probed 2026-08-26). `grpcurl` v1.9.1 installed at `/usr/local/bin` on the Pi; the `starlink-names` container syncs these names into netoverview nicknames every 5 min |
-| Starlink dish | `192.168.100.1` | behind the router (any LAN client reaches it). **Local gRPC API works** (`192.168.100.1:9200`, plaintext, no auth, reflection on — probed 2026-08-30): `get_status` = instantaneous down/uplink throughput, pop latency, obstruction, alerts; `get_history` = 900 s of 1 Hz ring buffers (throughput, latency, drop rate, **`powerIn` watts**) + outage event log. **Relayed onto the tailnet as `ara-raspberrypi:9200`** by the `starlink-proxy` socat container (since 2026-08-30) — globalnet reads the ARA live WAN ▼▲ + dish ⚡ from it. Same `Device/Handle` service as the router, different RPCs |
+| Starlink dish | `192.168.100.1` | behind the router (any LAN client reaches it). **Local gRPC API works** (`192.168.100.1:9200`, plaintext, no auth, reflection on — probed 2026-08-30): `get_status` = instantaneous down/uplink throughput, pop latency, obstruction, alerts; `get_history` = 900 s of 1 Hz ring buffers (throughput, latency, drop rate, **`powerIn` watts**) + outage event log. **Relayed onto the tailnet as `ara-raspberrypi2:9200`** by the `starlink-proxy` socat container (since 2026-08-30) — globalnet reads the ARA live WAN ▼▲ + dish ⚡ from it. Same `Device/Handle` service as the router, different RPCs |
 
 > **Presence-report phantom (learned 2026-08-31, FIXED same day):** a
 > `docker build`/first run on the Pi briefly attaches a container to Docker's
@@ -264,7 +287,31 @@ on bnu-raspberrypi). `/api/presence?from=<ISO UTC>&to=<ISO UTC>` accepts **short
   due to RF-kill` — needs `sudo rfkill unblock wifi`, not done yet).
   **fln-raspberrypi has no passwordless sudo** for `eduardocenci` (`sudo: a
   password is required`) — use `RASPBERRYPI_PW` via `sudo -S`, or fix
-  sudoers; every other Pi is NOPASSWD.
+  sudoers; every other Pi is NOPASSWD. A fresh Imager/cloud-init user
+  (Trixie, 2026-09) is **not** NOPASSWD either: the replacement ara Pi
+  needed `/etc/sudoers.d/010_eduardocenci-nopasswd`.
+- **Never put the password and a script on the same `sudo -S` stdin**
+  (`printf 'pw\nscript' | sudo -S bash -s`). Raspberry Pi OS ships
+  `/etc/sudoers.d/010_global-tty`, which sets `Defaults
+  timestamp_type=global`. Within 15 min of one successful sudo, **from any
+  session**, the next sudo reads nothing from stdin. The password then
+  becomes line 1 of the script and is echoed back as
+  `<password>: command not found`. This leaked `RASPBERRYPI_PW` into a
+  session transcript on 2026-09-28. Instead, send only the password
+  (`sudo -S -p '' true`), or install NOPASSWD first and use `sudo -n`.
+- **Anything slower than ~1 min over `devtool.py run` must be detached.**
+  Use `nohup bash script.sh > /tmp/x.log 2>&1 < /dev/null &`, then poll the
+  log. Otherwise paramiko's read timeout kills the client
+  (`TimeoutError`). The remote script keeps running, but it dies of SIGPIPE
+  at its next write to the closed channel. On 2026-09-29 this left a bnu
+  deploy half-done: image built, containers not yet recreated.
+- **A `docker compose build` on bnu-raspberrypi (4 GB) is a heavy
+  operation.** On 2026-09-29 the canteiro-jobs layer cache missed, apt
+  reinstalled everything, and containerd then spent 10+ min unpacking the
+  new layers (`unpigz`). Swap went 0.4 → 1.1 GB, load reached 29, and SSH
+  banners timed out (`Error reading SSH protocol banner`) for ~30 min, while
+  globalnet, go2rtc and the kiosk share the same box. Build off-hours, or
+  build elsewhere and `docker save | docker load`.
 - **Rack-LAN media devices** (not in HA `.env`, discovered via pyatv scan +
   HA): Apple TV 4K "Entertainment Room" `192.168.2.80` (tvOS 26.6, AirPlay
   pairing mandatory; paired with mia HA — credential lives in HA
@@ -1046,13 +1093,13 @@ the NAS compose `.env` + `copyparty.local.conf`, on LXC 101
 `bnu-raspberrypi:~/canteiro-jobs/env/canteiro-{watchdog,presenca,sunset-compare}.env`
 (WAHA creds + group JIDs for the canteiro job containers — moved from
 `/etc/canteiro-*.env` on 2026-08-29; the `/etc` copies linger only as
-rollback for one wave), `ara-raspberrypi:~/canteiro-relay/mediamtx.yml`
+rollback for one wave), `ara-raspberrypi2:~/canteiro-relay/mediamtx.yml`
 (camera `ARA_CANTEIRO_CAM_KEY` embedded in the source URLs — moved from
 `/etc/mediamtx/mediamtx.yml` on 2026-08-29, same one-wave lingering), and
-`ara-raspberrypi:~/canteiro-timelapse/env/canteiro-ptz.env` (same camera
+`ara-raspberrypi2:~/canteiro-timelapse/env/canteiro-ptz.env` (same camera
 key for ONVIF PTZ — moved from `/etc/canteiro-ptz.env`, which stays for
 the host-side manual `canteiro-ptz` copy),
-`ara-raspberrypi:~/canteiro-timelapse/env/alerts.env` (`ALERT_WAHA_KEY` =
+`ara-raspberrypi2:~/canteiro-timelapse/env/alerts.env` (`ALERT_WAHA_KEY` =
 `BNU_WAHA_API_KEY`, plus `ALERT_WAHA_URL=http://bnu-proxmox:3001` — the
 socat relay to WAHA — and the Casa SmokeTests JID; the timelapse script's
 rc≠0 failure alerts, 2026-09-04).

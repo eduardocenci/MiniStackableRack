@@ -1,0 +1,13 @@
+# Authoritative copy: scripts/raspberry-pi/ara-raspberrypi/site-gate/
+# Live copy:          /etc/systemd/system/ara-site-gate.timer
+# Enabled while the Pi is unarmed; the gate disables it when it arms.
+[Unit]
+Description=ara site gate - re-check for the ara LAN every 2 min until armed
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=2min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

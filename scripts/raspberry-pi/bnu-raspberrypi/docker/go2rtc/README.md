@@ -6,7 +6,7 @@ live view AND the bnu Frigate NVR) reads from this go2rtc, which pulls each
 canteiro stream from ara exactly once:
 
 ```
-rtsp://ara-raspberrypi:8554/canteiro ──tailnet (1 copy each)──▶ go2rtc on bnu-raspberrypi
+rtsp://ara-raspberrypi2:8554/canteiro ──tailnet (1 copy each)──▶ go2rtc on bnu-raspberrypi
                      + /canteiro-sub                             ├─ rtsp://10.1.1.123:8554/canteiro + canteiro_sub → bnu Frigate LXC 105 (record + person/vehicle detect, 2026-08-26)
                                                                  ├─ rtsp://127.0.0.1:8554/canteiro → canteiro-hls (mediamtx :8888 → browser /live page, 2026-08-29)
                                                                  └─ /api/stream.mp4?src=canteiro → 55" TV (Cast)

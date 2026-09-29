@@ -3,7 +3,7 @@
 # Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/docker/go2rtc/go2rtc.yaml
 # Live copy:          bnu-raspberrypi:~/go2rtc/go2rtc.yaml (ro mount at /config/go2rtc.yaml)
 #
-# Purpose: pulls the tailnet-only relay on ara-raspberrypi ONCE per stream and
+# Purpose: pulls the tailnet-only relay on ara-raspberrypi2 ONCE per stream and
 # fans it out on the bnu house LAN, so ara's Starlink upload always carries a
 # single copy of each stream (two parallel main-stream readers stalled it —
 # 2026-08-26). Consumers:
@@ -33,10 +33,10 @@ webrtc:
   listen: ""
 
 streams:
-  canteiro: rtsp://ara-raspberrypi:8554/canteiro
+  canteiro: rtsp://ara-raspberrypi2:8554/canteiro
   # PT-lens 640x480 H264 substream — bnu Frigate's detect feed (cheap decode,
   # light on the Starlink upload).
-  canteiro_sub: rtsp://ara-raspberrypi:8554/canteiro-sub
+  canteiro_sub: rtsp://ara-raspberrypi2:8554/canteiro-sub
   # H.264 transcode fallback: hardware encode (h264_v4l2m2m) via ffmpeg,
   # downscaled to 1920 wide (the Pi 4 hw encoder cannot take 2304×1296).
   # It consumes the SHARED local canteiro producer (no extra pull from ara),

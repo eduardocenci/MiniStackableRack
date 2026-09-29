@@ -19,7 +19,7 @@ vai no alerta.
 
 ## Detecção
 
-TCP connect em `100.66.255.82:8554` (tailnet IP do ara-raspberrypi — o
+TCP connect em `100.65.218.33:8554` (tailnet IP do ara-raspberrypi2 — o
 MagicDNS não importa aqui; testa Pi + mediamtx de uma vez). Horários das
 mensagens em `America/Sao_Paulo` (o relógio deste Pi está em BST).
 

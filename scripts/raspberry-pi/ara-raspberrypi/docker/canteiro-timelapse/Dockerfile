@@ -2,7 +2,7 @@
 # captures (sunrise/sunset/trabalho), PTZ choreography, daily Drive upload.
 #
 # Authoritative copy: scripts/raspberry-pi/ara-raspberrypi/docker/canteiro-timelapse/
-# Live build context:  ara-raspberrypi:~/canteiro-timelapse/ (this folder plus
+# Live build context:  ara-raspberrypi2:~/canteiro-timelapse/ (this folder plus
 # timelapse-capture.py and canteiro-ptz.py copied in WITHOUT the .py suffix —
 # timelapse-capture hardcodes /usr/local/bin/canteiro-ptz; see README.md)
 FROM python:3.13-slim

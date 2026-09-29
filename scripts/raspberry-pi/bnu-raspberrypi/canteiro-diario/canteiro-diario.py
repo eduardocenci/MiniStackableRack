@@ -70,7 +70,7 @@ TEST_JID = E("TEST_JID", GROUP_JID)
 ALERT_JID = E("ALERT_JID", TEST_JID)
 FRIGATE_URL = E("FRIGATE_URL", "http://bnu-frigate:5000")
 FRIGATE_CAMERA = E("FRIGATE_CAMERA", "canteiro")
-ARA_NTO_URL = E("ARA_NTO_URL", "http://ara-raspberrypi:5000")
+ARA_NTO_URL = E("ARA_NTO_URL", "http://ara-raspberrypi2:5000")
 LISTENER_URL = E("LISTENER_URL", "")
 LISTENER_TOKEN = E("LISTENER_TOKEN", "")
 OBRA_CHAT_JID = E("OBRA_CHAT_JID", "")
@@ -90,7 +90,7 @@ STATE_DIR = Path(E("STATE_DIR", "/var/lib/canteiro-diario"))
 GITHUB_RAW_JSON = E("GITHUB_RAW_JSON", "")   # optional fallback: raw URL pattern with {date}
 GITHUB_TOKEN = E("GITHUB_TOKEN", "")
 FIXED_DEVICE_NAMES = {s.strip().lower() for s in
-                      E("FIXED_DEVICE_NAMES", "Roteador Starlink,Câmera do canteiro (iM9),ara-raspberrypi").split(",")}
+                      E("FIXED_DEVICE_NAMES", "Roteador Starlink,Câmera do canteiro (iM9),ara-raspberrypi,ara-raspberrypi2").split(",")}
 WORKDAY_START, WORKDAY_END = 6, 19       # presence day window (BRT hours)
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
