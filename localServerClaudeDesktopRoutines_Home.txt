@@ -1,0 +1,150 @@
+Here's the complete, self-contained migration spec for all three routines. Everything below is copy-paste ready — paste the whole thing into the other Claude Desktop and it will have exactly what it needs to recreate identical tasks.
+
+---
+
+## Instructions for the receiving Claude Desktop
+
+You are recreating three scheduled tasks (Routines) that were exported from another PC. For **each** task below, call `create_scheduled_task` with the exact `taskId`, `description`, `cronExpression`, and `prompt` shown. Set `notifyOnCompletion: true` (the default). Do not alter the prompt text.
+
+⚠️ **Path/prerequisite check before you create them.** These prompts contain hardcoded paths and connector names from the source PC. Verify (and adjust only if the new PC differs) that:
+- The repo lives at `C:\Users\eduar\OneDrive\Documents\Scripts\20260329_MiniStackableRack` with the `globalnet` and `homes/ara` submodules checked out, and `.env` present. **If the Windows username or repo location is different on this PC, update every path accordingly in all three prompts.**
+- OneDrive is signed in and syncing that Documents folder (tasks 2 & 3 read `inbox/` directly off disk).
+- These MCP connectors are configured: **Google Drive** (tasks 1 & 2), **ms365-hangar / ms365** Outlook connector (tasks 2 & 3), and network reachability to the **BNU_WAHA_LISTENER_URL** in `.env` (task 3).
+- These tasks run only while the app is open; if closed when due, they run on next launch.
+
+---
+
+## Task 1 — `ingest-docs-inbox`
+
+- **taskId:** `ingest-docs-inbox`
+- **description:** `Daily sweep of the Google Drive MiniStackableRack Inbox; ingest new device docs/photos and open a digest PR.`
+- **cronExpression:** `47 8 * * *`  _(daily at 8:47 AM local time)_
+- **notifyOnCompletion:** `true`
+- **prompt:**
+
+```
+Run the globalnet "ingest-docs" skill to process new device documentation dropped in Google Drive.
+
+Repo: C:\Users\eduar\OneDrive\Documents\Scripts\20260329_MiniStackableRack\globalnet (the globalnet submodule). The full protocol is in that repo at .claude/skills/ingest-docs/SKILL.md — follow it exactly. Summary of what to do:
+
+1. Sweep the Google Drive folder "MiniStackableRack Inbox" (id 1SA5yQ0rNIotzz3bs51mnMPdazvttfGLM) using the Google Drive connector (search_files with parentId). Identify files NOT already recorded in docs/ingest/manifest.json. Skip the "_README" file and skip the "test — ingest pipeline validation" subfolder (already processed).
+
+2. If there are no new files, stop — do nothing, open no PR.
+
+3. Otherwise, for each batch (a subfolder, or loose files in the root): read any .txt/.md/Google Doc note first as the user's comment (it says which device/region the files belong to). Download each original untouched. Classify and process:
+   - PDF/manual/datasheet → confirm which device it covers.
+   - Photo with readable text → view it and transcribe ALL text (model, S/N, MAC, SSID, password, etc.).
+   - Photo without text → one-sentence description.
+
+4. File originals by sensitivity:
+   - Credential/serial stickers (anything with a password/PIN/key) → vault/<region>/<slug>/ (git-tracked, private; NEVER under static/ or docs/).
+   - Manuals/harmless photos → docs/_static/manuals/ or docs/_static/devices/<region>-<slug>/.
+
+5. This runs on the local machine, so extract any credential VALUES to the parent repo's .env at C:\Users\eduar\OneDrive\Documents\Scripts\20260329_MiniStackableRack\.env under a sensible key (e.g. FLN_ROUTER_WIFI_PW) in the correct region section, and mirror the key (placeholder value) into globalnet/.env.example. Docs pages reference the .env KEY, never the value.
+
+6. Update/create docs/devices/<region>-<slug>.md pages with links + OCR transcription (redact credential values as "→ .env <KEY>") or the photo description; add them to the toctree in docs/devices/index.md. If the device is in architecture.yaml, add durable facts (serial, model) to its notes and set its doc: slug.
+
+7. Run: cd globalnet && make docs && make check — both must pass.
+
+8. Create a branch ingest/<today's date YYYY-MM-DD> (suffix -2, -3 if taken), commit originals + docs + updated manifest.json, and open a digest PR titled "Docs ingest — <date> (<n> files)" with a per-file table (File | Type | Filed to | Device | Extracted), a Questions section with - [ ] checkboxes for any ambiguity, an ".env additions" note listing the keys added, and the short commit SHA at the end of the body. Never put credential VALUES in the PR table, commit messages, or docs — only in .env.
+
+Do not push to main directly; always use the ingest/<date> branch + PR. If the inbox is empty, report that and finish.
+```
+
+---
+
+## Task 2 — `house-ara-docs-ingest`
+
+- **taskId:** `house-ara-docs-ingest`
+- **description:** `Daily sweep of the House Hangar (ARA) OneDrive inbox — files construction documents and opens a digest PR`
+- **cronExpression:** `52 6 * * *`  _(daily at 6:52 AM local time)_
+- **notifyOnCompletion:** `true`
+- **prompt:**
+
+```
+Run the House Hangar (ARA) construction-document ingest, end to end.
+
+Repo: the home-ara checkout at C:\Users\eduar\OneDrive\Documents\Scripts\20260329_MiniStackableRack\homes\ara (submodule of MiniStackableRack; if that path does not exist yet, clone https://github.com/eduardocenci/home-ara to a temp dir and work there). Make sure it is on main and up to date (git fetch && git pull) before starting.
+
+Protocol: follow .claude/skills/ingest-home-docs/SKILL.md in that repo exactly. Summary of the flow (the SKILL.md is authoritative):
+1. Sweep the inbox. Running locally you can read the OneDrive folder directly on disk: <repo>/inbox/ (it is OneDrive-synced). Batches = subfolders; a .txt/.md file in a batch is the user's comment — read it first. Also check the Google Drive fallback folder "House Hangar Inbox" (id 1pZxMinNIr3Ban3uZoOadTi-8GXu6LdrG) via the Google Drive MCP.
+2. Nothing found in either inbox → report "inbox empty", create no branch and no PR, and stop.
+3. Otherwise process each file per the skill: classify (receipt/contract/plan/permit/photo/manual/sticker), OCR everything into docs/<folder>/<DOC-ID>-<slug>.md, register in registry/documents.yaml, link house.yaml nodes, receipts append a registry/ledger.csv row, new contract counterparties become registry/contacts.yaml entries with confirmed: false, canonical-rename originals into originals/<folder>/ (locally: plain file move inside the repo tree — OneDrive syncs it), create a OneDrive share link via the ms365 MCP if available (else leave onedrive_url out and add a PR question to share it), update docs/ingest/manifest.json.
+4. Credentials found on stickers: values go to C:\Users\eduar\OneDrive\Documents\Scripts\20260329_MiniStackableRack\.env under # ARA (key ARA_<DEVICE>_<FIELD>) and the key name into .env.example; never commit values.
+5. Run: make gen, commit data changes on branch ingest/ara-<yyyy-mm-dd>; then make activity and commit the refreshed ACTIVITY.md as a follow-up commit; python -m pytest -q must be green.
+6. Push and open a PR titled "House docs ingest — <date> (<n> files)" with the digest table (File | Category | Filed to | Nodes | Extracted), Questions checkboxes for every uncertainty, and the short commit SHA at the end of the body.
+
+Never delete inbox files in Google Drive; local inbox files are MOVED to originals/ as part of filing. Never put credential values in the PR table, docs pages, or commit messages.
+```
+
+---
+
+## Task 3 — `casa-financeiro`
+
+- **taskId:** `casa-financeiro`
+- **description:** `15-min sweep of the Casa Hangar finance pipeline — drains pending waha-listener jobs (fallback for the real-time PC trigger) and polls the ebc.hangar@outlook.com mailbox for NFs/boletos`
+- **cronExpression:** `4,19,34,49 * * * *`  _(every 15 minutes, at :04/:19/:34/:49)_
+- **notifyOnCompletion:** `true`
+- **prompt:**
+
+```
+Run the Casa Financeiro pipeline sweep.
+
+Repo: C:\Users\eduar\OneDrive\Documents\Scripts\20260329_MiniStackableRack (work in homes\ara; it must be on main — or the finance branch while pre-merge — and up to date).
+
+Protocol: homes/ara/.claude/skills/finance-hangar/SKILL.md is the single authoritative spec — read it first and follow it exactly. Do NOT rely on any summary in this prompt: folder names, sheet columns and archive conventions live in the skill and change there. (Inputs it defines: waha-listener pending jobs + the ebc.hangar@outlook.com mailbox. Outputs: Financeiro tab, Drive filing, WhatsApp group reply, inbox archive batch, state.json.)
+
+Keep no-op runs cheap: two checks only — GET /pending?rule=finance on the waha-listener (BNU_WAHA_LISTENER_URL in the repo .env) and the mailbox for unseen messages. Both empty → exit with a one-line "nothing to do" report; do not read code or repos.
+
+Autonomous rules: no questions — follow the skill's trust boundary, write allowlist and send allowlist; flag doubts in the WhatsApp group reply (pt-BR) and in the run report.
+```
+
+---
+
+### A couple of things worth flagging
+
+1. **These are duplication targets, not moves.** After the other PC recreates them, you'll have the same routines running on both machines. For tasks that open PRs (1 & 2), two machines running the same daily sweep could both try to process the same inbox and open duplicate PRs. If the intent is to **move** them, disable or delete them here once the other PC is confirmed working. Want me to pause the three tasks on this PC now, or leave them running?
+
+2. **Displayed vs. actual times.** The Routines list on this PC shows ~8:52 AM and ~6:59 AM, but those include a random per-task jitter (~5–7 min) the scheduler adds. The authoritative cron values above (`47 8` = 8:47, `52 6` = 6:52) are what you should enter; the new PC will apply its own jitter.
+
+---
+
+## Update 2026-07-18 — casa-financeiro prompt v2 (thin pointer)
+
+**For the receiving Claude Desktop (the PC where these routines are ACTIVE):**
+the `casa-financeiro` task's prompt was replaced. Apply it by calling
+`update_scheduled_task` with `taskId: casa-financeiro` and exactly the prompt
+shown in the Task 3 block above (which has been updated in place in this
+document). Do not alter the cron, description, or the other two tasks.
+
+Why: the old prompt duplicated facts from the skill (Drive folder names,
+sheet column letters, archive prefix) and had gone stale after the finance
+workflow redesign — it referenced `CeuAzul/Financeiro/<ID>/` (renamed to
+`Contratos/<ID>/`), `fin-<ID>` archive batches (now `con-<ID>`), and "never
+write columns R/T" (now Q Pago and the M/N formula columns). The v2 prompt is
+a THIN POINTER: `homes/ara/.claude/skills/finance-hangar/SKILL.md` is the
+single authoritative spec, and the prompt carries only operational parameters
+(repo path, cheap-no-op rule, autonomous posture). Future skill changes
+propagate via git/OneDrive automatically — the task prompt should not need
+editing again.
+
+Maintenance rule going forward: routine prompts must never restate skill
+facts. If a prompt needs a change, update THIS document's task block AND the
+task on both PCs (source PC: paused copies; active PC: live).
+
+## Update 2026-09-09 — Task 4 `atualiza-diario` (this PC only — NOT a duplication target)
+
+- **taskId:** `atualiza-diario`
+- **description:** `Rotina diária /atualiza (finance-hangar wa-sweep + ingest-home-docs) em modo agendado — 19:36 Brasília, seg–sex; report só no grupo SmokeTests`
+- **cronExpression:** `36 18 * * 1-5`  _(18:36 PC local = US Eastern EDT = 19:36 Brasília; from 2026-11-01 (US DST end) it must become `36 17 * * 1-5` — one-shot `atualiza-diario-dst-flip` does it)_
+- **notifyOnCompletion:** `true`
+- **prompt:** thin pointer to `homes/ara/.claude/skills/atualiza/SKILL.md` §"Modo agendado" (repo path, forwarder pre-flight, autonomous posture, merge to main, report via `finance.waha_send.send_smoketests`). Do NOT recreate on the other PC: it needs this PC's forwarder + Drive mount, and two copies would double-process the sweep.
+
+## Update 2026-09-29 — Task 5 `pedidos-mensais` (this PC only — NOT a duplication target)
+
+- **taskId:** `pedidos-mensais`
+- **title:** `Pedidos do mês — Casa Hangar (dia 1º, 07:00 Brasília)`
+- **description:** `Rotina mensal (dia 1º, 07:00 Brasília): pedidos padrão do fechamento — GFD via Ênio, NFs pendentes via Leandro, extrato BB via Jorge; fase 1 só no grupo SmokeTests`
+- **cronExpression:** `0 6 1 * *`  _(06:00 PC local = US Eastern EDT = 07:00 Brasília; from 2026-11-01 (US DST end) it must become `0 5 1 * *` — the one-shot `atualiza-diario-dst-flip` now flips both routines)_
+- **notifyOnCompletion:** `true`
+- **prompt:** thin pointer to `homes/ara/.claude/skills/pedidos-mensais/SKILL.md` (repo path, no branch switching / worktree / sparse-checkout, Python 3.13, forwarder pre-flight, autonomous posture, send ONLY via `python -m finance.pedidos_mensais --nf <ids> --send` to the SmokeTests group — phase 1, decisão Eduardo 29/09/2026 —, failures to SmokeTests). Generator: `homes/ara/finance/pedidos_mensais.py` (home-ara PR #165). Do NOT recreate on the other PC: it needs this PC's forwarder, and two copies would send the message twice.
