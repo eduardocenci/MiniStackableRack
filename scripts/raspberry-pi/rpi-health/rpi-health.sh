@@ -18,7 +18,11 @@
 #   bit 2/18 throttled        bit 3/19 soft_temp_limit
 # A rising edge of a now-bit — or a since-boot bit that appears without its
 # now-bit having been seen (an event shorter than one poll) — is one EVENT,
-# appended to $EVENTS as "<epoch> <cause>". Under-voltage events the kernel
+# appended to $EVENTS as "<epoch> <cause>". Exception: a freq_capped /
+# throttled / soft_temp_limit edge while under-voltage is active (or within
+# DEDUP_S of an under-voltage event) is the firmware's brownout response, not
+# a thermal event, and is NOT logged — so those three counts mean thermal
+# throttling and a brownout is one event. Under-voltage events the kernel
 # logged before this service started ("Undervoltage detected!" — the hwmon
 # driver polls the same firmware flag every 2 s) are seeded from
 # `journalctl -k -b` at start, so the 24 h count is right from the first
@@ -120,7 +124,7 @@ write_prom() {      # <epoch> <raw>
 }
 
 main() {
-    local boot_id boot_ts now raw now_bits sticky prev_sticky seen_now=0 polls=0 changed i c
+    local boot_id boot_ts now raw now_bits sticky prev_sticky seen_now=0 polls=0 changed i c last_uv=0
     local hour_polls=$(( 3600 / POLL_S ))
     [[ -d $PROM_DIR ]] || { log "$PROM_DIR missing — prometheus-node-exporter is not installed"; exit 1; }
     mkdir -p "$STATE"; touch "$EVENTS"
@@ -147,10 +151,13 @@ main() {
         now_bits=$(( raw & 0xF )); sticky=$(( (raw >> 16) & 0xF )); changed=0
         for i in "${!CAUSES[@]}"; do
             c=${CAUSES[$i]}
+            if (( i > 0 && ( now_bits & 1 || now - last_uv <= DEDUP_S ) )); then
+                continue    # throttle bits raised by the brownout itself — not a thermal event
+            fi
             if (( (now_bits >> i) & 1 && !((seen_now >> i) & 1) )); then
-                add_event "$now" "$c" && changed=1                                  # rising edge
+                add_event "$now" "$c" && { changed=1; (( i == 0 )) && last_uv=$now; }   # rising edge
             elif (( (sticky >> i) & 1 && !((prev_sticky >> i) & 1) && !((now_bits >> i) & 1) )); then
-                add_event "$now" "$c" && changed=1                                  # shorter than one poll
+                add_event "$now" "$c" && { changed=1; (( i == 0 )) && last_uv=$now; }   # shorter than one poll
             fi
         done
         seen_now=$now_bits

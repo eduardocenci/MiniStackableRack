@@ -6,7 +6,7 @@ Raspberry Pi card of the globalnet dashboard:
 
 ```
 cpu ▬▬░░ 2% of 4c   ram ▬▬▬░░ 1.1/3.8 GiB   sd ▬▬▬░░ 9.5/29 GB
-● soc 54°C · pmic 48°C · undervoltage ×11 / 24h · last 7h ago        ↻1d
+● soc 54°C · pmic 48°C · 11 brownouts/24h · 7h ago                    ↻1d
 ```
 
 and the WhatsApp alert globalnet sends when a Pi's SD card starts failing
@@ -37,7 +37,7 @@ collector is already active on the Debian package (that is where
 | `rpi_throttle_active{cause}` | 1 while active: `under_voltage`, `freq_capped`, `throttled`, `soft_temp_limit` |
 | `rpi_throttle_since_boot{cause}` | firmware sticky bit |
 | `rpi_throttle_last_event_timestamp_seconds{cause}` | epoch of the last event (0 = none on record) |
-| `rpi_throttle_events_24h{cause}` / `_7d{cause}` | event counts — the dashboard's 24 h LED |
+| `rpi_throttle_events_24h{cause}` / `_7d{cause}` | event counts — the dashboard's 24 h LED. `under_voltage` = brownouts; the other three = **thermal** throttling only: a throttle bit raised while under-voltage is active is the firmware's brownout response and is not logged separately (the card shows `9 brownouts/24h`, not `throttled ×9, undervoltage ×9`) |
 | `rpi_health_sampled_timestamp_seconds` | last write; globalnet greys the LED when > 5 min old |
 
 **How the 24 h window works.** The script polls `get_throttled` every 2 s
