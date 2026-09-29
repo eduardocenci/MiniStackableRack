@@ -1,0 +1,15 @@
+# Authoritative copy: scripts/raspberry-pi/rpi-health/ (MiniStackableRack repo)
+# Live copy:          /etc/systemd/system/rpi-health.service
+# See rpi-health.sh for what it samples and why it is a host service.
+[Unit]
+Description=rpi-health - Pi PMIC temperature + throttle history for node-exporter
+After=prometheus-node-exporter.service
+
+[Service]
+ExecStart=/usr/local/sbin/rpi-health
+Restart=always
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

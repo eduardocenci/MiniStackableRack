@@ -2,10 +2,22 @@
 
 One Pi per rack site (`<site>-raspberrypi`), each a 29 GB-SD Raspberry Pi 4
 running the netoverview container (bnu additionally runs globalnet). The ara
-Pi (`ara-raspberrypi/`) is a home-build device — systemd services plus the
-netoverview container since 2026-08-26 (58 GB SD); registered the same day
+Pi (`ara-raspberrypi/`) is a home-build device — all-Docker since 2026-08-29;
+replacement unit since 2026-09-28 (Pi 4 4 GB, 32 GB SD, staged off-site
+behind `ara-raspberrypi/site-gate/`); registered 2026-08-26
 in `globalnet/architecture.yaml` as a `home: true` site (decisão Eduardo),
 so `make fleet` audits it like the rack Pis.
+
+## rpi-health — temperature, throttling and SD health (fleet-wide)
+
+[`rpi-health/`](rpi-health/) is a host systemd service, identical on every
+Pi, that exports the PMIC temperature and the `vcgencmd get_throttled`
+history to the node-exporter every Pi already runs; globalnet turns that
+into the health row on each Pi card (SoC/PMIC °C, throttle LED with a 24 h
+memory, SD bar, uptime) and into a WhatsApp alert when a card's root
+filesystem goes read-only. `python scripts/raspberry-pi/rpi-health/deploy.py
+<site>…` installs or updates it; the folder README has the metric list and
+the rollout log.
 
 ## Docker auto-update MUST include a prune
 
@@ -29,7 +41,7 @@ Per-site state of that cron (user crontab of `eduardocenci`):
 | `bg-raspberrypi` | one cron line (`~/netoverview`), exactly as above | 2026-08-26 (cron was missing entirely before) |
 | `fln-raspberrypi` | cron runs `~/netoverview/update.sh` (logs to `update.log`); prune is the script's last line | 2026-08-26 |
 | `mia-raspberrypi` | back online since 2026-08-28 (was off ~2026-08-04→28 during the Plymouth→Miami move); audit + add prune | pending |
-| `ara-raspberrypi` | one cron line (`~/netoverview`), exactly as above | 2026-08-26 (deployed with prune from day one) |
+| `ara-raspberrypi2` | one cron line (`~/netoverview`), exactly as above. On the replacement unit it is written by `site-gate` when the Pi arms on the ara LAN, never off-site | 2026-08-26 (deployed with prune from day one) |
 
 `docker system df` shows the image bloat; the bytes live under
 `/var/lib/containerd` (containerd image store), not `/var/lib/docker`.
