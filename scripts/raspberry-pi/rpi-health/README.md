@@ -90,4 +90,4 @@ per site.
 | mia-raspberrypi | 2026-09-29 | clean |
 | bnu-raspberrypi | 2026-09-29 | sticky under-voltage bit with nothing in the retained journal → one-off |
 | fln-raspberrypi | pending | offline on the tailnet at rollout |
-| ara-raspberrypi2 | pending | replacement Pi still staged off-site |
+| ara-raspberrypi2 | 2026-09-29 | the replacement Pi had **no node-exporter at all** (only the old unit got it on 2026-08-26) — `apt install prometheus-node-exporter` first, then `deploy.py ara`; clean (`0x0`), PMIC 35 °C |
