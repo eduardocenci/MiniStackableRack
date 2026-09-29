@@ -144,7 +144,7 @@ task on both PCs (source PC: paused copies; active PC: live).
 
 - **taskId:** `pedidos-mensais`
 - **title:** `Pedidos do mês — Casa Hangar (dia 1º, 07:00 Brasília)`
-- **description:** `Rotina mensal (dia 1º, 07:00 Brasília): pedidos padrão do fechamento — GFD via Ênio, NFs pendentes via Leandro, extrato BB via Jorge; fase 1 só no grupo SmokeTests`
+- **description:** `Rotina mensal (dia 1º, 07:00 Brasília): pedidos padrão do fechamento — GFD via Ênio e NFs pendentes via Leandro (prazo até o dia 3); fase 1 só no grupo SmokeTests`
 - **cronExpression:** `0 6 1 * *`  _(06:00 PC local = US Eastern EDT = 07:00 Brasília; from 2026-11-01 (US DST end) it must become `0 5 1 * *` — the one-shot `atualiza-diario-dst-flip` now flips both routines)_
 - **notifyOnCompletion:** `true`
-- **prompt:** thin pointer to `homes/ara/.claude/skills/pedidos-mensais/SKILL.md` (repo path, no branch switching / worktree / sparse-checkout, Python 3.13, forwarder pre-flight, autonomous posture, send ONLY via `python -m finance.pedidos_mensais --nf <ids> --send` to the SmokeTests group — phase 1, decisão Eduardo 29/09/2026 —, failures to SmokeTests). Generator: `homes/ara/finance/pedidos_mensais.py` (home-ara PR #165). Do NOT recreate on the other PC: it needs this PC's forwarder, and two copies would send the message twice.
+- **prompt:** thin pointer to `homes/ara/.claude/skills/pedidos-mensais/SKILL.md` (repo path, no branch switching / worktree / sparse-checkout, Python 3.13, forwarder pre-flight, autonomous posture, send ONLY via `python -m finance.pedidos_mensais --nf <ids> --send` to the SmokeTests group — phase 1, decisão Eduardo 29/09/2026 —, failures to SmokeTests). Generator: `homes/ara/finance/pedidos_mensais.py` (home-ara PR #165; PR #167 — NFs até o dia 3, pedido do extrato ao Jorge retirado por decisão Eduardo 29/09/2026). Do NOT recreate on the other PC: it needs this PC's forwarder, and two copies would send the message twice.
