@@ -1,0 +1,14 @@
+# Authoritative copy: scripts/raspberry-pi/rpi-health/ (MiniStackableRack repo)
+# Live copy:          /etc/systemd/system/rpi-sd-scan.timer
+# Monthly, spread over the first six hours of the 1st so the sites do not all
+# scan at once; a month missed while the Pi was off runs at the next boot.
+[Unit]
+Description=rpi-sd-scan - monthly read-only SD surface scan
+
+[Timer]
+OnCalendar=monthly
+RandomizedDelaySec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

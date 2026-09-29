@@ -20,7 +20,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1]))  # scripts/
 import devtool  # noqa: E402
 
-FILES = ("rpi-health.sh", "rpi-health.service", "install.sh")
+FILES = ("rpi-health.sh", "rpi-health.service", "rpi-sd-scan.sh", "rpi-sd-scan.service", "rpi-sd-scan.timer", "install.sh")
 UNPACK = "rm -rf /tmp/rpi-health && mkdir -p /tmp/rpi-health && tar xz -C /tmp/rpi-health"
 INSTALL = "bash /tmp/rpi-health/install.sh"
 

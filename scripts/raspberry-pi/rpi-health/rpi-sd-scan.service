@@ -1,0 +1,11 @@
+# Authoritative copy: scripts/raspberry-pi/rpi-health/ (MiniStackableRack repo)
+# Live copy:          /etc/systemd/system/rpi-sd-scan.service
+# Started by rpi-sd-scan.timer (monthly) or `systemctl start rpi-sd-scan`.
+[Unit]
+Description=rpi-sd-scan - read-only surface scan of the SD card (badblocks, idle priority)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/rpi-sd-scan
+Nice=19
+IOSchedulingClass=idle

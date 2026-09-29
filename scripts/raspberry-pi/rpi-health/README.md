@@ -39,6 +39,24 @@ collector is already active on the Debian package (that is where
 | `rpi_throttle_last_event_timestamp_seconds{cause}` | epoch of the last event (0 = none on record) |
 | `rpi_throttle_events_24h{cause}` / `_7d{cause}` | event counts — the dashboard's 24 h LED. `under_voltage` = brownouts; the other three = **thermal** throttling only: a throttle bit raised while under-voltage is active is the firmware's brownout response and is not logged separately (the card shows `9 brownouts/24h`, not `throttled ×9, undervoltage ×9`) |
 | `rpi_health_sampled_timestamp_seconds` | last write; globalnet greys the LED when > 5 min old |
+| `rpi_sd_info{dev,name,vendor,made,serial}` | card identity from sysfs (`manfid` → vendor) |
+| `rpi_sd_kernel_errors` / `_kernel_error_last_timestamp_seconds` | kernel mmc / ext4 / I-O error lines about the card since boot (`journalctl -k -b`, every 5 min) — the early warning |
+| `rpi_sd_fs_clean` / `rpi_sd_fs_errors` / `_fs_error_last_timestamp_seconds` / `_fs_lifetime_writes_bytes` | ext4 superblock via `tune2fs -l` (error count persists until a full fsck) |
+| `rpi_sd_scan_{timestamp_seconds,ok,bad_blocks,read_bytes_per_second,duration_seconds}` | last **rpi-sd-scan** (below) |
+
+## Monthly surface scan (`rpi-sd-scan`)
+
+`rpi-sd-scan.timer` runs `rpi-sd-scan.sh` on the 1st of each month (random
+delay up to 6 h, catches up after a month off): a read-only `badblocks` pass
+over the whole card at idle I/O priority — nothing is written, safe on the
+mounted root, ≈ 15 min for 32 GB. It records unreadable blocks and the
+sustained read rate (a card slows down before it fails) in
+`/var/lib/rpi-health/scan` (history in `scan.log`); rpi-health exports it,
+the card shows `scan 01/10/2026: 0 bad, 41 MB/s, 13 min`, and bad blocks turn
+the LED amber and trigger globalnet's `sd` WhatsApp warning. `install.sh`
+starts a baseline scan on first install; `sudo systemctl start rpi-sd-scan`
+runs one now. Why not more: there is no SMART on SD, vendor health commands
+don't work on these consumer cards, and write benchmarks add wear.
 
 **How the 24 h window works.** The script polls `get_throttled` every 2 s
 (the kernel's own hwmon driver polls the same flag at the same cadence). A
