@@ -139,6 +139,14 @@ It was staged on the mia LAN (`ara-raspberrypi2.local` over mDNS there).
   `/etc/ssh/sshd_config.d/50-cloud-init.conf` = `PasswordAuthentication
   no`, so the COMMON `RASPBERRYPI_PW` works for local/console login and
   sudo, but not over SSH. Sudo is NOPASSWD.
+- **VNC (human) works** since 2026-09-30: `wayvnc` on `:5900` (enabled via
+  `raspi-config nonint do_vnc 0`), attached to the autologin `rpd-labwc`
+  desktop. RealVNC Viewer → `ara-raspberrypi2`, user `eduardocenci` +
+  `RASPBERRYPI_PW` (PAM, so the password works here though not over SSH).
+- **Patched 2026-09-30** (85 pkgs, Debian 13.7 + RPi stable, rebooted clean).
+  Held for wave 2 (≥ 2026-10-14): `docker-ce*` 29.8.2 and `rpi-eeprom`
+  (bootloader flash). `smartmontools` + `openipmi` disabled — no SMART on an
+  SD card, no IPMI on a Pi; they only ever showed as failed units.
 - **The containers start only on the ara LAN**
   (`scripts/raspberry-pi/ara-raspberrypi/site-gate/`). `sudo ara-site-gate
   --check` shows the decision.
