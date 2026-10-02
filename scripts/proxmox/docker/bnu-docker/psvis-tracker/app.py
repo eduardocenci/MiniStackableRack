@@ -93,8 +93,33 @@ def _fill_airports(flight, entry):
     return flight
 
 
+def _attach_expectation(flight, stats):
+    """stats['expected'] = how long this route usually takes, from the flight
+    log (wheels-up → wheels-down, this flight excluded) — same direction,
+    else the reverse one, like the en-route ETAs. Absent without history."""
+    try:
+        ap = flight.get("airport") or {}
+        o, d = (((ap.get(side) or {}).get("code") or {}).get("icao")
+                for side in ("origin", "destination"))
+        if not o or not d:
+            return
+        fid = stats.get("fr24_id")
+        durs = db.route_durations(o, d, exclude_fid=fid)
+        reverse = not durs
+        if reverse:
+            durs = db.route_durations(d, o, exclude_fid=fid)
+        if durs:
+            stats["expected"] = {
+                "mean_s": sum(durs) / len(durs), "n": len(durs),
+                "fastest_s": min(durs), "reverse": reverse,
+            }
+    except Exception:  # noqa: BLE001 — a comparison must never block the report
+        log.warning("expectation lookup failed", exc_info=True)
+
+
 def _send_report(fid, flight, stats, jid):
     """Render chart+map and send the single flight message via WAHA."""
+    _attach_expectation(flight, stats)
     png = report.build_report_image(stats)
     with open(os.path.join(CHARTS_DIR, f"{fid}.png"), "wb") as fh:
         fh.write(png)

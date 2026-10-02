@@ -31,6 +31,9 @@ except Exception:  # no tzdata — Brazil currently has no DST
     TZ_LOCAL = timezone(timedelta(hours=-3))
 
 
+EDGE_S = 60  # max gap for a ground point to count as the take-off/landing roll
+
+
 def _haversine_km(lat1, lon1, lat2, lon2):
     r = math.pi / 180
     dlat = (lat2 - lat1) * r
@@ -62,14 +65,23 @@ def compute_stats(flight):
 
     airborne = [i for i, a in enumerate(alt) if a > 0]
     i0, i1 = (airborne[0], airborne[-1]) if airborne else (0, len(track) - 1)
-    dep_ts, arr_ts = ts[max(i0 - 1, 0)], ts[min(i1 + 1, len(ts) - 1)]
+    # Wheels-up → wheels-down, never taxi: the adjacent ground point counts
+    # only when it is the take-off/landing roll (≤ EDGE_S away); otherwise
+    # the airborne edge itself. 4150ac1d had its last ground point 9 min
+    # before lift-off (taxi) and was logged 48 min instead of 39 — that
+    # skews every route ETA built from the log.
+    dep_ts, arr_ts = ts[i0], ts[i1]
+    if i0 > 0 and ts[i0] - ts[i0 - 1] <= EDGE_S:
+        dep_ts = ts[i0 - 1]
+    if i1 < len(ts) - 1 and ts[i1 + 1] - ts[i1] <= EDGE_S:
+        arr_ts = ts[i1 + 1]
 
     # trim ground taxi off both ends (keep ~1 min of context) so the chart's
     # time axis spans the flight, not the parking position
-    j0 = max(i0 - 1, 0)
+    j0 = ts.index(dep_ts, max(i0 - 1, 0))
     while j0 > 0 and dep_ts - ts[j0 - 1] <= 60:
         j0 -= 1
-    j1 = min(i1 + 1, len(ts) - 1)
+    j1 = ts.index(arr_ts, i1)
     while j1 < len(ts) - 1 and ts[j1 + 1] - arr_ts <= 60:
         j1 += 1
     track = track[j0:j1 + 1]
@@ -179,6 +191,20 @@ def build_caption(s):
         line += f" — {s['o_city']}"
     lines.append(line)
     lines.append(f"🕐 Saída {dep} → Chegada {arr} ({_fmt_hm(s['duration_s'])})")
+    exp = s.get("expected")
+    if exp:
+        diff = s["duration_s"] - exp["mean_s"]
+        basis = f"média {_fmt_hm(exp['mean_s'])} em {exp['n']} voo{'s' if exp['n'] > 1 else ''}"
+        if exp["reverse"]:
+            basis += " na rota inversa"
+        if abs(diff) < 60:
+            line = f"⏱️ No tempo esperado ({basis})"
+        else:
+            word = "mais rápido" if diff < 0 else "mais lento"
+            line = f"⏱️ *{_fmt_hm(abs(diff))} {word}* que o esperado ({basis})"
+        if exp["n"] >= 2 and not exp["reverse"] and s["duration_s"] < exp["fastest_s"]:
+            line += " · 🏆 mais rápido já registrado"
+        lines.append(line)
     if s["model"]:
         lines.append(f"🛩️ {s['model']}")
     if s["route_km"]:
