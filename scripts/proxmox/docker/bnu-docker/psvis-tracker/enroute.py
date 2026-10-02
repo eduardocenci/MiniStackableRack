@@ -85,6 +85,14 @@ def from_playback(flight):
     return _airport_side(ap.get("origin")), flight.get("track") or [], dest
 
 
+def takeoff_ts(track):
+    """Timestamp of the first airborne point of a track, or None."""
+    for p in track:
+        if ((p.get("altitude") or {}).get("feet") or 0) > 0:
+            return p.get("timestamp")
+    return None
+
+
 def truncate_after_takeoff(track, seconds):
     """First `seconds` of flight (plus a minute of ground context) — used to
     simulate the T+10 moment from a completed flight's full track."""

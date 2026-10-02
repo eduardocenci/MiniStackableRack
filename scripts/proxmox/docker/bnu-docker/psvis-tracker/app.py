@@ -80,6 +80,19 @@ def _resolve_flight_id(flight_id):
     return (entry or {}).get("identification", {}).get("id")
 
 
+def _fill_airports(flight, entry):
+    """FR24 playback often lacks the destination (or origin) that the flight
+    list already has — e.g. 41f01799 SOD→BNU came back with destination=null,
+    so the landing message had no arrival airport. Merge the list's sides in."""
+    ap = flight.setdefault("airport", {}) or {}
+    flight["airport"] = ap
+    eap = (entry or {}).get("airport") or {}
+    for side in ("origin", "destination"):
+        if not ap.get(side) and eap.get(side):
+            ap[side] = eap[side]
+    return flight
+
+
 def _send_report(fid, flight, stats, jid):
     """Render chart+map and send the single flight message via WAHA."""
     png = report.build_report_image(stats)
@@ -102,9 +115,15 @@ def _run_report(flight_id, jid, force, fallback_text=""):
                 log.info("flight %s already reported — skipping", fid)
                 return
             flight = fr24.playback(fid)
+            entry = None
+            try:
+                entry = fr24.list_entry(fid, REG)
+            except Exception:  # noqa: BLE001 — the list only enriches
+                pass
+            _fill_airports(flight, entry)
             stats = report.compute_stats(flight)  # raises while track is short
             try:  # flight log first — a WAHA hiccup must not lose the record
-                db.store_flight(flight, stats)
+                db.store_flight(flight, stats, list_entry=entry)
             except Exception:
                 log.warning("flight log store failed for %s", fid, exc_info=True)
             _send_report(fid, flight, stats, jid)
@@ -144,7 +163,10 @@ def _run_enroute(flight_id, jid, force, sim, delay_s=None):
         if _already_reported(key):
             return
         _mark_reported(key)  # claim it before the slow build
-    for attempt in range(1, 4):
+    waited = False
+    attempt = 0
+    while attempt < 3:
+        attempt += 1
         try:
             try:
                 origin, track, dest_hint = enroute.from_clickhandler(fr24.live_details(fid))
@@ -154,6 +176,19 @@ def _run_enroute(flight_id, jid, force, sim, delay_s=None):
                 origin, track, dest_hint = enroute.from_playback(fr24.playback(fid))
             if sim:  # test path: pretend we are ENROUTE_DELAY_S into the flight
                 track = enroute.truncate_after_takeoff(track, ENROUTE_DELAY_S)
+            elif not force:
+                # The scheduled delay comes from the list's "real departure",
+                # which FR24 sometimes stamps at transponder-on on the ground
+                # (41f01799: 10:20 vs wheels-up 11:22 → update sent at "há
+                # 0 min"). The trail's first airborne point is the truth.
+                t0 = enroute.takeoff_ts(track)
+                wait = (t0 + ENROUTE_DELAY_S - time.time()) if t0 else 0
+                if wait > 30 and not waited:
+                    waited = True
+                    log.info("en-route %s: trail take-off is recent — waiting %ds", fid, wait)
+                    time.sleep(wait)
+                    attempt -= 1  # the wait is not a failed attempt
+                    continue
             caption, png = enroute.build(origin, track, dest_hint, exclude_fid=fid)
             name = f"{fid}-enroute.png"
             with open(os.path.join(CHARTS_DIR, name), "wb") as fh:
@@ -254,7 +289,7 @@ def _spawn_once(key, fn):
     return True
 
 
-def _on_airborne_first_seen(fid, row):
+def _on_airborne_first_seen(fid, row, just_took_off=False):
     o_iata = row[11] or ""
     entry = None
     try:
@@ -264,6 +299,17 @@ def _on_airborne_first_seen(fid, row):
     dep = (((entry or {}).get("time") or {}).get("real") or {}).get("departure") \
         or row[10] or int(time.time())
     now = time.time()
+    if just_took_off:  # we watched it leave the ground in the feed
+        dep = row[10] or int(now)
+    elif now - dep > 15 * 60:
+        # The list's "real departure" can be transponder-on time on the
+        # ground (41f01799: 10:20 vs wheels-up 11:22) — check the live trail.
+        try:
+            t0 = enroute.takeoff_ts(enroute.from_clickhandler(fr24.live_details(fid))[1])
+            if t0:
+                dep = t0
+        except Exception:  # noqa: BLE001
+            pass
     key = f"takeoff:{fid}"
     if not _already_reported(key):
         _mark_reported(key)
@@ -324,7 +370,7 @@ def _live_watch_once():
         airborne = row[14] == 0
         prev = _live_state.get(fid)
         if airborne and (prev is None or not prev["airborne"]):
-            _on_airborne_first_seen(fid, row)
+            _on_airborne_first_seen(fid, row, just_took_off=prev is not None)
         elif not airborne and prev and prev["airborne"]:
             _on_landing_detected(fid)
         _live_state[fid] = {"airborne": airborne}
@@ -387,7 +433,7 @@ def _sync_history(limit=15):
         if not fid or not arr or db.has_flight(fid):
             continue
         try:
-            flight = fr24.playback(fid)
+            flight = _fill_airports(fr24.playback(fid), entry)
             stats = report.compute_stats(flight)
             db.store_flight(flight, stats, list_entry=entry)
             stored += 1
