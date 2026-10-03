@@ -52,6 +52,13 @@ done
 python scripts/devtool.py run bnu-raspberrypi "cd ~/canteiro-jobs && docker compose build && docker compose up -d canteiro-diario"
 ```
 
+**Run the build detached** (03/10/2026): a rebuild that misses the apt cache takes ~15 min on the Pi, `devtool.py run` times out and the SSH drop can kill `compose up` mid-recreate — the old container is left renamed `<hash>_canteiro-diario` and every later `up` fails with a name conflict (fix: `docker rm -f` that container, then `up` again). Use:
+
+```bash
+python scripts/devtool.py run bnu-raspberrypi "cd ~/canteiro-jobs && nohup sh -c 'docker compose build && docker compose up -d canteiro-diario' > /tmp/canteiro-build.log 2>&1 &"
+python scripts/devtool.py run bnu-raspberrypi "tail -3 /tmp/canteiro-build.log; docker ps --filter name=canteiro-diario --format '{{.Status}}'"
+```
+
 One-time: `env/canteiro-diario.env` (from the example + root `.env`), `env/gsa.json`
 (the Sheets service-account key, `ARA_FIN_GSA_KEYFILE`), `sudo mkdir -p
 /var/lib/canteiro-diario && sudo chown 1000:1000 /var/lib/canteiro-diario`.
