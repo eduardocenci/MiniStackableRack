@@ -162,27 +162,33 @@ def ssh_client(device):
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     common = dict(hostname=host, port=22, username=user, timeout=SSH_TIMEOUT,
                   banner_timeout=SSH_TIMEOUT, auth_timeout=SSH_TIMEOUT)
-    # 1) key auth (works on every device except the HA add-on)
-    if KEY_FILE.exists() and comp != "homeassistant":
-        try:
-            client.connect(key_filename=str(KEY_FILE), allow_agent=False,
-                           look_for_keys=False, **common)
-            return client
-        except paramiko.AuthenticationException:
-            pass
-        except socket.gaierror:
-            sys.exit(f"'{host}' does not resolve. Is it on the tailnet? "
-                     f"(`tailscale status`; LAN-only devices need a hop - see REMOTE_ACCESS.md)")
-        except (OSError, socket.timeout) as e:
-            sys.exit(f"cannot reach {host}:22 - {e}")
-    # 2) password from .env
-    if not pw:
-        raise RuntimeError(f"key auth failed for {host} and {pw_key} missing in .env")
+    # Key (works on every device except the HA add-on) with the .env password
+    # as fallback - offered on ONE connection: paramiko tries the key, then the
+    # password, on the same transport. A separate key-only connect costs one
+    # failed-auth disconnect per call wherever the key is not authorized, and
+    # OpenSSH >= 9.8 PerSourcePenalties then drops the source for a while
+    # (bnu-proxmox from mia-desktop, 2026-10-03 - REMOTE_ACCESS.md section 7).
+    key = str(KEY_FILE) if KEY_FILE.exists() and comp != "homeassistant" else None
+    if not key and not pw:
+        raise RuntimeError(f"no key for {host} and {pw_key} missing in .env")
     try:
-        client.connect(password=pw, allow_agent=False, look_for_keys=False, **common)
+        client.connect(key_filename=key, password=pw, allow_agent=False,
+                       look_for_keys=False, **common)
+    except paramiko.AuthenticationException:
+        if not pw:
+            raise RuntimeError(f"key auth failed for {host} and {pw_key} missing in .env")
+        raise
     except socket.gaierror:
         sys.exit(f"'{host}' does not resolve. Is it on the tailnet? "
                  f"(`tailscale status`; LAN-only devices need a hop - see REMOTE_ACCESS.md)")
+    except (OSError, socket.timeout) as e:
+        sys.exit(f"cannot reach {host}:22 - {e}")
+    except paramiko.SSHException as e:
+        if "banner" not in str(e):
+            raise
+        sys.exit(f"{host}:22 closed the connection before the SSH banner - sshd "
+                 f"PerSourcePenalties on this source (wait ~1 min) or an overloaded "
+                 f"host; see REMOTE_ACCESS.md section 7")
     return client
 
 

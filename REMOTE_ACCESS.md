@@ -100,12 +100,16 @@ port-forward through `bnu-proxmox`. Plain `ssh -L` may fail (key auth — see
 Tooling constraints), so use a **paramiko forwarder** (SSHClient with
 `PROXMOX_PW` fallback + `transport.open_channel("direct-tcpip", …)` behind a
 ThreadingTCPServer) forwarding BOTH ports — `18788 → 10.1.1.126:8788`
-(waha-listener) **and** `13000 → 10.1.1.126:3000` (WAHA gateway: media-rescue
-fallback AND `waha_send` group replies both hit it) — then run the pipeline
+(waha-listener) **and** `13000 → 10.1.1.126:3000` (WAHA gateway: the
+reactions/replies enrichment, `waha_send` group replies and the client's
+last-resort media rescue all hit it) — then run the pipeline
 with `BNU_WAHA_LISTENER_URL=http://127.0.0.1:18788
 BNU_WAHA_API_URL=http://127.0.0.1:13000` (`finance.config.cfg` lets env vars
-override `.env`). Forwarding only 8788 makes every media fetch hang ~2 min in
-the WAHA fallback before failing (seen 2026-08-26 from mia-desktop). Google
+override `.env`). Media come **from the listener** since 2026-10-03 — it
+archives each file at webhook time and rescues misses from WAHA server-side
+(waha-listener README); before that every media fell through to the client's
+WAHA fallback, and forwarding only 8788 made each fetch hang ~2 min before
+failing (seen 2026-08-26 from mia-desktop). Google
 Sheets/Drive APIs need no tunnel. Note the Drive-for-Desktop mount and the
 ms365 MCP are NOT available on every machine — a run without them files
 sheet+local archive and leaves Drive uploads/share links as checklist items
@@ -1151,6 +1155,28 @@ before it is relied upon.
   interface, so changing add-on config buys little.
 - **fln has no folders under `scripts/`** — the site exists in `devtool.py`,
   `.env`, and `globalnet/architecture.yaml`, but not in the docs tree.
+- **sshd `PerSourcePenalties` locks out mia-desktop (root cause found
+  2026-10-03).** bnu-proxmox runs OpenSSH 10.0 (Debian 13), whose default
+  `PerSourcePenalties` (`authfail:5 … min:15 max:600`) charges a source
+  address 5 s for every connection that ends in failed authentication; past
+  15 s accumulated, sshd drops that source before the banner, for up to
+  10 min. Symptoms: paramiko "Error reading SSH protocol banner", OpenSSH
+  `kex_exchange_identification: Connection closed by remote host`, and on the
+  host `journalctl -u ssh` →
+  `drop connection #0 from [100.119.15.101]… penalty: failed authentication`.
+  mia-desktop's key (`SHA256:6XWdkUVx…`, comment `netoverview-deploy`) is not
+  in those hosts' authorized_keys (§3 Tooling constraints — bnu-proxmox holds
+  only `root@proxmox` and `eduar@cenci-surface9`), and devtool used to make a
+  key-only connect and then a second connect with the password: one failure
+  per SSH session (`guest` = 2 sessions), so three calls in a few seconds
+  locked this machine out. That is what the "parallel"/"burst" banner errors
+  in §3 were. **devtool.py fixed 2026-10-03:** key and password ride ONE
+  connection (paramiko falls back on the same transport) — six back-to-back
+  sessions, zero drops. Still penalised: plain `ssh` from this machine
+  (refused key) and `scripts/bnu_lan_forward.py` (key-first connect, one
+  failure per run — harmless alone). Locked out anyway? Wait ~1 min. The
+  durable fix is authorizing this key on bnu-proxmox, bnu/bg-raspberrypi and
+  mia-proxmox — **Eduardo's decision, not done.**
 
 Closed on 2026-07-30: `FLN_HA_URL`/`FLN_HA_TOKEN` added (fleet test is now
 25/25), and `FINANCE_NOTIFY_URL` on LXC 101 repointed from the dead
