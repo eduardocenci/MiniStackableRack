@@ -5,12 +5,33 @@ Sole WhatsApp gateway for **all regions**. Runs on bnu-proxmox → LXC 101
 the LXC: `/opt/waha/` (compose + `.sessions` volume — the compose file there
 hardcodes the credentials that the repo keeps in `.env` as `BNU_WAHA_*`).
 
-- Engine: **NOWEB** (Baileys, no browser), image `devlikeapro/waha` (CORE).
+- Engine: **NOWEB** (Baileys, no browser), image `devlikeapro/waha` (CORE) —
+  `GET /api/version` said `2026.8.1` on 2026-10-03.
 - Session `default`, account +49 176 7239 2054, dashboard at
   `http://10.1.1.126:3000/dashboard`.
-- Webhook `message` events → `waha-listener` (see [../waha-listener/](../waha-listener/README.md)).
+- Webhook `message.any` events → `waha-listener` (see [../waha-listener/](../waha-listener/README.md)).
+- Media: WAHA keeps each received file for `WHATSAPP_FILES_LIFETIME` = **180 s**
+  (default, unset here) under `./files`, and advertises it as
+  `http://localhost:3000/api/files/default/<key-id>.<ext>` (no `WAHA_BASE_URL`
+  set). Later, `GET /api/default/chats/<jid>/messages/<id>?downloadMedia=true`
+  re-downloads from WhatsApp's CDN — while the CDN keeps it (per file, up to
+  ~30 days; `410`/`404`/`403` after). waha-listener archives every file at
+  webhook time.
 
 ## Incident log
+
+### 2026-10-03 — listener never archived a media file (RESOLVED 2026-10-03)
+
+waha-listener's `data/media/` was empty: every download since the 2026-08-05
+rebuild (519) failed `Connection refused`, because the event's `media.url`
+points at `localhost:3000` — the listener's own container. Consumers had been
+rescuing media straight from this gateway (`?downloadMedia=true`, host
+rewritten — the 2026-08-05 recipe below), which works only inside the CDN
+window. Fixed in the listener, not here: it rewrites the host to
+`http://waha:3000`, falls back to the messages API with retries, and runs a
+repair pass (details in [../waha-listener/](../waha-listener/README.md)).
+Setting `WAHA_BASE_URL` on this container would also fix the URL, but needs a
+WAHA restart and buys nothing the rewrite doesn't.
 
 ### 2026-07-28 — 405 client-version rejection (RESOLVED 2026-08-05)
 
