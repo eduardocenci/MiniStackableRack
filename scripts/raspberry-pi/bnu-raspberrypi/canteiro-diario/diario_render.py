@@ -171,6 +171,7 @@ td{padding:2.2pt 4pt;border-bottom:.6pt solid var(--line);vertical-align:top} td
 tr{break-inside:avoid}
 .chip{display:inline-block;font-size:6.6pt;letter-spacing:.07em;text-transform:uppercase;font-weight:600;padding:1pt 4pt;border-radius:2pt;white-space:nowrap;line-height:1.35}
 .chip.ok{background:var(--ok-soft);color:var(--ok)} .chip.part{background:var(--warn-soft);color:var(--warn)}
+.conf{display:block;margin-top:1.5pt;font-size:6.4pt;color:var(--ink2);line-height:1.2}
 .chip.no{background:var(--no-soft);color:var(--no)} .chip.na{background:var(--panel);color:var(--ink3);border:.6pt solid var(--line)}
 figure{margin:0;break-inside:avoid} figure img{max-width:100%;height:auto}
 figcaption{font-size:7.8pt;color:var(--ink2);margin-top:3pt;line-height:1.3} figcaption b{color:var(--ink);font-weight:600}
@@ -203,6 +204,13 @@ ul{padding-left:12pt;margin:0 0 5pt} li{margin:2pt 0}
 def chip(kind: str, label: str | None) -> str:
     kind = kind if kind in ("ok", "part", "no", "na") else "na"
     return f'<span class="chip {kind}">{html.escape(label or STATUS_LABEL[kind])}</span>'
+
+
+def status_cell(r: dict) -> str:
+    """Plan/checklist status: chip + optional confirmation source (decisão Eduardo 03/10/2026)."""
+    c = chip(r.get("status", "na"), r.get("status_label"))
+    conf = r.get("confirmacao")
+    return c + (f'<span class="conf">(Conf.: {html.escape(conf)})</span>' if conf else "")
 
 
 def esc(s) -> str:
@@ -247,7 +255,7 @@ def build_html(diario: dict, pack: Path, full: bool, body_class: str = "") -> st
     stats = "".join(f'<div class="stat"><b>{esc(s.get("value"))}</b><span>{esc(s.get("label"))}</span></div>' for s in stat_items)
     entregas = "".join(f'<tr><td><b>{esc(r.get("contrato"))}</b></td><td>{esc(r.get("o_que"))}</td><td>{esc(r.get("previsto"))}</td>'
                        f'<td>{chip(r.get("status","na"), r.get("status_label"))} {rich(r.get("nota"))}</td></tr>' for r in d.get("entregas") or [])
-    plano_slim = "".join(f'<tr><td><b>{esc(r.get("item"))}</b></td><td>{chip(r.get("status","na"), r.get("status_label"))}</td><td>{rich(r.get("evidencia_curta") or r.get("evidencia"))}</td></tr>'
+    plano_slim = "".join(f'<tr><td><b>{esc(r.get("item"))}</b></td><td>{status_cell(r)}</td><td>{rich(r.get("evidencia_curta") or r.get("evidencia"))}</td></tr>'
                          for r in d.get("plano") or [])
     montage = pack / "montage.jpg"
     if montage.exists():
@@ -337,7 +345,7 @@ def week_inner_html(d: dict) -> str:
     nums = (w.get("numeros") or [])[:5]
     cls4 = " n4" if len(nums) == 4 else ""
     numeros = "".join(f'<div class="stat"><b>{esc(x.get("value"))}</b><span>{esc(x.get("label"))}</span></div>' for x in nums)
-    check = "".join(f'<tr><td><b>{esc(r.get("item"))}</b></td><td>{chip(r.get("status", "na"), r.get("status_label"))}</td>'
+    check = "".join(f'<tr><td><b>{esc(r.get("item"))}</b></td><td>{status_cell(r)}</td>'
                     f'<td>{esc(r.get("quando"))}</td><td>{rich(r.get("evidencia"))}</td></tr>' for r in w.get("checklist") or [])
     entregas = "".join(f'<tr><td><b>{esc(r.get("contrato"))}</b></td><td>{esc(r.get("o_que"))}</td>'
                        f'<td>{chip(r.get("status", "na"), r.get("status_label"))} {rich(r.get("nota"))}</td></tr>' for r in w.get("entregas") or [])
