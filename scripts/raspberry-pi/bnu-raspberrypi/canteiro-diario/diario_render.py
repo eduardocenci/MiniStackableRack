@@ -351,9 +351,8 @@ def week_inner_html(d: dict) -> str:
                        f'<td>{chip(r.get("status", "na"), r.get("status_label"))} {rich(r.get("nota"))}</td></tr>' for r in w.get("entregas") or [])
     dias = "".join(f'<tr><td><b>{esc(r.get("dia"))}</b></td><td>{esc(r.get("jornada"))}</td><td>{esc(r.get("equipe"))}</td>'
                    f'<td>{rich(r.get("destaque"))}</td></tr>' for r in w.get("dias") or [])
-    pend = "".join(f"<li>{rich(x)}</li>" for x in w.get("pendencias") or []) or "<li>nada pendente</li>"
-    prox = ("".join(f"<li>{rich(x)}</li>" for x in w.get("proxima_semana") or [])
-            or "<li>plano da próxima semana ainda não preenchido no PlanejadoRealizado</li>")
+    # one page (Eduardo 03/10/2026): no "Fica para a próxima semana" / "Plano da próxima semana" —
+    # semana.pendencias / proxima_semana stay in the repo .md only
     eyebrow = w.get("eyebrow") or f"Casa Hangar · Aeródromo Céu Azul, Araquari · resumo da semana {week} de obra"
     fontes = w.get("fontes") or "diários de obra da semana · PlanejadoRealizado · contratos · câmera"
     return f"""
@@ -373,7 +372,6 @@ def week_inner_html(d: dict) -> str:
 <section><h2>Dia a dia</h2>
   <table><thead><tr><th style="width:13%">Dia</th><th style="width:17%">Jornada</th><th style="width:12%">Equipe</th><th>Destaque</th></tr></thead><tbody>{dias}</tbody></table>
 </section>
-<section><div class="two"><div><h2>Fica para a próxima semana</h2><ul>{pend}</ul></div><div><h2>Plano da próxima semana</h2><ul>{prox}</ul></div></div></section>
 """
 
 
