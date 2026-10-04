@@ -752,7 +752,15 @@ list. Never open a browser unless every CLI/API option is exhausted.
   `json.JSONDecoder().raw_decode`, not `json.loads` (seen 2026-08-28).
 - **Parallel devtool SSH to the same Proxmox host** can throw paramiko
   "Error reading SSH protocol banner" — serialize connections per host and
-  retry (seen 2026-08-28 on bnu/bg-proxmox).
+  retry (seen 2026-08-28 on bnu/bg-proxmox). **Sequential bursts trigger it
+  too** (2026-10-03, bnu-proxmox: `push` → `run` → `guest` back to back, ~5
+  sessions in a few seconds → banner errors / `WinError 10054` for ~1 min,
+  while `tailscale status` showed the node healthy). Recovers by itself; the
+  robust pattern for multi-step work is **one** paramiko session —
+  `devtool.ssh_client("bnu-proxmox")`, then `open_sftp().putfo(...)` +
+  `exec_command("pct push 101 … && pct exec 101 -- bash -c '…' && pct pull 101 …")`
+  + `sftp.getfo(...)` — with a retry/backoff around the connect.
+  `devtool.py guest` alone costs 2 sessions (`pct list` lookup + the command).
 - `mia-raspberrypi` and `mia-nas-ds918plus` were powered off earlier on
   2026-08-28 (SSH timeouts); Eduardo turned them back on the same evening and
   both are reachable again — a mia timeout means power/network at the site,

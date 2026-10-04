@@ -19,6 +19,7 @@ from datetime import datetime
 
 from flask import Flask, jsonify, request, send_from_directory
 
+import cards
 import db
 import enroute
 import fr24
@@ -48,6 +49,9 @@ ENROUTE_DELAY_S = int(os.environ.get("ENROUTE_DELAY_S", "600"))
 AIRBORNE_POLL_S = int(os.environ.get("AIRBORNE_POLL_S", "300"))
 HOME_ICAO = os.environ.get("HOME_ICAO", "SSBL")  # HA announces this one itself
 HOME_IATA = os.environ.get("HOME_IATA", "BNU")
+# At home HA announces the take-off (it calls /report with announce=true); the
+# live watch only steps in if no announcement claimed the flight by then.
+HOME_BACKUP_S = int(os.environ.get("HOME_BACKUP_S", "150"))
 # Live watch: the reg-filtered FR24 feed (same feed the HA integration polls
 # every 10 s for its area) — IMMEDIATE take-off/landing detection anywhere.
 FAST_POLL_S = int(os.environ.get("FAST_POLL_S", "30"))
@@ -70,6 +74,19 @@ def _already_reported(fid):
 def _mark_reported(fid):
     with open(LAST_FILE, "a", encoding="utf-8") as fh:
         fh.write(fid + "\n")
+
+
+_claim_lock = threading.Lock()
+
+
+def _claim(key):
+    """Atomically mark `key` reported; False when another path already has it
+    (HA's announce, the live watch and the list watch race for take-offs)."""
+    with _claim_lock:
+        if _already_reported(key):
+            return False
+        _mark_reported(key)
+        return True
 
 
 def _resolve_flight_id(flight_id):
@@ -117,13 +134,31 @@ def _attach_expectation(flight, stats):
         log.warning("expectation lookup failed", exc_info=True)
 
 
-def _send_report(fid, flight, stats, jid):
-    """Render chart+map and send the single flight message via WAHA."""
-    _attach_expectation(flight, stats)
-    png = report.build_report_image(stats)
-    with open(os.path.join(CHARTS_DIR, f"{fid}.png"), "wb") as fh:
+def _write_chart(name, png):
+    with open(os.path.join(CHARTS_DIR, name), "wb") as fh:
         fh.write(png)
-    waha.send_image(jid, f"{SELF_URL}/charts/{fid}.png", report.build_caption(stats))
+    return f"{SELF_URL}/charts/{name}"
+
+
+def _send_report(fid, flight, stats, jid):
+    """Landing: card 1/2 (route) carrying the full caption, then card 2/2
+    (profile, speed, previous flights). If the cards cannot be rendered the
+    legacy chart+map image goes out instead — the message is never lost."""
+    _attach_expectation(flight, stats)
+    caption = report.build_caption(stats)
+    try:
+        p1, p2 = cards.landing_cards(flight, stats)
+    except Exception:  # noqa: BLE001
+        log.warning("landing cards failed for %s — legacy chart", fid, exc_info=True)
+        p1 = p2 = None
+    if p1:
+        waha.send_image(jid, _write_chart(f"{fid}-1.png", p1), caption)
+        try:
+            waha.send_image(jid, _write_chart(f"{fid}-2.png", p2), "")
+        except Exception:  # noqa: BLE001 — 1/2 (with the caption) already went out
+            log.warning("landing card 2/2 failed for %s", fid, exc_info=True)
+    else:
+        waha.send_image(jid, _write_chart(f"{fid}.png", report.build_report_image(stats)), caption)
     _mark_reported(fid)
     log.info("report for %s sent to %s", fid, jid)
 
@@ -201,6 +236,7 @@ def _run_enroute(flight_id, jid, force, sim, delay_s=None):
                 origin, track, dest_hint = enroute.from_playback(fr24.playback(fid))
             if sim:  # test path: pretend we are ENROUTE_DELAY_S into the flight
                 track = enroute.truncate_after_takeoff(track, ENROUTE_DELAY_S)
+                dest_hint = None  # no hindsight: FR24 rarely knows it at T+10
             elif not force:
                 # The scheduled delay comes from the list's "real departure",
                 # which FR24 sometimes stamps at transponder-on on the ground
@@ -214,11 +250,14 @@ def _run_enroute(flight_id, jid, force, sim, delay_s=None):
                     time.sleep(wait)
                     attempt -= 1  # the wait is not a failed attempt
                     continue
-            caption, png = enroute.build(origin, track, dest_hint, exclude_fid=fid)
-            name = f"{fid}-enroute.png"
-            with open(os.path.join(CHARTS_DIR, name), "wb") as fh:
-                fh.write(png)
-            waha.send_image(jid, f"{SELF_URL}/charts/{name}", caption)
+            st = enroute.analyze(origin, track, dest_hint, exclude_fid=fid)
+            caption = enroute.caption(st)
+            try:
+                png = cards.enroute_card(st, fid)
+            except Exception:  # noqa: BLE001
+                log.warning("en-route card failed for %s — legacy map", fid, exc_info=True)
+                png = enroute.legacy_map(st)
+            waha.send_image(jid, _write_chart(f"{fid}-enroute.png", png), caption)
             log.info("en-route update for %s sent to %s", fid, jid)
             return
         except Exception as exc:  # noqa: BLE001
@@ -253,6 +292,66 @@ def _takeoff_text(entry):
     return "\n".join(lines)
 
 
+def _run_takeoff(fid, jid, fallback_text="", sim=False, entry=None):
+    """Take-off card (image + caption) — plain text if anything fails.
+    `sim` rebuilds the moment of wheels-up from a completed flight's playback
+    (tests, re-sends): trail cut at take-off, no FR24 destination hindsight."""
+    for attempt in range(1, 4):
+        try:  # retries cover fetch + render only — the send happens once
+            fid, png, caption = _build_takeoff(fid, sim, entry)
+        except Exception:  # noqa: BLE001
+            log.warning("take-off card attempt %d/3 failed for %s", attempt, fid, exc_info=True)
+            if attempt < 3 and not sim:
+                time.sleep(20)  # FR24 may not serve the trail yet right after wheels-up
+            continue
+        waha.send_image(jid, _write_chart(f"{fid}-takeoff.png", png), caption)
+        log.info("take-off card for %s sent to %s", fid, jid)
+        return
+    text = fallback_text or (_takeoff_text(entry) if entry else "")
+    if text:
+        waha.send_text(jid, text)
+        log.info("take-off text (fallback) for %s sent to %s", fid, jid)
+
+
+def _build_takeoff(fid, sim, entry):
+    """Fetch + render the take-off card: (fid, png, caption); raises on failure."""
+    if not fid:
+        fid = ((fr24.latest_airborne(REG) or {}).get("identification") or {}).get("id")
+    if not fid:
+        raise LookupError("no airborne PS-VIS flight on FR24")
+    if entry is None:
+        try:
+            entry = fr24.list_entry(fid, REG)
+        except Exception:  # noqa: BLE001 — the list only enriches
+            entry = None
+    if sim:
+        flight = _fill_airports(fr24.playback(fid), entry)
+        origin, track, _ = enroute.from_playback(flight)
+        dep = enroute.takeoff_ts(track)
+        track = [p for p in track if p["timestamp"] <= dep + 60]
+    else:
+        origin, track, _ = enroute.from_clickhandler(fr24.live_details(fid))
+        dep = (enroute.takeoff_ts(track)
+               or (((entry or {}).get("time") or {}).get("real") or {}).get("departure")
+               or int(time.time()))
+    if origin.get("lat") is None and entry:
+        origin = enroute._airport_side(((entry.get("airport") or {}).get("origin")))
+    png, caption = cards.takeoff_card(origin, dep, track, fid,
+                                      next_ts=dep + ENROUTE_DELAY_S)
+    return fid, png, caption
+
+
+def _home_takeoff_backup(fid, entry, dep):
+    """Home take-off: HA announces it through /report (announce=true). If no
+    announcement claimed the flight by HOME_BACKUP_S (HA down / event lost),
+    the tracker sends the card itself."""
+    time.sleep(HOME_BACKUP_S)
+    if not GROUP_JID or time.time() - dep > 20 * 60 or not _claim(f"takeoff:{fid}"):
+        return
+    log.warning("home take-off %s not announced by HA — tracker sends it", fid)
+    _run_takeoff(fid, GROUP_JID, _takeoff_text(entry) if entry else "", entry=entry)
+
+
 def _airborne_check():
     entry = fr24.latest_airborne(REG)
     if not entry:
@@ -265,11 +364,10 @@ def _airborne_check():
     if now - dep > 45 * 60:
         return  # stale — the landing sweep owns it from here
     o_code = ((entry.get("airport") or {}).get("origin") or {}).get("code") or {}
-    if (GROUP_JID and o_code.get("icao") != HOME_ICAO
-            and not _already_reported(f"takeoff:{fid}")):
-        _mark_reported(f"takeoff:{fid}")
-        waha.send_text(GROUP_JID, _takeoff_text(entry))
-        log.info("remote take-off text for %s sent", fid)
+    if GROUP_JID and o_code.get("icao") != HOME_ICAO and _claim(f"takeoff:{fid}"):
+        threading.Thread(target=_run_takeoff, args=(fid, GROUP_JID, _takeoff_text(entry)),
+                         kwargs={"entry": entry}, daemon=True).start()
+        log.info("remote take-off of %s — card scheduled", fid)
     if GROUP_JID and not _already_reported(f"enroute:{fid}"):
         delay = max(0, dep + ENROUTE_DELAY_S - now)
         threading.Thread(
@@ -336,14 +434,18 @@ def _on_airborne_first_seen(fid, row, just_took_off=False):
         except Exception:  # noqa: BLE001
             pass
     key = f"takeoff:{fid}"
-    if not _already_reported(key):
-        _mark_reported(key)
-        o_icao = ((((entry or {}).get("airport") or {}).get("origin") or {})
-                  .get("code") or {}).get("icao") or ""
-        if o_icao == HOME_ICAO or o_iata == HOME_IATA:
-            log.info("take-off %s at home — HA announces it", fid)
-        elif now - dep > 15 * 60:
-            log.info("first sight of %s is mid-flight — skipping take-off text", fid)
+    o_icao = ((((entry or {}).get("airport") or {}).get("origin") or {})
+              .get("code") or {}).get("icao") or ""
+    if o_icao == HOME_ICAO or o_iata == HOME_IATA:
+        # HA announces it (and claims the key via /report announce=true);
+        # the backup only fires if nobody did.
+        if not _already_reported(key) and now - dep <= 15 * 60:
+            log.info("take-off %s at home — HA announces it (backup in %ds)", fid, HOME_BACKUP_S)
+            threading.Thread(target=_home_takeoff_backup, args=(fid, entry, dep),
+                             daemon=True).start()
+    elif _claim(key):
+        if now - dep > 15 * 60:
+            log.info("first sight of %s is mid-flight — skipping take-off card", fid)
         elif GROUP_JID:
             if entry:
                 text = _takeoff_text(entry)
@@ -354,8 +456,9 @@ def _on_airborne_first_seen(fid, row, just_took_off=False):
                     f"🕐 Decolagem {datetime.fromtimestamp(dep, TZ_LOCAL).strftime('%H:%M')}",
                     f"🔗 https://www.flightradar24.com/data/aircraft/ps-vis#{fid}",
                 ]))
-            waha.send_text(GROUP_JID, text)
-            log.info("live watch: take-off text for %s sent", fid)
+            threading.Thread(target=_run_takeoff, args=(fid, GROUP_JID, text),
+                             kwargs={"entry": entry}, daemon=True).start()
+            log.info("live watch: take-off of %s — card scheduled", fid)
     if GROUP_JID and not _already_reported(f"enroute:{fid}"):
         delay = max(0, dep + ENROUTE_DELAY_S - now)
         threading.Thread(
@@ -436,12 +539,22 @@ def report_endpoint():
             )
         return jsonify(status="accepted", flight_id=flight_id, test=test), 202
     if direction == "took_off":
-        threading.Thread(
-            target=_run_enroute,
-            args=(flight_id, jid, force, bool(body.get("sim"))),
-            daemon=True,
-        ).start()
-        return jsonify(status="enroute-scheduled", flight_id=flight_id, test=test), 202
+        sim, announce = bool(body.get("sim")), bool(body.get("announce"))
+        fallback_text = body.get("fallback_text") or ""
+
+        def run():
+            # one thread, in order: the take-off card now, then the T+10 update
+            if announce:
+                # tests/re-sends (force) always go; live: whoever claims first
+                if force or not flight_id or _claim(f"takeoff:{flight_id}"):
+                    _run_takeoff(flight_id, jid, fallback_text, sim=sim)
+                else:
+                    log.info("take-off %s already announced — skipping", flight_id)
+            _run_enroute(flight_id, jid, force, sim)
+
+        threading.Thread(target=run, daemon=True).start()
+        return jsonify(status="takeoff-accepted" if announce else "enroute-scheduled",
+                       flight_id=flight_id, test=test), 202
     return jsonify(status="skipped", reason="unknown direction"), 200
 
 

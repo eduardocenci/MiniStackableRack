@@ -26,7 +26,8 @@ def send_image(jid, image_url, caption):
     r = requests.post(f"{WAHA_BASE_URL}/api/sendImage", json=payload, headers=HEADERS, timeout=60)
     if r.status_code >= 300:
         log.error("sendImage failed (%s): %s — falling back to text", r.status_code, r.text[:300])
-        send_text(jid, caption)
+        if caption:  # a caption-less image (landing card 2/2) has nothing to fall back to
+            send_text(jid, caption)
     return r.status_code
 
 

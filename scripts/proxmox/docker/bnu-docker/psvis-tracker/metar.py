@@ -5,6 +5,8 @@ falls back to the closest reporting station via a bbox query (SBNF Navegantes,
 ~40 km, in Blumenau's case).
 """
 import math
+import time
+from datetime import datetime, timezone
 
 import requests
 
@@ -25,16 +27,39 @@ def _get(params):
     return r.json() if r.status_code != 204 and r.text.strip() else []
 
 
-def by_ids(icaos):
+def _when(at_ts):
+    """Query params for the METAR valid at `at_ts`: none for 'now' (or the
+    last half hour), else aviationweather's `date` (end of window, UTC) +
+    `hours` back — so a backfilled/simulated card shows that day's weather."""
+    if not at_ts or time.time() - at_ts < 1800:
+        return {}
+    return {"date": datetime.fromtimestamp(at_ts, timezone.utc).strftime("%Y%m%d_%H%M"),
+            "hours": 2}
+
+
+def _latest(obs):
+    """One observation per station — the newest (a `hours` window returns several)."""
+    out = {}
+    for m in obs:
+        k = m.get("icaoId")
+        if k and (k not in out or (m.get("obsTime") or 0) > (out[k].get("obsTime") or 0)):
+            out[k] = m
+    return out
+
+
+def by_ids(icaos, at_ts=None):
     """{icao: obs} for the stations that actually report."""
     if not icaos:
         return {}
-    return {m.get("icaoId"): m for m in _get({"ids": ",".join(icaos)})}
+    return _latest(_get({"ids": ",".join(icaos), **_when(at_ts)}))
 
 
-def nearest(lat, lon, box_deg=1.5):
+def nearest(lat, lon, box_deg=1.5, at_ts=None):
     """Closest reporting station to a point, or None. Returns (obs, dist_km)."""
-    obs = _get({"bbox": f"{lat - box_deg},{lon - box_deg},{lat + box_deg},{lon + box_deg}"})
+    obs = _latest(_get({
+        "bbox": f"{lat - box_deg},{lon - box_deg},{lat + box_deg},{lon + box_deg}",
+        **_when(at_ts),
+    })).values()
     best, best_d = None, None
     for m in obs:
         mlat, mlon = m.get("lat"), m.get("lon")
@@ -48,6 +73,31 @@ def nearest(lat, lon, box_deg=1.5):
 
 def _fmt_int_br(n):
     return f"{int(round(n)):,}".replace(",", ".")
+
+
+# One sky-condition key drives both the caption emoji and the card icon
+# (cards._wx_icon), so text and image always agree.
+COND_EMOJI = {"storm": "⛈️", "fog": "🌫️", "rain": "🌧️", "mist": "🌫️",
+              "cloud": "☁️", "partly": "⛅", "clear": "☀️"}
+
+
+def condition(m):
+    """Coarse sky condition of a METAR: storm, fog, rain, mist, cloud, partly, clear."""
+    wx_raw = m.get("wxString") or ""
+    covers = {c.get("cover") for c in (m.get("clouds") or [])}
+    if "TS" in wx_raw:
+        return "storm"
+    if "FG" in wx_raw:
+        return "fog"
+    if any(x in wx_raw for x in ("RA", "DZ", "SH")):
+        return "rain"
+    if "BR" in wx_raw or "HZ" in wx_raw:
+        return "mist"
+    if covers & {"BKN", "OVC"}:
+        return "cloud"
+    if covers & {"SCT", "FEW"}:
+        return "partly"
+    return "clear"
 
 
 def summarize(m, brief=False):
@@ -67,22 +117,7 @@ def summarize(m, brief=False):
         (c.get("base") for c in clouds if c.get("cover") in ("BKN", "OVC") and c.get("base")),
         default=None,
     )
-    covers = {c.get("cover") for c in clouds}
-
-    if "TS" in wx_raw:
-        emoji = "⛈️"
-    elif "FG" in wx_raw:
-        emoji = "🌫️"
-    elif any(x in wx_raw for x in ("RA", "DZ", "SH")):
-        emoji = "🌧️"
-    elif "BR" in wx_raw or "HZ" in wx_raw:
-        emoji = "🌫️"
-    elif covers & {"BKN", "OVC"}:
-        emoji = "☁️"
-    elif covers & {"SCT", "FEW"}:
-        emoji = "⛅"
-    else:
-        emoji = "☀️"
+    emoji = COND_EMOJI[condition(m)]
 
     parts = list(wx)
     if not brief:

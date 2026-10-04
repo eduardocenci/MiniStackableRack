@@ -120,20 +120,22 @@ def _label(c):
     return f"{nm} ({codes})" if codes and codes not in nm else nm
 
 
-def _weather_lines(cur, cands):
+def _weather_lines(cur, cands, at_ts=None):
     """METAR breakdown, one line per candidate destination: conditions at the
     destination (nearest reporting station when the aerodrome publishes no
     METAR) and, briefly, en route (station nearest the remaining-route
-    midpoint). Fully best-effort — any failure just drops the block."""
+    midpoint). `at_ts` = the moment being described (historical METAR when it
+    is in the past — backfills and simulations). Fully best-effort — any
+    failure just drops the block."""
     if not cands:
         return []
     try:
-        reported = metar.by_ids([c["icao"] for c in cands if c.get("icao")])
+        reported = metar.by_ids([c["icao"] for c in cands if c.get("icao")], at_ts=at_ts)
         lines = ["🌦️ Meteo agora (METAR):"]
         for c in cands:
             obs, station = reported.get(c["icao"]), None
             if not obs:
-                near = metar.nearest(c["lat"], c["lon"])
+                near = metar.nearest(c["lat"], c["lon"], at_ts=at_ts)
                 if near:
                     obs, station = near[0], near[0].get("icaoId")
             if not obs:
@@ -144,7 +146,7 @@ def _weather_lines(cur, cands):
             line = f"• {c.get('city') or _codes(c)}: {dest_txt}"
             mid_lat = (cur["latitude"] + c["lat"]) / 2
             mid_lon = (cur["longitude"] + c["lon"]) / 2
-            near_mid = metar.nearest(mid_lat, mid_lon)
+            near_mid = metar.nearest(mid_lat, mid_lon, at_ts=at_ts)
             if near_mid and near_mid[0].get("icaoId") not in (obs.get("icaoId"),):
                 line += f" · em rota: {metar.summarize(near_mid[0], brief=True)}"
             lines.append(line)
@@ -154,8 +156,11 @@ def _weather_lines(cur, cands):
         return []
 
 
-def build(origin, track, dest_hint=None, exclude_fid=None):
-    """Returns (caption, map_png_bytes) for the en-route update."""
+def analyze(origin, track, dest_hint=None, exclude_fid=None):
+    """Everything the en-route update says, as data: take-off time, current
+    position/altitude/speed/heading and the candidate destinations with their
+    history-based arrival windows. The caption and the card both render
+    from this state."""
     if len(track) < 5:
         raise ValueError(f"trail too short ({len(track)} points)")
 
@@ -201,6 +206,11 @@ def build(origin, track, dest_hint=None, exclude_fid=None):
             **cand,
             "diff": diff,
             "freq": len(same) + len(rev),
+            "lo_s": min(durs),
+            "hi_s": max(durs),
+            "reverse": not same,
+            "eta_lo": lo,
+            "eta_hi": hi,
             "eta_txt": f"*~{lo}*" if lo == hi else f"*~{lo}–{hi}*",
         })
     if cands:
@@ -208,28 +218,46 @@ def build(origin, track, dest_hint=None, exclude_fid=None):
         for c in cands:
             c["score"] = 0.5 * (1 - c["diff"] / HEADING_TOLERANCE_DEG) + 0.5 * (c["freq"] / max_freq)
         cands.sort(key=lambda c: -c["score"])
-    cand_lines = [f"• {_label(c)}: chegada {c['eta_txt']}" for c in cands]
 
-    dep_hm = datetime.fromtimestamp(dep_ts, TZ_LOCAL).strftime("%H:%M")
-    mins = int(round((now_ts - dep_ts) / 60))
+    return {
+        "origin": origin, "track": track, "dest_hint": dest_hint,
+        "dep_ts": dep_ts, "cur": cur, "now_ts": now_ts,
+        "cur_alt": cur_alt, "cur_kt": cur_kt, "heading": heading,
+        "cardinal": _cardinal(heading), "cands": cands,
+        "mins": int(round((now_ts - dep_ts) / 60)),
+    }
+
+
+def caption(st):
+    """The en-route WhatsApp caption from an analyze() state."""
+    origin, dest_hint = st["origin"], st["dest_hint"]
+    dep_hm = datetime.fromtimestamp(st["dep_ts"], TZ_LOCAL).strftime("%H:%M")
     o_city = origin.get("city") or _codes(origin)
-
-    caption = [f"🧭 *PS-VIS em voo* — rumo {_cardinal(heading)} ({round(heading)}°)"]
-    caption.append(f"🛫 Decolagem de {o_city} às {dep_hm} · há {mins} min")
+    lines = [f"🧭 *PS-VIS em voo* — rumo {st['cardinal']} ({round(st['heading'])}°)",
+             f"🛫 Decolagem de {o_city} às {dep_hm} · há {st['mins']} min"]
     if dest_hint and (dest_hint.get("city") or _codes(dest_hint)):
-        caption.append(f"✈️ Destino (FR24): {_label(dest_hint)}")
-    caption.append(f"📍 {_fmt_int_br(cur_alt)} ft · {_fmt_int_br(cur_kt)} kt")
-    if cand_lines:
-        caption.append("🎯 Estimativas (histórico de destinos no rumo):")
-        caption.extend(cand_lines)
+        lines.append(f"✈️ Destino (FR24): {_label(dest_hint)}")
+    lines.append(f"📍 {_fmt_int_br(st['cur_alt'])} ft · {_fmt_int_br(st['cur_kt'])} kt")
+    if st["cands"]:
+        lines.append("🎯 Estimativas (histórico de destinos no rumo):")
+        lines.extend(f"• {_label(c)}: chegada {c['eta_txt']}" for c in st["cands"])
     else:
-        caption.append("🎯 Nenhum destino com histórico no rumo — rota nova")
+        lines.append("🎯 Nenhum destino com histórico no rumo — rota nova")
+    lines.extend(_weather_lines(st["cur"], st["cands"], at_ts=st["now_ts"]))
+    return "\n".join(lines)
 
-    caption.extend(_weather_lines(cur, cands))
 
-    img = maptile.render_path(track, width=1200, height=560, plane_heading=heading)
+def legacy_map(st):
+    """The pre-card OSM map — fallback when the card renderer fails."""
     import io
 
+    img = maptile.render_path(st["track"], width=1200, height=560, plane_heading=st["heading"])
     buf = io.BytesIO()
     img.save(buf, format="PNG")
-    return "\n".join(caption), buf.getvalue()
+    return buf.getvalue()
+
+
+def build(origin, track, dest_hint=None, exclude_fid=None):
+    """Returns (caption, map_png_bytes) — the legacy one-call API."""
+    st = analyze(origin, track, dest_hint, exclude_fid=exclude_fid)
+    return caption(st), legacy_map(st)
