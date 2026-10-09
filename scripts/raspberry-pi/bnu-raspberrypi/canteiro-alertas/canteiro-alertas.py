@@ -222,6 +222,15 @@ def snapshot(eid: str) -> bytes | None:
 def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
     now = time.time()
     changed = False
+    if CADASTRO is not None:                     # saída das visitas de carro/van (sync do cadastro)
+        fechadas = CADASTRO.abertas.fechar(now)
+        if fechadas:
+            with VEIC_LOG.open("a", encoding="utf-8") as fh:
+                for v in fechadas:
+                    if v.get("veiculo"):
+                        fh.write(json.dumps({"tipo": "fim", "visita": v["key"], "veiculo": v["veiculo"],
+                                             "inicio": v["inicio"], "fim": v["fim"]}) + "\n")
+            CADASTRO.salvar()
     for m in motor.tick(now):
         dest = deliver(m, None)
         jsonl({"ts": now, "tipo": m.tipo, "destino": dest, "texto": m.texto})
