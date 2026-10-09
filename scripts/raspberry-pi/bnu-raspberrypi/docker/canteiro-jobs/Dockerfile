@@ -1,5 +1,6 @@
-# canteiro-jobs — shared image for the four canteiro job containers
-# (canteiro-watchdog, canteiro-presenca, canteiro-sunset-compare, canteiro-diario).
+# canteiro-jobs — shared image for the five canteiro job containers
+# (canteiro-watchdog, canteiro-presenca, canteiro-sunset-compare, canteiro-diario,
+# canteiro-alertas).
 #
 # Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/docker/canteiro-jobs/
 # Live build context:  bnu-raspberrypi:~/canteiro-jobs/  (this folder plus the
@@ -22,7 +23,8 @@ RUN chmod 0644 /usr/share/fonts/truetype/google/* && fc-cache -f
 # numpy + pillow: alinhamento por software das grades do por do sol
 # (canteiro-sunset-compare + pilar_align — mede o pilar e desloca+recorta)
 # gspread: PlanejadoRealizado (canteiro-diario); paramiko: condfy tags via bnu-proxmox (canteiro-diario)
-RUN pip install --no-cache-dir numpy pillow gspread paramiko
+# requests + pyyaml: canteiro-alertas (the home-ara canteiro/ package: Decisions API client + engine)
+RUN pip install --no-cache-dir numpy pillow gspread paramiko requests pyyaml
 
 # supercronic: cron for containers (runs as PID 1, non-root OK, jobs log to
 # stdout). Schedules honor the container's TZ env.
@@ -32,5 +34,7 @@ RUN chmod 0755 /usr/local/bin/supercronic
 
 WORKDIR /app
 COPY canteiro-watchdog.py canteiro-presenca.py canteiro-sunset-compare.py \
-     pilar_align.py canteiro-diario.py diario_render.py \
+     pilar_align.py canteiro-diario.py diario_render.py canteiro-alertas.py \
      crontab-presenca crontab-sunset-compare crontab-diario /app/
+# home-ara canteiro/ package (homes/ara/canteiro — authoritative there, CI-tested)
+COPY canteiro/ /app/canteiro/
