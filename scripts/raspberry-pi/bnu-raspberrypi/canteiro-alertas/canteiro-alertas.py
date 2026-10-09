@@ -57,8 +57,8 @@ from canteiro.decisions import (MAX_SIDE, BudgetExceeded, Client, build_payload,
                                 prepare_image, usd)
 from canteiro.questions import contexto, question_set  # noqa: E402
 from canteiro.veiculos import (HR_MIN_DUR, Desc, Registro, Visita, VisitasAbertas,  # noqa: E402
-                               apelido_auto, payload_descricao, payload_mesmo, recorte_alta,
-                               registro_from_json, registro_to_json)
+                               apelido_auto, casar_galeria, payload_descricao, payload_galeria,
+                               recorte_alta, registro_from_json, registro_to_json)
 
 TZ = ZoneInfo("America/Sao_Paulo")
 E = os.environ.get
@@ -75,10 +75,14 @@ LABELS = E("LABELS", "car,bus,motorcycle")
 STATE_DIR = Path(E("STATE_DIR", "/var/lib/canteiro-alertas"))
 POLL_S = int(E("POLL_S", "15"))
 STALE_S = int(E("STALE_S", "1800"))            # evento mais velho que isso na 1ª vez = só marca visto
+JANELA_S = int(E("JANELA_S", "7200"))          # quanto do passado cada rodada consulta no Frigate
 BUDGET_USD_DAY = float(E("BUDGET_USD_DAY", "0.30"))
 VERSION = E("QUESTIONS", "v2")
 APRENDER = E("APRENDER_VEICULOS", "1") == "1"      # cadastro de carros/vans (decisão 0011)
 DESCONHECIDOS = E("DESCONHECIDOS", "0") == "1"     # aviso de veículo nunca visto — desligado
+P_CONHECIDO = float(E("P_CONHECIDO", "0.8"))       # galeria: P(id) para "conhecido"
+P_NOVO = float(E("P_NOVO", "0.8"))                 # galeria: P(nenhum) para "novo"; o resto = indeterminado
+CROPS_DIAS = int(E("CROPS_DIAS", "60"))            # recortes de toda visita guardados por N dias
 
 CFG = Config(thr=float(E("THR", "0.85")), min_dur_s=int(E("MIN_DUR_S", "10")),
              pour_alerts=E("POUR_ALERTS", "0") == "1")
@@ -90,6 +94,7 @@ VEIC_JSON = VEIC_DIR / "veiculos.json"
 VEIC_LOG = VEIC_DIR / "veiculos.jsonl"
 VEIC_ABERTAS = VEIC_DIR / "abertas.json"
 REFS = VEIC_DIR / "refs"
+CROPS = VEIC_DIR / "crops"                         # recorte em alta de TODA visita (reinterpretação)
 QS = question_set("veiculos", VERSION)
 CTX = contexto("veiculos", VERSION)
 
@@ -235,7 +240,7 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
         dest = deliver(m, None)
         jsonl({"ts": now, "tipo": m.tipo, "destino": dest, "texto": m.texto})
         changed = True
-    for e in sorted(frigate_events(now - 7200), key=lambda e: e["start_time"]):
+    for e in sorted(frigate_events(now - JANELA_S), key=lambda e: e["start_time"]):
         eid, start = e["id"], float(e["start_time"])
         last = float(e.get("end_time") or now)
         if motor.visto(eid):
@@ -294,6 +299,8 @@ class Cadastro:
     def __init__(self):
         VEIC_DIR.mkdir(parents=True, exist_ok=True)
         REFS.mkdir(exist_ok=True)
+        CROPS.mkdir(exist_ok=True)
+        self.podado = None
         try:
             self.reg = registro_from_json(json.loads(VEIC_JSON.read_text(encoding="utf-8")))
         except (FileNotFoundError, ValueError):
@@ -327,30 +334,41 @@ def aprender(eid, start, last, box, classify, now) -> str | None:
         log(f"{eid}: sem quadro da gravação — visita não aprendida")
         CADASTRO.salvar()
         return None
+    (CROPS / f"{eid}.jpg").write_bytes(raw)  # item 1 (decisão 0011): guarda TODA visita
+    podar_crops()
     url_novo = _img_url(raw)
-    ans = classify.call(payload_descricao(url_novo, crop=True))
+    ans = classify.call(payload_descricao(url_novo, crop=True))      # descrição V2
     desc = Desc.from_answers(ans) if ans else None
     v = Visita(dt.datetime.fromtimestamp(start, TZ).strftime("%Y-%m-%d"), start, last, box, [eid], eid,
                (box[2] * box[3]) if box else 0.0, desc)
-    antes = {x.id for x in CADASTRO.reg.veiculos}
+    probs_log: dict = {}
 
-    def mesmo(ref: str, novo: str):
-        f = REFS / f"{ref}.jpg"
-        if not f.exists():
+    def galeria(cands):
+        """Uma pergunta: a imagem nova é qual dos candidatos (ou nenhum)? Só candidatos com recorte."""
+        itens = []
+        for c in cands:
+            urls = [_img_url((REFS / f"{r}.jpg").read_bytes()) for r in c.referencias[-2:]
+                    if (REFS / f"{r}.jpg").exists()]
+            if urls:
+                itens.append((c.id, apelido_auto(c.desc), urls))
+        if not itens:
+            return {"nenhum": 1.0}           # nenhum candidato comparável no domínio
+        a = classify.call(payload_galeria(url_novo, itens), 0.004)
+        q = a.get("qual") if a else None
+        if q is None or q.refused:
             return None
-        a = classify.call(payload_mesmo(_img_url(f.read_bytes()), url_novo, crop=True), 0.0005)
-        m = a.get("mesmo") if a else None
-        return None if m is None or m.refused else m.probability
+        probs_log.update(sorted(q.probabilities.items(), key=lambda kv: -(kv[1] or 0))[:3])
+        return dict(q.probabilities)
 
-    vid = CADASTRO.reg.casar(v, mesmo) if desc else None
+    vid, desfecho = casar_galeria(CADASTRO.reg, v, galeria, P_CONHECIDO, P_NOVO) if desc else (None, "indeterminado")
     if vid and any(eid in x.referencias for x in CADASTRO.reg.veiculos):
         (REFS / f"{eid}.jpg").write_bytes(raw)
     vis["veiculo"] = vid
-    novo_veiculo = bool(vid) and vid not in antes
+    novo_veiculo = desfecho == "novo"
     with VEIC_LOG.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps({"ts": now, "visita": eid, "inicio": start, "box": box, "veiculo": vid,
-                             "novo": novo_veiculo, "desc": desc.to_json() if desc else None},
-                            ensure_ascii=False) + "\n")
+                             "novo": novo_veiculo, "desfecho": desfecho, "galeria": probs_log,
+                             "desc": desc.to_json() if desc else None}, ensure_ascii=False) + "\n")
     CADASTRO.salvar()
     if novo_veiculo:
         log(f"veículo novo {vid}: {apelido_auto(desc)}")
@@ -365,6 +383,18 @@ def aprender(eid, start, last, box, classify, now) -> str | None:
             except Exception as ex:  # noqa: BLE001
                 log(f"aviso de desconhecido falhou: {ex}")
     return vid
+
+
+def podar_crops() -> None:
+    """Uma vez por dia: apaga recortes de visita com mais de CROPS_DIAS (as referências ficam)."""
+    hoje = dt.date.today()
+    if CADASTRO.podado == hoje:
+        return
+    CADASTRO.podado = hoje
+    limite = time.time() - CROPS_DIAS * 86400
+    for f in CROPS.glob("*.jpg"):
+        if f.stat().st_mtime < limite:
+            f.unlink(missing_ok=True)
 
 
 def motor_quieto(ts: float) -> bool:
