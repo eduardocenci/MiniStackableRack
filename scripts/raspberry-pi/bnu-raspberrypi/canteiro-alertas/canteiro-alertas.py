@@ -20,6 +20,15 @@ MODE (env):
 O aviso de pausa por teto vai sempre ao TEST_JID. Os destinos vêm só do env —
 nunca de conteúdo. Falha da OpenAI = sem alerta (só log), nunca o Frigate cru.
 
+Cadastro de veículos (home-ara decisão 0011, desde 09/10/2026): todo carro/van
+(não caminhão) PARADO ≥ 20 s entra numa VISITA; a 1ª de cada visita é descrita
+(tipo, cor, marca) a partir do recorte em alta da GRAVAÇÃO (2304×1296) e casada
+com STATE_DIR/veiculos/veiculos.json pela pergunta "é o mesmo veículo?" com o
+recorte de referência (refs/). Log em veiculos.jsonl. Só
+descritores e referências — a identidade (de quem é) fica no home-ara
+(docs/diario/veiculos.yaml, interno). DESCONHECIDOS=1 (desligado até o OK do
+Eduardo, ~23/10/2026) avisa veículo nunca visto.
+
 Uso:
   canteiro-alertas.py                 loop
   canteiro-alertas.py --once          uma rodada e sai
@@ -47,6 +56,9 @@ from canteiro.decisions import (MAX_SIDE, BudgetExceeded, Client, build_payload,
                                 data_url, estimate_image_tokens, estimate_text_tokens,
                                 prepare_image, usd)
 from canteiro.questions import contexto, question_set  # noqa: E402
+from canteiro.veiculos import (HR_MIN_DUR, Desc, Registro, Visita, VisitasAbertas,  # noqa: E402
+                               apelido_auto, payload_descricao, payload_mesmo, recorte_alta,
+                               registro_from_json, registro_to_json)
 
 TZ = ZoneInfo("America/Sao_Paulo")
 E = os.environ.get
@@ -65,12 +77,19 @@ POLL_S = int(E("POLL_S", "15"))
 STALE_S = int(E("STALE_S", "1800"))            # evento mais velho que isso na 1ª vez = só marca visto
 BUDGET_USD_DAY = float(E("BUDGET_USD_DAY", "0.30"))
 VERSION = E("QUESTIONS", "v2")
+APRENDER = E("APRENDER_VEICULOS", "1") == "1"      # cadastro de carros/vans (decisão 0011)
+DESCONHECIDOS = E("DESCONHECIDOS", "0") == "1"     # aviso de veículo nunca visto — desligado
 
 CFG = Config(thr=float(E("THR", "0.85")), min_dur_s=int(E("MIN_DUR_S", "10")),
              pour_alerts=E("POUR_ALERTS", "0") == "1")
 STATE = STATE_DIR / "state.json"
 JSONL = STATE_DIR / "alertas.jsonl"
 HEARTBEAT = STATE_DIR / "heartbeat.json"
+VEIC_DIR = STATE_DIR / "veiculos"
+VEIC_JSON = VEIC_DIR / "veiculos.json"
+VEIC_LOG = VEIC_DIR / "veiculos.jsonl"
+VEIC_ABERTAS = VEIC_DIR / "abertas.json"
+REFS = VEIC_DIR / "refs"
 QS = question_set("veiculos", VERSION)
 CTX = contexto("veiculos", VERSION)
 
@@ -161,6 +180,14 @@ class Classifier:
                                               api_key=OPENAI_API_KEY)
         return self.client
 
+    def call(self, payload: dict, est_usd: float = 0.0003):
+        """Qualquer payload (descrição / mesmo veículo) sob o mesmo teto diário; None = falhou."""
+        try:
+            return self._client().decide(payload, est_usd).answers
+        except Exception as e:  # noqa: BLE001
+            log(f"decisions falhou ({type(e).__name__}): {str(e)[:160]}")
+            return None
+
     def __call__(self, raw: bytes) -> tuple[Classif | None, str | None, dict]:
         img, size = prepare_image(raw, MAX_SIDE)
         payload = build_payload(QS, [data_url(img)], CTX, "auto")
@@ -204,6 +231,13 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
         last = float(e.get("end_time") or now)
         if motor.visto(eid):
             motor.atualizar(eid, last)
+            if APRENDER and eid in PENDENTES:
+                if last - start >= HR_MIN_DUR:
+                    PENDENTES.pop(eid)
+                    aprender(eid, start, last, (e.get("data") or {}).get("box"), classify, now)
+                    changed = True
+                elif e.get("end_time"):
+                    PENDENTES.pop(eid)          # passou rápido: não é visita
             continue
         if last - start < CFG.min_dur_s:
             continue
@@ -229,9 +263,104 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
                 log(f"envio falhou ({m.tipo}): {ex}")
             rec["mensagens"].append({"tipo": m.tipo, "destino": dest, "texto": m.texto})
             log(f"{m.tipo} → {dest}: {m.texto.splitlines()[0]}")
+        if APRENDER and c is not None and c.p_truck < CFG.thr and not msgs:
+            p_carro = (c.probs.get("van_equipe") or 0.0) + (c.probs.get("carro_picape") or 0.0)
+            if p_carro >= 0.5:
+                if last - start >= HR_MIN_DUR:
+                    rec["veiculo"] = aprender(eid, start, last, box, classify, now)
+                elif not e.get("end_time"):
+                    PENDENTES[eid] = start      # aprende quando completar 20 s parado
         jsonl(rec)
         changed = True
     return changed
+
+
+# ---------------------------------------------------------------- cadastro de veículos
+def _img_url(raw: bytes) -> str:
+    img, _ = prepare_image(raw, MAX_SIDE)
+    return data_url(img)
+
+
+class Cadastro:
+    def __init__(self):
+        VEIC_DIR.mkdir(parents=True, exist_ok=True)
+        REFS.mkdir(exist_ok=True)
+        try:
+            self.reg = registro_from_json(json.loads(VEIC_JSON.read_text(encoding="utf-8")))
+        except (FileNotFoundError, ValueError):
+            self.reg = Registro()
+        try:
+            self.abertas = VisitasAbertas(json.loads(VEIC_ABERTAS.read_text(encoding="utf-8")))
+        except (FileNotFoundError, ValueError):
+            self.abertas = VisitasAbertas()
+
+    def salvar(self) -> None:
+        for path, obj in ((VEIC_JSON, registro_to_json(self.reg)), (VEIC_ABERTAS, self.abertas.estado())):
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
+
+
+CADASTRO: Cadastro | None = None
+PENDENTES: dict[str, float] = {}       # carro/van visto com < 20 s, ainda em curso
+
+
+def aprender(eid, start, last, box, classify, now) -> str | None:
+    """Uma visita nova de carro/van parado → recorte em alta + descrição + casamento."""
+    global CADASTRO
+    CADASTRO = CADASTRO or Cadastro()
+    vis, nova = CADASTRO.abertas.observar(eid, start, last, box)
+    if not nova:
+        CADASTRO.salvar()
+        return vis.get("veiculo")
+    raw = recorte_alta(FRIGATE_URL, FRIGATE_CAMERA, start, last - start, box)
+    if raw is None:                          # sem gravação: não aprende (só log)
+        log(f"{eid}: sem quadro da gravação — visita não aprendida")
+        CADASTRO.salvar()
+        return None
+    url_novo = _img_url(raw)
+    ans = classify.call(payload_descricao(url_novo, crop=True))
+    desc = Desc.from_answers(ans) if ans else None
+    v = Visita(dt.datetime.fromtimestamp(start, TZ).strftime("%Y-%m-%d"), start, last, box, [eid], eid,
+               (box[2] * box[3]) if box else 0.0, desc)
+    antes = {x.id for x in CADASTRO.reg.veiculos}
+
+    def mesmo(ref: str, novo: str):
+        f = REFS / f"{ref}.jpg"
+        if not f.exists():
+            return None
+        a = classify.call(payload_mesmo(_img_url(f.read_bytes()), url_novo, crop=True), 0.0005)
+        m = a.get("mesmo") if a else None
+        return None if m is None or m.refused else m.probability
+
+    vid = CADASTRO.reg.casar(v, mesmo) if desc else None
+    if vid and any(eid in x.referencias for x in CADASTRO.reg.veiculos):
+        (REFS / f"{eid}.jpg").write_bytes(raw)
+    vis["veiculo"] = vid
+    novo_veiculo = bool(vid) and vid not in antes
+    with VEIC_LOG.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ts": now, "visita": eid, "inicio": start, "box": box, "veiculo": vid,
+                             "novo": novo_veiculo, "desc": desc.to_json() if desc else None},
+                            ensure_ascii=False) + "\n")
+    CADASTRO.salvar()
+    if novo_veiculo:
+        log(f"veículo novo {vid}: {apelido_auto(desc)}")
+        if DESCONHECIDOS and not motor_quieto(start):
+            t = dt.datetime.fromtimestamp(start, TZ)
+            from canteiro.alertas import Mensagem
+            m = Mensagem("desconhecido", "grupo",
+                         f"🚗 *Veículo não visto antes no canteiro* — {t:%H:%M}\n{apelido_auto(desc)}\n"
+                         "_Alerta automático da câmera_", eid)
+            try:
+                deliver(m, raw)
+            except Exception as ex:  # noqa: BLE001
+                log(f"aviso de desconhecido falhou: {ex}")
+    return vid
+
+
+def motor_quieto(ts: float) -> bool:
+    h = dt.datetime.fromtimestamp(ts, TZ).hour
+    return h >= CFG.quiet_from or h < CFG.quiet_to
 
 
 def heartbeat(ok: bool, err: str | None = None) -> None:
@@ -283,7 +412,8 @@ def main() -> int:
     motor = Motor(CFG, load_state())
     classify = Classifier()
     log(f"canteiro-alertas MODE={MODE} limiar={CFG.thr} gatilho={CFG.min_dur_s}s perguntas={VERSION} "
-        f"concretagem={'on' if CFG.pour_alerts else 'off'}")
+        f"concretagem={'on' if CFG.pour_alerts else 'off'} cadastro={'on' if APRENDER else 'off'} "
+        f"desconhecidos={'on' if DESCONHECIDOS else 'off'}")
     first = True
     while True:
         try:

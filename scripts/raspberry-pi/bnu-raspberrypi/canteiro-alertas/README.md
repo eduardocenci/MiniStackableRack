@@ -34,6 +34,25 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
 - OpenAI failure (key, IP, credits, network) = no alert, only a log line.
 - Concrete pours (start + end summary): **off** (`POUR_ALERTS=0`) until a pour validates them.
 
+## Vehicle registry (home-ara decision 0011, since 09/10/2026)
+
+Every car/van that stays ≥ 20 s (not a truck) is **learned**: the service crops it
+from the Frigate **recording** frame (2304×1296, ~10× the snapshot), asks the
+Decisions API for descriptors (type, colour, make, sharpness) and "is it the SAME
+vehicle?" against the reference crops, and files it under a stable `V-NNN`:
+
+| file (`/var/lib/canteiro-alertas/veiculos/`) | |
+|---|---|
+| `veiculos.json` | operational registry — descriptors + reference ids, **no identity** (seeded from the home-ara backfill, same `V-NNN` sequence) |
+| `refs/<event>.jpg` | high-res reference crops |
+| `veiculos.jsonl` | one line per new visit (`veiculo`, `novo`, descriptors) |
+| `abertas.json` | visits in progress |
+
+Who a vehicle belongs to lives only in home-ara `docs/diario/veiculos.yaml`
+(internal; gate tags, Wi-Fi, WhatsApp and diário context; owner only with Eduardo's
+confirmation). `DESCONHECIDOS=1` turns on the "veículo não visto antes" alert —
+off during the two-week learning window (decisão Eduardo 09/10/2026).
+
 ## Modes — each step only with Eduardo's OK
 
 | `MODE` | sends to |

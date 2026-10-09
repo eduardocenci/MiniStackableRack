@@ -54,7 +54,7 @@ state dir once (`sudo install -d -o 1000 -g 1000 /var/lib/canteiro-alertas`):
 ```bash
 MSYS_NO_PATHCONV=1 python scripts/devtool.py push bnu-raspberrypi \
   scripts/raspberry-pi/bnu-raspberrypi/canteiro-alertas/canteiro-alertas.py canteiro-jobs/canteiro-alertas.py
-for f in __init__ alertas decisions questions metrics datasets config; do
+for f in __init__ alertas decisions questions metrics datasets config veiculos; do
   MSYS_NO_PATHCONV=1 python scripts/devtool.py push bnu-raspberrypi \
     "homes/ara/canteiro/$f.py" "canteiro-jobs/canteiro/$f.py"
 done
