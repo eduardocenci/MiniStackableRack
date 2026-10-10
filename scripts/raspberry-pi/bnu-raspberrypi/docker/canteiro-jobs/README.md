@@ -8,6 +8,7 @@ systemd timers on 2026-08-29 (decisão Eduardo):
 | `canteiro-watchdog` | 60 s loop (shell loop, script stays a oneshot) | WhatsApp alert with the last cached frame when the ARA canteiro relay drops; recovery message when it returns. Also auto-heals the /live HLS wedge: relay up + muxer crash-looping → restarts go2rtc then canteiro-hls via the mounted docker socket (`group_add` 984 = host `docker` group), notes to the SmokeTests group (`HEAL_JID`) |
 | `canteiro-presenca` | supercronic, daily 20:00 America/Sao_Paulo | "who was at the obra today" report from ara netoverview `/api/presence` |
 | `canteiro-sunset-compare` | supercronic, Mon–Fri 20:10 America/Sao_Paulo | yesterday-vs-today sunset montage (rclone ⇄ Drive, ffmpeg vstack), archived to Drive + sent to WhatsApp |
+| `canteiro-alertas` | 15 s polling loop | Truck alerts: Frigate vehicle events ≥ 10 s → OpenAI Decisions API → one alert per truck (snapshot + caption) to WhatsApp "Casa Céu Azul"; `MODE` log/shadow/live. Added 2026-10-09 — see [`../../canteiro-alertas/`](../../canteiro-alertas/) (home-ara decision 0010) |
 | `canteiro-diario` | supercronic, Mon–Fri 20:15 collect · every 10 min 20:50→23:50 publish | Diário de Obra ARA: evidence pack → Drive (Frigate, timelapse, Wi-Fi, tags, plan, WhatsApp); after the cloud routine writes `diario.json`, renders the one-pager (Chromium), sends the JPG to the group and prints on the BNU HP (host CUPS socket). Added 2026-09-09 — see [`../../canteiro-diario/`](../../canteiro-diario/) |
 
 The scripts themselves stay authoritative in their sibling folders
@@ -44,6 +45,19 @@ for f in docker/canteiro-jobs/{Dockerfile,compose.yml,crontab-presenca,crontab-s
 done
 python scripts/devtool.py run bnu-raspberrypi \
   "cd ~/canteiro-jobs && docker compose build && docker compose up -d"
+```
+
+`canteiro-alertas` also needs its script and the home-ara `canteiro/` package
+(authoritative in `homes/ara/canteiro/`, copied — never edited — here), and its
+state dir once (`sudo install -d -o 1000 -g 1000 /var/lib/canteiro-alertas`):
+
+```bash
+MSYS_NO_PATHCONV=1 python scripts/devtool.py push bnu-raspberrypi \
+  scripts/raspberry-pi/bnu-raspberrypi/canteiro-alertas/canteiro-alertas.py canteiro-jobs/canteiro-alertas.py
+for f in __init__ alertas decisions questions metrics datasets config veiculos; do
+  MSYS_NO_PATHCONV=1 python scripts/devtool.py push bnu-raspberrypi \
+    "homes/ara/canteiro/$f.py" "canteiro-jobs/canteiro/$f.py"
+done
 ```
 
 Not yet on the 5-min DockerHub pull cron — the image is built locally on the

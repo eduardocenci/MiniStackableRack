@@ -94,3 +94,23 @@ services:
       - /run/cups:/run/cups
       - /var/lib/canteiro-diario:/var/lib/canteiro-diario
     command: ["supercronic", "-passthrough-logs", "/app/crontab-diario"]
+
+  canteiro-alertas:
+    # Truck alerts from the canteiro camera → WhatsApp "Casa Céu Azul" (home-ara decision 0010,
+    # phase 2; decisão Eduardo 09/10/2026). Polls Frigate, asks the OpenAI Decisions API, runs the
+    # episode engine from homes/ara/canteiro/ (copied into the image). MODE in the env file:
+    # log (no sends) → shadow (SmokeTests) → live — each step only with Eduardo's OK.
+    image: canteiro-jobs:local
+    container_name: canteiro-alertas
+    network_mode: host
+    user: "1000:1000"
+    restart: unless-stopped
+    init: true
+    env_file: env/canteiro-alertas.env
+    environment:
+      TZ: America/Sao_Paulo
+      PYTHONUNBUFFERED: "1"
+      STATE_DIR: /var/lib/canteiro-alertas
+    volumes:
+      - /var/lib/canteiro-alertas:/var/lib/canteiro-alertas
+    command: ["python3", "/app/canteiro-alertas.py"]
