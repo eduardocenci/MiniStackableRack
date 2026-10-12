@@ -19,6 +19,32 @@ the Docker-bridge `172.17.0.x` ghosts the netoverview scanner used to
 register during a `docker build` on the ara Pi (root-fixed in
 netoverview `d7f312a`, 31/08/2026).
 
+## After-hours block (since 2026-10-11)
+
+Part of the crew has been sleeping at the canteiro since the week of
+05/10/2026 (first night on the network: 07→08/10, 4 devices), so the report
+also carries a **🌙 Fora do expediente** block: the devices seen on the LAN
+during the last *complete* night window — default **20:00 → 05:00**
+(`NIGHT_START_H` / `NIGHT_END_H`, BRT hours), the same strict window the
+Diário de Obra pack uses (`prev_night_20_05`), so late leavers (crew is gone
+by ~17:00) and 06:00 arrivals don't count. Tonight's window only closes
+tomorrow at 05:00, so the 20:00 report shows **last night** plus a preview
+line: devices seen between 19:00 and 20:00 today.
+
+Per device it only says *already on at 20:00* or *arrived HH:MM* — never
+until when: sleeping phones drop and rejoin the Wi-Fi all night (night of
+08→09/10: 6, 9 and 11 online/offline transitions on 3 of the 4 devices),
+and `/api/presence` clamps `last_seen` to the window edge.
+
+```
+🌙 *Fora do expediente — noite de 08→09/10, 20:00 às 05:00*
+*4* aparelhos de pessoas ficaram na rede do canteiro:
+• A23-de-Edy — já na rede às 20:00
+• Redmi-13C — já na rede às 20:00
+…
+Na rede entre 19:00 e 20:00 de hoje: *0* — prévia da noite de hoje
+```
+
 ## Install (container since 2026-08-29)
 
 Packaging, deploy, env layout and rollback live in
@@ -43,6 +69,13 @@ docker exec canteiro-presenca python3 /app/canteiro-presenca.py --test <chatId> 
 (Verified 2026-08-26 on systemd and 2026-08-29 in the container, HTTP 201.)
 
 The message is the real report prefixed with `[TESTE]`.
+
+To only look at the report without sending anything (no WAHA credentials
+needed — it just reads `/api/presence`):
+
+```
+docker exec canteiro-presenca python3 /app/canteiro-presenca.py --dry-run
+```
 
 ## Giving devices real names
 
