@@ -96,8 +96,9 @@ services:
     command: ["supercronic", "-passthrough-logs", "/app/crontab-diario"]
 
   canteiro-alertas:
-    # Truck alerts from the canteiro camera → WhatsApp "Casa Céu Azul" (home-ara decision 0010,
-    # phase 2; decisão Eduardo 09/10/2026). Polls Frigate, asks the OpenAI Decisions API, runs the
+    # Truck alerts from the canteiro camera → WhatsApp obra group "Cenci Céu Azul Casa-Hangar"
+    # (home-ara decision 0010, phase 2; decisão Eduardo 09/10/2026, obra group since 13/10/2026;
+    # unknown-vehicle alerts stay in "Casa Céu Azul"). Polls Frigate, asks the OpenAI Decisions API, runs the
     # episode engine from homes/ara/canteiro/ (copied into the image). MODE in the env file:
     # log (no sends) → shadow (SmokeTests) → live — each step only with Eduardo's OK.
     image: canteiro-jobs:local

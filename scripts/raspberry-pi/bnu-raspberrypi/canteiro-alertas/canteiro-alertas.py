@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """canteiro-alertas — alertas de caminhão da câmera do canteiro no WhatsApp.
 
-home-ara decisão 0010, fase 2 (decisão Eduardo 09/10/2026: "Implement for 'Casa Céu Azul'").
+home-ara decisão 0010, fase 2 (decisão Eduardo 09/10/2026: "Implement for 'Casa Céu Azul'";
+desde 13/10/2026 os caminhões vão ao grupo da obra "Cenci Céu Azul Casa-Hangar").
 
 Loop a cada POLL_S segundos:
   Frigate (bnu LXC 105) /api/events da câmera `canteiro`, rótulos de veículo →
@@ -16,7 +17,9 @@ imagem canteiro-jobs — este arquivo só faz a E/S.
 MODE (env):
   log     decide e grava em alertas.jsonl, NÃO envia nada (padrão — primeiro deploy)
   shadow  envia ao TEST_JID (Casa SmokeTests) com a marca "SOMBRA"
-  live    envia ao GROUP_JID ("Casa Céu Azul")
+  live    envia ao GROUP_JID (grupo da obra "Cenci Céu Azul Casa-Hangar", decisão
+          Eduardo 13/10/2026) — exceto o aviso de veículo desconhecido, que vai ao
+          INTERNO_JID ("Casa Céu Azul"): o cadastro de veículos é interno
 O aviso de pausa por teto vai sempre ao TEST_JID. Os destinos vêm só do env —
 nunca de conteúdo. Falha da OpenAI = sem alerta (só log), nunca o Frigate cru.
 
@@ -66,7 +69,8 @@ MODE = E("MODE", "log")
 WAHA_URL = E("WAHA_URL", "http://10.1.1.126:3000")
 WAHA_KEY = E("WAHA_KEY", "")
 WAHA_SESSION = E("WAHA_SESSION", "default")
-GROUP_JID = E("GROUP_JID", "")                 # "Casa Céu Azul" (ARA_ALERTAS_GROUP_JID)
+GROUP_JID = E("GROUP_JID", "")                 # grupo da obra (ARA_FIN_GROUP_JID) — caminhões, concretagem
+INTERNO_JID = E("INTERNO_JID", "")             # "Casa Céu Azul" (ARA_ALERTAS_GROUP_JID) — veículo desconhecido
 TEST_JID = E("TEST_JID", "")                   # Casa SmokeTests
 OPENAI_API_KEY = E("OPENAI_API_KEY", "")       # a mesma chave do bnu HA (allowlist de IP do bnu)
 FRIGATE_URL = E("FRIGATE_URL", "http://bnu-frigate:5000")
@@ -140,11 +144,13 @@ def deliver(m, jpg: bytes | None) -> str:
     """Envia uma Mensagem do motor conforme o MODE; devolve o destino usado (ou 'log')."""
     if MODE == "log":
         return "log"
+    interno = m.tipo == "desconhecido"   # cadastro de veículos é interno: nunca ao grupo da obra
     if m.destino == "teste" or MODE == "shadow":
         chat = TEST_JID
-        text = m.texto if m.destino == "teste" else f"👁️ *SOMBRA* (iria ao Casa Céu Azul)\n{m.texto}"
+        alvo = "Casa Céu Azul" if interno else "grupo da obra"
+        text = m.texto if m.destino == "teste" else f"👁️ *SOMBRA* (iria ao {alvo})\n{m.texto}"
     else:
-        chat, text = GROUP_JID, m.texto
+        chat, text = (INTERNO_JID if interno else GROUP_JID), m.texto
     if not chat:
         raise RuntimeError(f"destino vazio para {m.tipo} (MODE={MODE})")
     send(chat, text, jpg)

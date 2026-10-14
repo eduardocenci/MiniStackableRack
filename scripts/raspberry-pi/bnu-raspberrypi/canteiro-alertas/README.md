@@ -2,17 +2,18 @@
 
 Phase 2 of home-ara **decision 0010** (`homes/ara/decisions/0010-decisions-api-canteiro.md`):
 the canteiro camera asks the OpenAI **Decisions API** about every vehicle that
-Frigate sees, and posts one alert per truck — snapshot + caption — to the
-WhatsApp group **"Casa Céu Azul"** (decisão Eduardo 09/10/2026, after the
-backtest: 0 false alerts and 92% correct truck type in 11 camera days; ~1 in 4
-trucks does not alert, mostly because Frigate never produced a usable event).
+Frigate sees, and posts one alert per truck — snapshot + caption — to the obra
+WhatsApp group **"Cenci Céu Azul Casa-Hangar"** (decisão Eduardo 13/10/2026; from
+09/10 to 13/10 they went to "Casa Céu Azul", after the backtest: 0 false alerts
+and 92% correct truck type in 11 camera days; ~1 in 4 trucks does not alert,
+mostly because Frigate never produced a usable event).
 
 ```
 Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberrypi, container)
    camera "canteiro"      snapshot.jpg     │  ≥ 10 s vehicle event
                                             ├─▶ OpenAI /v1/decisions (V2 questions, gpt-6-luna)
                                             ├─▶ canteiro.alertas.Motor (episodes, quiet hours, caps)
-                                            └─▶ WAHA sendImage (LXC 101) ──▶ "Casa Céu Azul" / SmokeTests
+                                            └─▶ WAHA sendImage (LXC 101) ──▶ obra group / SmokeTests
 ```
 
 | | |
@@ -51,15 +52,21 @@ vehicle?" against the reference crops, and files it under a stable `V-NNN`:
 Who a vehicle belongs to lives only in home-ara `docs/diario/veiculos.yaml`
 (internal; gate tags, Wi-Fi, WhatsApp and diário context; owner only with Eduardo's
 confirmation). `DESCONHECIDOS=1` turns on the "veículo não visto antes" alert —
-off during the two-week learning window (decisão Eduardo 09/10/2026).
+off during the two-week learning window (decisão Eduardo 09/10/2026). When on, it
+goes to `INTERNO_JID` ("Casa Céu Azul"), **never** to the obra group: the registry
+is internal (an empty `INTERNO_JID` fails that send, it does not fall back).
 
 ## Modes — each step only with Eduardo's OK
 
 | `MODE` | sends to |
 |---|---|
 | `log` | nothing — decisions in `alertas.jsonl` (first deploy) |
-| `shadow` | Casa SmokeTests, caption prefixed "👁️ SOMBRA (iria ao Casa Céu Azul)" |
-| `live` | "Casa Céu Azul" (`GROUP_JID` = `ARA_ALERTAS_GROUP_JID` = `ARA_WHATSAPP_GROUP_JID`) |
+| `shadow` | Casa SmokeTests, caption prefixed "👁️ SOMBRA (iria ao grupo da obra)" |
+| `live` | trucks (and pours, when on) → obra group "Cenci Céu Azul Casa-Hangar" (`GROUP_JID` = `ARA_FIN_GROUP_JID`, since 13/10/2026); unknown vehicle → "Casa Céu Azul" (`INTERNO_JID` = `ARA_ALERTAS_GROUP_JID`) |
+
+Live posts in the obra group are transcribed by waha-listener like any other
+message; home-ara `scripts/whatsapp.py` tags the `🚚` captions as `rotina`
+(topic `#pi-canteiro`).
 
 Change the mode: edit `MODE=` in the env file, then
 `python scripts/devtool.py run bnu-raspberrypi "cd ~/canteiro-jobs && docker compose up -d canteiro-alertas"`.

@@ -1124,7 +1124,9 @@ the host-side manual `canteiro-ptz` copy),
 socat relay to WAHA — and the Casa SmokeTests JID; the timelapse script's
 rc≠0 failure alerts, 2026-09-04),
 `bnu-raspberrypi:~/canteiro-jobs/env/canteiro-alertas.env` (WAHA creds, the
-"Casa Céu Azul" JID = `ARA_ALERTAS_GROUP_JID`, the SmokeTests JID and
+obra-group JID `GROUP_JID` = `ARA_FIN_GROUP_JID` (truck alerts, since
+2026-10-13), the "Casa Céu Azul" JID `INTERNO_JID` = `ARA_ALERTAS_GROUP_JID`,
+the SmokeTests JID and
 **`OPENAI_API_KEY` = `BNU_HA_FRIGATE_OPENAI_API_KEY`** — the same OpenAI key as
 bnu HA, IP-allowlisted to bnu, so it only works from bnu hosts; rotating it
 means HA `secrets.yaml` + this file; 2026-10-09, home-ara decision 0010).
