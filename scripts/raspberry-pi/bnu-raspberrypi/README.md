@@ -24,6 +24,7 @@ removed on 2026-08-29 (decisão Eduardo: camera on the Pi screen not needed).
 | [`canteiro-presenca/`](canteiro-presenca/) | container, daily 20:00 America/Sao_Paulo ([`docker/canteiro-jobs/`](docker/canteiro-jobs/)): WhatsApp report of how many people were at the ARA obra today, from the ara netoverview `/api/presence` |
 | [`canteiro-sunset-compare/`](canteiro-sunset-compare/) | container, Mon–Fri 20:10 America/Sao_Paulo ([`docker/canteiro-jobs/`](docker/canteiro-jobs/)): fetches yesterday's + today's `posicao1/por-do-sol` frames from Drive `CeuAzul/Timelapse/` (rclone), stacks them vertically (ffmpeg) and sends the "Dia de Trabalho" comparison to WhatsApp via WAHA `sendImage` |
 | wayvnc | VNC access to the desktop session |
+| [`tailscale-exit-node/`](tailscale-exit-node/) | Tailscale exit node — tailnet clients can route their internet traffic out through the bnu WAN (since 2026-10-18) |
 
 ## Docker auto-update cron (and disk-space guard)
 
