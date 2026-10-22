@@ -1,0 +1,19 @@
+# router-proxy — Starlink ROUTER gRPC API bridged onto the tailnet.
+#
+# The router (192.168.1.1:9000, plaintext gRPC, no auth) is reachable only from
+# the house LAN; this relay makes it `ara-raspberrypi2:9000` so canteiro-vigia
+# on bnu-raspberrypi can ask `wifi_get_clients` — every associated Wi-Fi client
+# with its `associatedTimeS`, i.e. the exact second a phone joined the canteiro
+# network (the weekend "friend or stranger" signal). Same shape as
+# starlink-proxy (which relays the DISH, :9200): pinned alpine/socat, host
+# networking.
+#
+# Authoritative copy: scripts/raspberry-pi/ara-raspberrypi/docker/router-proxy/
+# Live copy:          ara-raspberrypi2:~/router-proxy/
+services:
+  router-proxy:
+    image: alpine/socat:1.8.0.3   # pinned; entrypoint is socat, command = its args
+    container_name: router-proxy
+    network_mode: host   # listen on all interfaces incl. the tailnet IP
+    restart: unless-stopped
+    command: TCP-LISTEN:9000,fork,reuseaddr TCP:192.168.1.1:9000

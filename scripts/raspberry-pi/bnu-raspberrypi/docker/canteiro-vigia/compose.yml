@@ -1,0 +1,27 @@
+# canteiro-vigia — weekend watch of the ARA canteiro camera → WhatsApp "Casa Céu Azul"
+# (decisão Eduardo 22/10/2026). Sat/Sun any person/vehicle Frigate tracks = one message
+# per episode: snapshot + whether a device joined the canteiro Wi-Fi in the following
+# minute (🟢) or none did (🔴). Reads the Starlink router through the ara Pi's
+# router-proxy relay. MODE in the env file: log → shadow (SmokeTests) → live — each
+# step only with Eduardo's OK.
+#
+# Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/docker/canteiro-vigia/
+# Live copy:          bnu-raspberrypi:~/canteiro-vigia/  (env/canteiro-vigia.env NOT in git)
+services:
+  canteiro-vigia:
+    build: .
+    image: canteiro-vigia:local
+    container_name: canteiro-vigia
+    network_mode: host   # WAHA on the bnu LAN, Frigate + ara Pi over the tailnet
+    user: "1000:1000"
+    restart: unless-stopped
+    init: true
+    env_file: env/canteiro-vigia.env
+    environment:
+      TZ: America/Sao_Paulo
+      PYTHONUNBUFFERED: "1"
+      STATE_DIR: /var/lib/canteiro-vigia
+    volumes:
+      # state.json (seen events, open episode, send counters — a restart never re-alerts),
+      # vigia.jsonl, heartbeat.json; owned by uid 1000 on the host
+      - /var/lib/canteiro-vigia:/var/lib/canteiro-vigia
