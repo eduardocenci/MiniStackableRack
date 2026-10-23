@@ -8,11 +8,11 @@ listens on the LXC).
 
 | Fact | Value |
 |---|---|
-| Active config | **`/config/config.yml`** — mirrored by [`config.yml`](config.yml) here (`<BNU_CAMERA_PASSWORD>` placeholder, value in `.env`) |
+| Active config | **`/config/config.yml`** — mirrored by [`config.yml`](config.yml) here. Placeholders: `<BNU_DOORBELL_PW>` (the Hikvision NVR `192.168.0.22` and the doorbell share one admin password — there is **no** `BNU_CAMERA_PASSWORD` key) and `<BNU_MQTT_PASSWORD>`; values in `.env`. Edits made in the web UI's config editor land only in the live file (the canteiro `motion.mask` lived there alone until 2026-10-23) — **pull before you push** |
 | ⚠ Decoy config | `/opt/frigate/config/config.yml` is the dev-checkout 16-line example — **not** the active file (cost a session real time on 2026-08-26) |
 | Services | `frigate.service`, `go2rtc.service` (Frigate's internal go2rtc — its config is generated from `config.yml`'s `go2rtc:` block), `nginx.service` |
 | Logs | `/dev/shm/logs/frigate/current`, `/dev/shm/logs/go2rtc/current` |
-| Media | `/media/frigate` on the 24 GB LXC disk (78 % used 2026-08-26) — recordings are event-gated (alerts/detections, 10 days, `mode: all`), no continuous retention |
+| Media | `/media/frigate` on the LXC root disk — **64 GB since 2026-10-23** (`pct resize 105 rootfs +40G` on bnu-proxmox, online, no restart; was 24 GB and 80 % full). Recordings are event-gated (alerts/detections, 10 days, `mode: all`), no continuous retention — see *Recording & retention* below for what that really keeps |
 | ffmpeg | bundled at `/usr/lib/ffmpeg/7.0/bin` (not in `PATH`) |
 | Detector | CPU tflite `/models/cpu_model.tflite` — its labelmap has **no `truck`** (config warning if tracked; trucks come through as `car`); the OpenVINO CPU plugin fails to load in this LXC |
 | GenAI review | Ollama at `mia-desktop:11434` (`qwen3-vl:8b`), Portuguese descriptions per event |
@@ -21,13 +21,15 @@ listens on the LXC).
 ## Config change flow (from this repo)
 
 The mia-desktop ssh key is not authorized on bnu, so everything goes through
-`devtool.py` (password fallback), staged via the Proxmox host:
+`devtool.py` (password fallback), staged via the Proxmox host. `pull`/`push`
+take a bare `/tmp/…` argument, which Git Bash rewrites into `%TEMP%` unless
+`MSYS_NO_PATHCONV=1` is set (REMOTE_ACCESS.md §3):
 
 ```bash
 python scripts/devtool.py run bnu-proxmox "pct pull 105 /config/config.yml /tmp/f.yml"
-python scripts/devtool.py pull bnu-proxmox /tmp/f.yml ./f.yml
-# edit ./f.yml; keep this folder's config.yml mirror in sync (masked password)
-python scripts/devtool.py push bnu-proxmox ./f.yml /tmp/f.yml
+MSYS_NO_PATHCONV=1 python scripts/devtool.py pull bnu-proxmox /tmp/f.yml ./f.yml
+# edit ./f.yml; keep this folder's config.yml mirror in sync (passwords masked)
+MSYS_NO_PATHCONV=1 python scripts/devtool.py push bnu-proxmox ./f.yml /tmp/f.yml
 python scripts/devtool.py run bnu-proxmox "pct exec 105 -- cp /config/config.yml /config/config.yml.bak && pct push 105 /tmp/f.yml /config/config.yml && pct exec 105 -- systemctl restart frigate"
 ```
 
@@ -41,6 +43,70 @@ python scripts/devtool.py guest bnu 105 "curl -s http://127.0.0.1:5000/api/stats
 Every camera should sit at ~2 fps (`detect.fps` global). A restart cuts all
 cameras for ~30 s and logs a burst of "Invalid or missing video stream in
 segment … Discarding" for the segments cut mid-write — normal, not a fault.
+
+## Recording & retention
+
+**Policy** — the global `record:` block; every camera inherits it (the
+canteiro has no block of its own): no continuous video (`continuous.days: 0`),
+no motion-only video (`motion.days: 0`); **alerts** (review labels `person`,
+`car` — Frigate's default) and **detections** (the other tracked labels:
+bus, motorcycle, bicycle) kept **10 days**, `mode: all` (every segment of the
+event window, motion or not), 5 s before / 10 s after. Snapshots 10 days.
+
+**The configured days are a ceiling, not a promise.** Frigate deletes the
+oldest recordings whenever the disk holding `/media/frigate/recordings` has
+less than ~1 h of all-camera bitrate free (≈ 3.3 GB here), regardless of
+`retain.days`. On the 24 GB disk that capped the real retention at **~2
+days** (2026-10-23: 18 GB used, of which ~13 GB is the native install —
+`/usr` 8 GB, `/opt` 3.3 GB — and only 4.3 GB of recordings, every camera's
+oldest segment at 21/10 10:17). Check the real figure, not the config:
+
+```bash
+python scripts/devtool.py guest bnu 105 "df -h /media/frigate; curl -s http://127.0.0.1:5000/api/recordings/storage"
+```
+
+(`usage` = MB on disk per camera, `bandwidth` = MB/h while recording.)
+
+**Sizing (2026-10-23)**: all cameras ≈ 2 GB/day event-gated; **the canteiro
+is ~2/3 of it** (~1.2 GB/day, 1.7–2 h of segments per workday, ~600 MB/h on
+the HEVC main stream — continuous 24/7 would be ~14 GB/day for that camera
+alone). 64 GB − 13 GB install − 3.3 GB purge floor ≈ 47 GB for recordings
+≈ 10 days with 2× headroom for busy days (concretagem). Grow again with
+`pct resize 105 rootfs +NNG` on bnu-proxmox (thin-provisioned; `local-lvm`
+had 147 GB free).
+
+**Per-camera override**, if the canteiro ever needs its own policy (push +
+restart `frigate` per the flow above; pre/post capture can also be set in
+the UI under Settings → Camera configuration → canteiro → Recording — then
+re-sync this mirror):
+
+```yaml
+cameras:
+  canteiro:
+    record:
+      continuous:
+        days: 0        # 24/7 — ~14 GB/day on this camera
+      motion:
+        days: 0        # motion segments — ≈ continuous in work hours (the PT lens moves by itself)
+      alerts:
+        pre_capture: 5
+        post_capture: 10
+        retain:
+          days: 10
+          mode: all    # all | motion | active_objects
+      detections:
+        retain:
+          days: 10
+          mode: all
+    review:
+      alerts:
+        labels: [person, car, bus, motorcycle]   # what counts as an alert
+      detections:
+        labels: [bicycle]                        # the rest
+```
+
+When continuous and event retention both cover a segment, the longer one
+wins.
 
 ## Birdseye restream (added 2026-08-26)
 

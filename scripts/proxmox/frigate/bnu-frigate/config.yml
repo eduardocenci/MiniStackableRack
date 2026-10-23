@@ -2,7 +2,7 @@ mqtt:
   enabled: true
   host: 10.1.1.124 # the address of your HA server that's running the MQTT integration
   user: mqtt-frigate
-  password: mqtt-frigate
+  password: <BNU_MQTT_PASSWORD>
 
 auth:
   enabled: false
@@ -22,21 +22,21 @@ birdseye:
 go2rtc: #
   streams:
     frente_principal:
-      - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/801
+      - rtsp://admin:<BNU_DOORBELL_PW>@192.168.0.22:5554/Streaming/Channels/801
     lateral_direita:
-      - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/201
+      - rtsp://admin:<BNU_DOORBELL_PW>@192.168.0.22:5554/Streaming/Channels/201
     frente_pedestres:
-      - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/601
+      - rtsp://admin:<BNU_DOORBELL_PW>@192.168.0.22:5554/Streaming/Channels/601
     frente_overview:
-      - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/401
+      - rtsp://admin:<BNU_DOORBELL_PW>@192.168.0.22:5554/Streaming/Channels/401
     frente_garagem:
-      - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/301
+      - rtsp://admin:<BNU_DOORBELL_PW>@192.168.0.22:5554/Streaming/Channels/301
     lateral_esquerda:
-      - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/501
+      - rtsp://admin:<BNU_DOORBELL_PW>@192.168.0.22:5554/Streaming/Channels/501
     fundos_overview:
-      - rtsp://admin:<BNU_CAMERA_PASSWORD>@192.168.0.22:5554/Streaming/Channels/101
+      - rtsp://admin:<BNU_DOORBELL_PW>@192.168.0.22:5554/Streaming/Channels/101
     frente_campainha:
-      - ffmpeg:rtsp://admin:<BNU_CAMERA_PASSWORD>@10.1.1.65:554/Streaming/Channels/101#video=copy#audio=copy   # Before: rtsp://admin:<BNU_CAMERA_PASSWORD>@10.1.1.65:554/Streaming/Channels/101
+      - ffmpeg:rtsp://admin:<BNU_DOORBELL_PW>@10.1.1.65:554/Streaming/Channels/101#video=copy#audio=copy   # Before: rtsp://admin:<BNU_DOORBELL_PW>@10.1.1.65:554/Streaming/Channels/101
     canteiro: rtsp://10.1.1.123:8554/canteiro
     canteiro_sub: rtsp://10.1.1.123:8554/canteiro_sub
   # http://10.1.1.160:1984/stream.html?src=frente_campainha&src=frente_garagem&src=frente_overview&src=frente_pedestres&src=frente_principal&src=fundos_overview&src=lateral_direita&src=lateral_esquerda&mode=webrtc,mse,hls,mjpeg
@@ -116,15 +116,16 @@ cameras:
           descreva a pessoa caminhando pela passagem SEM afirmar direção. 
           Descreva o que os veículos, pedestres ou animais estão fazendo. Se 
           existem apenas veículo(s) na imagem e eles não mudarem de posição ao 
-          longo de todo vídeo, mencione isso (pode ser um falso positivo).
-          Veículos - carro se deslocando para a ESQUERDA, em direção ao portão da
-          garagem no centro-esquerda, está CHEGANDO e entrando na garagem; carro
-          se deslocando para a DIREITA está SAINDO em direção à rua.
-          Desaparecimento - o local onde o objeto desaparece dos frames determina
-          o destino, e sumir dos frames NÃO significa por si só que saiu para a
-          rua; carro que desaparece na região do portão da garagem (centro-
-          esquerda) ENTROU NA GARAGEM; carro que desaparece na direita saiu para a
-          rua; na dúvida sobre o local do desaparecimento, NÃO afirme destino.
+          longo de todo vídeo, mencione isso (pode ser um falso positivo). 
+          Veículos - carro se deslocando para a ESQUERDA, em direção ao portão 
+          da garagem no centro-esquerda, está CHEGANDO e entrando na garagem; 
+          carro se deslocando para a DIREITA está SAINDO em direção à rua. 
+          Desaparecimento - o local onde o objeto desaparece dos frames 
+          determina o destino, e sumir dos frames NÃO significa por si só que 
+          saiu para a rua; carro que desaparece na região do portão da garagem 
+          (centro- esquerda) ENTROU NA GARAGEM; carro que desaparece na direita 
+          saiu para a rua; na dúvida sobre o local do desaparecimento, NÃO 
+          afirme destino.
 
     motion:
       threshold: 29
@@ -216,12 +217,12 @@ cameras:
           prioridade à rua, que aparece na parte superior da imagem. Descreva o 
           que os veículos, pedestres ou animais estão fazendo. Se existem apenas
           veículo(s) na imagem e eles não mudarem de posição ao longo de todo 
-          vídeo, mencione isso (pode ser um falso positivo).
-          Desaparecimento - o local onde o veículo desaparece dos frames determina
-          o destino, e sumir dos frames NÃO significa por si só que saiu para a
-          rua; carro que desaparece na LATERAL ESQUERDA entrou na garagem
-          (CHEGOU); carro que desaparece no TOPO da imagem saiu para a rua; na
-          dúvida sobre o local do desaparecimento, NÃO afirme destino.
+          vídeo, mencione isso (pode ser um falso positivo). Desaparecimento - o
+          local onde o veículo desaparece dos frames determina o destino, e 
+          sumir dos frames NÃO significa por si só que saiu para a rua; carro 
+          que desaparece na LATERAL ESQUERDA entrou na garagem (CHEGOU); carro 
+          que desaparece no TOPO da imagem saiu para a rua; na dúvida sobre o 
+          local do desaparecimento, NÃO afirme destino.
     friendly_name: Frente Overview
     ffmpeg:
       inputs:
@@ -497,7 +498,19 @@ cameras:
     review:
       genai:
         enabled: true
-        activity_context_prompt: Analise estas imagens da câmera do canteiro de obras da casa em construção em Araquari (obra House Hangar). A câmera fica no barracão do canteiro e tem lente móvel com auto-tracking - o enquadramento pode mudar sozinho ao longo do vídeo. Canteiro ativo - em horário de obra são esperados trabalhadores, entregas de material, caminhões (betoneira, munck, caçamba) e máquinas. Descreva o que as pessoas e os veículos estão fazendo, por exemplo descarregando material, concretagem, escavação ou visita à obra. Fora do horário de obra, dê atenção especial a pessoas no canteiro. Se apenas veículos ou máquinas parados aparecem sem mudança ao longo de todo o vídeo, mencione isso (pode ser um falso positivo).
+        activity_context_prompt: Analise estas imagens da câmera do canteiro de 
+          obras da casa em construção em Araquari (obra House Hangar). A câmera 
+          fica no barracão do canteiro e tem lente móvel com auto-tracking - o 
+          enquadramento pode mudar sozinho ao longo do vídeo. Canteiro ativo - 
+          em horário de obra são esperados trabalhadores, entregas de material, 
+          caminhões (betoneira, munck, caçamba) e máquinas. Descreva o que as 
+          pessoas e os veículos estão fazendo, por exemplo descarregando 
+          material, concretagem, escavação ou visita à obra. Fora do horário de 
+          obra, dê atenção especial a pessoas no canteiro. Se apenas veículos ou
+          máquinas parados aparecem sem mudança ao longo de todo o vídeo, 
+          mencione isso (pode ser um falso positivo).
+    motion:
+      mask: 0.351,0.948,0,0.952,0.007,0.995,0.35,0.987
 objects:
   track:
     - person
