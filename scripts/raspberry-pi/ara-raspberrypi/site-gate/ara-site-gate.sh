@@ -28,7 +28,7 @@ MARK=/var/lib/ara-site/armed
 H=/home/eduardocenci
 # start order: relay first (the timelapse grabs from it), netoverview before
 # starlink-names (names are written through its API)
-STACKS="canteiro-relay dvrip-bridge starlink-proxy netoverview starlink-names canteiro-timelapse"
+STACKS="canteiro-relay dvrip-bridge starlink-proxy router-proxy netoverview starlink-names canteiro-timelapse"
 # fleet standard line (scripts/raspberry-pi/README.md) — installed only on
 # arming, so its `up -d` can never start netoverview off-site
 CRON='*/5 * * * * cd ~/netoverview && docker compose pull -q && docker compose up -d && docker image prune -f >/dev/null'
