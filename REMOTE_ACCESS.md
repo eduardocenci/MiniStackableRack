@@ -123,6 +123,20 @@ messages + 18 media pulled, group send path reachable). Note: paramiko key auth 
 `root@bnu-proxmox` is refused from this machine (`Authentication failed`) — the script
 falls back to `PROXMOX_PW` automatically; plain `ssh` in Git Bash is unaffected.
 
+**The OpenAI key is IP-allowlisted to bnu (2026-10-08).** `BNU_HA_FRIGATE_OPENAI_API_KEY`
+(the key bnu Home Assistant uses, reused by the home-ara canteiro backtest — decision
+0010 there) answers `401 ip_not_authorized` ("Your IP is not authorized to make this
+request") from mia-desktop: the project only accepts bnu's public IP. Changing the
+allowlist is Eduardo's call; to use the key from another machine, leave through bnu with
+**`python scripts/socks_forward.py bnu-proxmox 18080 api.openai.com:443`** (SOCKS5 over
+the same devtool `ssh_client()`, refuses any destination not on its command line) in a
+background shell, then run the client with `HTTPS_PROXY=socks5h://127.0.0.1:18080`
+(`requests` needs PySocks — installed in Python313). Measured 2026-10-08: OpenAI's own
+processing ~60 ms, a keep-alive request through the tunnel ~0.3 s, but each NEW
+connection ~6 s (likely bnu-proxmox resolving `api.openai.com`) and 8 parallel fresh
+connections dropped mid-TLS (`SSLEOFError`) — use a `requests.Session` and ≤ 3 workers.
+Code that runs ON bnu (HA, a future LXC service) needs no tunnel.
+
 ### ARA (home build — dashboard site `home: true`, still not in devtool.py)
 
 `ara-raspberrypi2` is a tailnet node (the "computadorzinho" in the canteiro
