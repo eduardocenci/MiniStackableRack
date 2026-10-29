@@ -27,12 +27,18 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
 ## Rules (from the backtest — details in decision 0010)
 
 - Trigger: vehicle event (`car`/`bus`/`motorcycle`) ≥ 10 s; alert when P(truck) ≥ 0,85;
-  the type is the one of the first event (caçamba · munck · carroceria · prancha; betoneira/bomba
-  = concretagem, off). **V3** adds *poliguindaste com caçamba (para retirar entulho)* but is
-  EXPERIMENTAL: on the six 29/10/2026 snapshots every V3 variant pulled munck towards carroceria
-  and never scored the poliguindaste above 0,14, while the Decisions API itself varies a lot
-  between identical calls — V2 stays live (`QUESTIONS=v2`) until a V3 passes the backtest gate
-  (home-ara decision 0010, adendo 29/10/2026).
+  the type is the one of the first event: caçamba · munck · poliguindaste com caçamba (para
+  retirar entulho) · carroceria · prancha · **betoneira · bomba** (V3, 29/10/2026 — concrete
+  trucks alert like any other truck; the pour start/end machine was retired).
+- **What the API sees** (adendo 0010, 29/10/2026): up to `QUADROS` = 3 frames of the
+  RECORDING (2304×1296) — the track point nearest the camera (`data.path_data`), +3 s and
+  the middle of the event — best = highest P(truck); it stops early on a confident frame
+  (`P_CONFIANTE`) or when the first frame is clearly a car (`P_CARRO`). The 640×480
+  snapshot is used only when no recording frame exists. On the 27/10 pour day this took
+  betoneira 08:33 from 0,26 to 0,99 and the bomba-lança leaving from 0,30 to 1,00; the
+  poliguindaste class only works on these frames (0,71 vs ≤ 0,14 on the snapshot). The
+  alert image is the classified frame, resized to `ENVIO_MAX_PX`. `alertas.jsonl` keeps
+  `fonte` and `quadros` (what each frame answered).
 - One episode per truck of ANY type (IoU ≥ 0,3 or ≤ 10 min since last sighting; closes
   after 20 min) — the same truck flipping munck/carroceria between events is one alert.
 - **Gallery of the day's trucks** (decisão 0010 adendo 29/10/2026 — the same carroceria was
@@ -44,7 +50,8 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
 - Never: team van, cars, machines; below threshold; 19:00–06:00 (log only).
 - Caps: 6/hour, 15/day — one "alertas pausados" note to SmokeTests.
 - OpenAI failure (key, IP, credits, network) = no alert, only a log line.
-- Concrete pours (start + end summary): **off** (`POUR_ALERTS=0`) until a pour validates them.
+- Concrete pours (start + end summary): **retired 29/10/2026** — the pour happens out of
+  frame; betoneira and bomba are per-vehicle alerts (daily cap raised to `CAP_DAY` = 25).
 
 ## Vehicle registry (home-ara decision 0011, since 09/10/2026)
 
