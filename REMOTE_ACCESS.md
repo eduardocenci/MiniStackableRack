@@ -133,7 +133,8 @@ shed): reach it with plain `ssh eduardocenci@ara-raspberrypi2`.
 node still sits offline in the tailnet. The successor joined as its own
 node, **`ara-raspberrypi2` (`100.65.218.33`)**, and every consumer was
 repointed the same day:
-- bnu go2rtc;
+- bnu go2rtc (since 2026-10-29 only `canteiro-sub`; the main stream is
+  pulled by bnu `canteiro-hls`, see below);
 - the bnu canteiro-jobs env: `ARA_NTO_URL` and the watchdog's `ARA_HOST`;
 - globalnet `ARA_STARLINK_GRPC`, `architecture.yaml` and `app.py`;
 - HA `frigate_whatsapp.py`.
@@ -156,6 +157,28 @@ sunrise/sunset sequence used to kill the day's photos and the next day's
 Dia de Trabalho grid; since 2026-10-29 the `canteiro-timelapse` container
 resumes the sequence on restart and the bnu grid falls back to an earlier
 baseline (see `scripts/raspberry-pi/ara-raspberrypi/timelapse/README.md`).
+
+**The camera drops its RTSP stream at the start of most PTZ excursions**
+(timelapse sequences 05:00–06:00 and 16:40–19:00 BRT). The relay logs
+`[path canteiro] [RTSP source] EOF` and reopens the camera 5 s later with
+a new RTP timestamp base (history: grep the raw relay json log as above;
+29/10 08:27:06Z, 08:37:06Z, 08:47:05Z; 28/10 21:09:42Z, 21:19:41Z). The
+timelapse grabs are unaffected (6 attempts). Until 2026-10-29 the bnu
+go2rtc pulled the main stream and swapped its producer under its
+consumers' sessions. That timestamp jump crash-looped the `/live` HLS
+muxer until the watchdog's auto-heal, 1–3 `🔧 Auto-heal do /live` pairs
+per sequence in Casa SmokeTests. Since then the main stream's single
+puller at bnu is `canteiro-hls` (mediamtx, `alwaysAvailable` with a
+"sem sinal" card), and go2rtc reads it from `127.0.0.1:8555`. Expect an
+EOF → `stream is online` pair in its log, 5–10 s apart, per excursion;
+the heal should stay silent. Do **not** add a second reader of the main
+stream from bnu: 1.4 Mbps per copy, and two copies stalled the Starlink
+upload on 2026-08-26. Details:
+`scripts/raspberry-pi/bnu-raspberrypi/docker/canteiro-hls/README.md`.
+On bnu, **`docker logs canteiro-hls` is stale**: it stops at 2026-09-03,
+while the json log file keeps growing (86 MB on 29/10). Read it with
+`sudo grep -a` on `/var/lib/docker/containers/<id>/<id>-json.log`, as on
+the ara relay. `docker logs go2rtc` reads normally.
 
 It was staged on the mia LAN (`ara-raspberrypi2.local` over mDNS there).
 - **SSH is key only.** Imager's public-key mode writes

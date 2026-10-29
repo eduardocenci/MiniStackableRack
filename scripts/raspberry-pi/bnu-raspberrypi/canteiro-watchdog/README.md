@@ -45,6 +45,20 @@ containers pelo socket (`/var/run/docker.sock` montado no compose,
 episódio; se não resolver, escala e para. Interrupção colateral: o Frigate
 perde ~5 s de gravação na reconexão (aceito, decisão Eduardo 31/08).
 
+**Causa raiz eliminada em 29/10/2026** — o heal fica só como rede de
+segurança. O salto de timestamp nascia nos EOFs que a câmera emite no
+início das excursões PTZ do timelapse (1–3 pares `🔧 Auto-heal` /
+`✅ recuperado` por sequência solar, quase todo dia): o relay reabre a
+câmera com outra base RTP e o go2rtc trocava o produtor por baixo da
+sessão do canteiro-hls. Agora o `canteiro-hls` puxa o relay ele mesmo, com
+`alwaysAvailable` (cartão "sem sinal" no buraco, linha do tempo contínua),
+e o go2rtc lê dele em `127.0.0.1:8555` — ver
+[`../docker/canteiro-hls/README.md`](../docker/canteiro-hls/README.md).
+Efeito colateral aceito: com a câmera fora e o relay em pé, o frame que o
+watchdog cacheia (`frame.jpeg` do go2rtc) pode ser o cartão em vez da
+última imagem real — só aparece num alerta de queda se a Starlink cair
+dentro do minuto seguinte.
+
 Notas de heal/escalação vão a `HEAL_JID` (**Casa SmokeTests** — a família
 não vê nada disso; vazio = só stdout). Tunáveis no env: `HLS_URL`,
 `HLS_FAILS_TO_HEAL` (2), `MAX_HEAL_ATTEMPTS` (2), `HEAL_CONTAINERS`

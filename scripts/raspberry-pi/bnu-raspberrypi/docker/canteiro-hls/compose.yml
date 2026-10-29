@@ -11,7 +11,9 @@ services:
   canteiro-hls:
     image: bluenviron/mediamtx:1.20.1   # same version the binary had
     container_name: canteiro-hls
-    network_mode: host   # :8888 must stay where `tailscale serve /hls` points
+    network_mode: host   # :8888 must stay where `tailscale serve /hls` points;
+                         # go2rtc reads the main stream from 127.0.0.1:8555
     restart: unless-stopped
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
+      - ./offline.mp4:/offline.mp4:ro   # alwaysAvailable card (make-offline-card.sh)
