@@ -68,7 +68,7 @@ from canteiro.alertas import NOMES, Classif, Config, Motor, hhmm  # noqa: E402
 from canteiro.decisions import (MAX_SIDE, BudgetExceeded, Client, build_payload,  # noqa: E402
                                 data_url, estimate_image_tokens, estimate_text_tokens,
                                 prepare_image, usd)
-from canteiro.questions import contexto, question_set  # noqa: E402
+from canteiro.questions import CAMINHOES, contexto, question_set  # noqa: E402
 from canteiro.veiculos import (CONTEXTO_GALERIA_CAMINHOES, HR_MIN_DUR, Desc, Registro,  # noqa: E402
                                Visita, VisitasAbertas, apelido_auto, casar_galeria,
                                payload_descricao, payload_galeria, recorte_alta,
@@ -351,31 +351,62 @@ def instantes(e: dict, start: float, last: float) -> list[tuple[str, float]]:
     return out[:QUADROS]
 
 
+def agregar(frames: list) -> tuple:
+    """Vários quadros do mesmo evento → um Classif: é caminhão se ALGUM quadro viu um
+    caminhão com confiança (max de P(caminhão)); o TIPO é o voto dos quadros que viram
+    caminhão (média das probabilidades por classe). Devolve (Classif, quadro de referência)."""
+    vistos = [f for f in frames if f[0].p_truck >= 0.5] or frames
+    keys = set().union(*(f[0].probs.keys() for f in vistos))
+    probs = {k: sum((f[0].probs.get(k) or 0.0) for f in vistos) / len(vistos) for k in keys}
+    pmax = max(f[0].p_truck for f in frames)
+    soma = sum(probs.get(k, 0.0) for k in CAMINHOES)
+    if soma and pmax > soma:                      # um quadro confiante vale: escala as classes de caminhão
+        for k in CAMINHOES:
+            if k in probs:
+                probs[k] *= pmax / soma
+    ent = [f[0].p_entrega for f in vistos if f[0].p_entrega is not None]
+    con = [f[0].p_concretagem for f in vistos if f[0].p_concretagem is not None]
+    agg = Classif(probs, max(ent) if ent else None, max(con) if con else None)
+    cls = agg.truck_class
+    ref = max(vistos, key=lambda f: f[0].probs.get(cls) or 0.0)
+    return agg, ref
+
+
 def classificar(e: dict, raw_snap: bytes, classify, start: float, last: float):
-    """Melhor de até QUADROS quadros da gravação; o snapshot só quando não há gravação.
-    Devolve (Classif|None, erro, meta, imagem usada, fonte). Para cedo num quadro confiante
-    (P(classe) ≥ P_CONFIANTE) ou quando o 1º quadro diz que não é caminhão (P < P_CARRO)."""
+    """Até QUADROS quadros da gravação, agregados por `agregar`; o snapshot só quando não há
+    gravação. Devolve (Classif|None, erro, meta, imagem de referência, fonte). Para cedo num
+    quadro confiante (P(classe) ≥ P_CONFIANTE) ou quando o 1º quadro diz que não é caminhão
+    (P < P_CARRO)."""
     tent = []
-    best = None
+    frames = []
+    err = None
+    meta: dict = {}
     for nome, ts in (instantes(e, start, last) if QUADROS > 0 else []):
         q = quadro_gravacao(ts)
         if q is None:
             tent.append({"q": nome, "t": round(ts - start, 1), "sem": True})
             continue
-        c, err, meta = classify(q)
+        c, err, m = classify(q)
         tent.append({"q": nome, "t": round(ts - start, 1), "p": round(c.p_truck, 3) if c else None,
-                     "classe": c.truck_class if c else None, "erro": err})
-        if c is not None and (best is None or c.p_truck > best[0].p_truck):
-            best = (c, err, meta, q, f"gravacao:{nome}")
-        if c is not None and (c.probs.get(c.truck_class) or 0.0) >= P_CONFIANTE and c.p_truck >= CFG.thr:
+                     "classe": c.truck_class if c else None,
+                     "p_classe": round(c.probs.get(c.truck_class) or 0.0, 3) if c else None, "erro": err})
+        if c is None:
+            continue
+        frames.append((c, q, nome))
+        meta = {k: meta.get(k, 0) + v if isinstance(v, (int, float)) and not isinstance(v, bool) else v
+                for k, v in m.items()}
+        if (c.probs.get(c.truck_class) or 0.0) >= P_CONFIANTE and c.p_truck >= CFG.thr:
             break
-        if c is not None and len(tent) == 1 and c.p_truck < P_CARRO:
+        if len(frames) == 1 and c.p_truck < P_CARRO:
             break
-    if best is None:
-        c, err, meta = classify(raw_snap)
-        best = (c, err, meta, raw_snap, "snapshot")
-    c, err, meta, q, fonte = best
-    return c, err, {**meta, "quadros": tent or None}, q, fonte
+    if not frames:
+        c, err, m = classify(raw_snap)
+        return c, err, {**m, "quadros": tent or None}, raw_snap, "snapshot"
+    agg, (cref, q, nome) = agregar(frames)
+    meta["quadros"] = tent
+    meta["agregado"] = {"classe": agg.truck_class, "p": round(agg.p_truck, 3),
+                        "p_classe": round(agg.probs.get(agg.truck_class) or 0.0, 3), "n": len(frames)}
+    return agg, None, meta, q, f"gravacao:{nome}"
 
 
 def jpeg_envio(raw: bytes) -> bytes:
