@@ -7,9 +7,18 @@ desde 13/10/2026 os caminhões vão ao grupo da obra "Cenci Céu Azul Casa-Hanga
 Loop a cada POLL_S segundos:
   Frigate (bnu LXC 105) /api/events da câmera `canteiro`, rótulos de veículo →
   evento com ≥ MIN_DUR_S → snapshot (o mesmo ?quality=80 dos pacotes do diário) →
-  OpenAI Decisions API (perguntas V2 do home-ara, `detail=auto`) →
+  OpenAI Decisions API (perguntas V2 do home-ara, `detail=auto`; a V3 com
+  "poliguindaste com caçamba" existe mas regrediu na amostra de 29/10 — não está ao vivo) →
   canteiro.alertas.Motor (episódios, horário silencioso, tetos, estado persistido) →
   WAHA sendImage.
+
+Galeria dos caminhões do dia (decisão 0010, adendo 29/10/2026 — o mesmo caminhão de
+carroceria foi alertado às 08:43 e às 09:29): o snapshot de cada caminhão que abre
+episódio fica em STATE_DIR/caminhoes/<evento>.jpg; antes de alertar um caminhão
+novo num dia que já teve alerta, UMA pergunta à Decisions API compara o snapshot
+novo com as referências do dia (payload_galeria) — P(id) ≥ P_MESMO_CAMINHAO (0,8)
+= o mesmo caminhão, entra no episódio dele sem alerta; qualquer outra resposta,
+dúvida ou falha = alerta normal. Fica em `galeria` na linha do alertas.jsonl.
 
 A lógica é o pacote `canteiro/` do home-ara (submódulo homes/ara), copiado para a
 imagem canteiro-jobs — este arquivo só faz a E/S.
@@ -54,14 +63,15 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # /app/canteiro (cópia do home-ara)
 
-from canteiro.alertas import Classif, Config, Motor  # noqa: E402
+from canteiro.alertas import NOMES, Classif, Config, Motor, hhmm  # noqa: E402
 from canteiro.decisions import (MAX_SIDE, BudgetExceeded, Client, build_payload,  # noqa: E402
                                 data_url, estimate_image_tokens, estimate_text_tokens,
                                 prepare_image, usd)
 from canteiro.questions import contexto, question_set  # noqa: E402
-from canteiro.veiculos import (HR_MIN_DUR, Desc, Registro, Visita, VisitasAbertas,  # noqa: E402
-                               apelido_auto, casar_galeria, payload_descricao, payload_galeria,
-                               recorte_alta, registro_from_json, registro_to_json)
+from canteiro.veiculos import (CONTEXTO_GALERIA_CAMINHOES, HR_MIN_DUR, Desc, Registro,  # noqa: E402
+                               Visita, VisitasAbertas, apelido_auto, casar_galeria,
+                               payload_descricao, payload_galeria, recorte_alta,
+                               registro_from_json, registro_to_json)
 
 TZ = ZoneInfo("America/Sao_Paulo")
 E = os.environ.get
@@ -81,12 +91,14 @@ POLL_S = int(E("POLL_S", "15"))
 STALE_S = int(E("STALE_S", "1800"))            # evento mais velho que isso na 1ª vez = só marca visto
 JANELA_S = int(E("JANELA_S", "7200"))          # quanto do passado cada rodada consulta no Frigate
 BUDGET_USD_DAY = float(E("BUDGET_USD_DAY", "0.30"))
-VERSION = E("QUESTIONS", "v2")
+VERSION = E("QUESTIONS", "v2")                     # v3 (poliguindaste) é EXPERIMENTAL: regrediu em 29/10/2026 — ver README
 APRENDER = E("APRENDER_VEICULOS", "1") == "1"      # cadastro de carros/vans (decisão 0011)
 DESCONHECIDOS = E("DESCONHECIDOS", "0") == "1"     # aviso de veículo nunca visto — desligado
 P_CONHECIDO = float(E("P_CONHECIDO", "0.8"))       # galeria: P(id) para "conhecido"
 P_NOVO = float(E("P_NOVO", "0.8"))                 # galeria: P(nenhum) para "novo"; o resto = indeterminado
 CROPS_DIAS = int(E("CROPS_DIAS", "60"))            # recortes de toda visita guardados por N dias
+P_MESMO_CAMINHAO = float(E("P_MESMO_CAMINHAO", "0.8"))  # galeria do dia: P(id) para "o mesmo caminhão"
+CAM_DIAS = int(E("CAM_DIAS", "7"))                 # snapshots dos caminhões alertados guardados por N dias
 
 CFG = Config(thr=float(E("THR", "0.85")), min_dur_s=int(E("MIN_DUR_S", "10")),
              pour_alerts=E("POUR_ALERTS", "0") == "1")
@@ -99,6 +111,7 @@ VEIC_LOG = VEIC_DIR / "veiculos.jsonl"
 VEIC_ABERTAS = VEIC_DIR / "abertas.json"
 REFS = VEIC_DIR / "refs"
 CROPS = VEIC_DIR / "crops"                         # recorte em alta de TODA visita (reinterpretação)
+CAM_DIR = STATE_DIR / "caminhoes"                  # snapshot de cada caminhão que abriu episódio (galeria do dia)
 QS = question_set("veiculos", VERSION)
 CTX = contexto("veiculos", VERSION)
 
@@ -270,11 +283,15 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
             continue
         c, err, meta = classify(raw)
         box = (e.get("data") or {}).get("box")
-        msgs = motor.processar(eid, start, last, box, c, now)
+        galeria_log: dict = {}
+        msgs = motor.processar(eid, start, last, box, c, now,
+                               mesmo_caminhao=lambda novo, cands: mesmo_caminhao(raw, cands, classify, galeria_log))
+        if any(t["evento"] == eid for t in motor.s.get("caminhoes") or []):   # abriu episódio: vira referência
+            guardar_caminhao(eid, raw)
         rec = {"ts": now, "id": eid, "inicio": start, "dur_s": round(last - start), "label": e.get("label"),
                "p_caminhao": round(c.p_truck, 3) if c else None, "classe": c.truck_class if c else None,
                "p_entrega": c.p_entrega if c else None, "p_concretagem": c.p_concretagem if c else None,
-               "erro": err, **meta, "mensagens": []}
+               "erro": err, **meta, "galeria": galeria_log or None, "mensagens": []}
         for m in msgs:
             try:
                 dest = deliver(m, raw if m.evento == eid else None)
@@ -295,10 +312,56 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
     return changed
 
 
-# ---------------------------------------------------------------- cadastro de veículos
+# ---------------------------------------------------------------- galeria dos caminhões do dia
 def _img_url(raw: bytes) -> str:
     img, _ = prepare_image(raw, MAX_SIDE)
     return data_url(img)
+
+
+_CAM_PODADO = None
+
+
+def guardar_caminhao(eid: str, raw: bytes) -> None:
+    """Snapshot do caminhão que abriu episódio = referência da galeria do dia (CAM_DIAS dias)."""
+    global _CAM_PODADO
+    CAM_DIR.mkdir(parents=True, exist_ok=True)
+    (CAM_DIR / f"{eid}.jpg").write_bytes(raw)
+    hoje = dt.date.today()
+    if _CAM_PODADO != hoje:
+        _CAM_PODADO = hoje
+        limite = time.time() - CAM_DIAS * 86400
+        for f in CAM_DIR.glob("*.jpg"):
+            if f.stat().st_mtime < limite:
+                f.unlink(missing_ok=True)
+
+
+def mesmo_caminhao(raw: bytes, cands: list[dict], classify, galeria_log: dict) -> str | None:
+    """Regra 2b do Motor: a imagem nova é a mesma unidade de qual caminhão já alertado hoje?
+    Uma chamada com a galeria das referências; id só com P ≥ P_MESMO_CAMINHAO, senão None
+    (= alerta normal). ``galeria_log`` recebe as 3 maiores probabilidades (alertas.jsonl)."""
+    itens = []
+    for t in cands:
+        ref = CAM_DIR / f"{t['evento']}.jpg"
+        if ref.exists():
+            nome = NOMES.get(t["cls"], ("", t["cls"]))[1].lower()
+            itens.append((t["evento"], f"{nome} visto às {hhmm(t['inicio'])}", [_img_url(ref.read_bytes())]))
+    if not itens:
+        return None
+    a = classify.call(payload_galeria(_img_url(raw), itens, CONTEXTO_GALERIA_CAMINHOES), 0.004)
+    q = a.get("qual") if a else None
+    if q is None or q.refused:
+        galeria_log["erro"] = "sem resposta" if q is None else "recusa"
+        return None
+    probs = {k: (v or 0.0) for k, v in q.probabilities.items()}
+    galeria_log.update(sorted(probs.items(), key=lambda kv: -kv[1])[:3])
+    top, p = max(probs.items(), key=lambda kv: kv[1])
+    if top != "nenhum" and p >= P_MESMO_CAMINHAO:
+        log(f"galeria: mesmo caminhão de {top} (P {p:.2f}) — sem alerta")
+        return top
+    return None
+
+
+# ---------------------------------------------------------------- cadastro de veículos
 
 
 class Cadastro:
