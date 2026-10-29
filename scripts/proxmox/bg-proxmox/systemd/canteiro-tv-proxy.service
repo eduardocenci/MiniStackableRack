@@ -1,0 +1,7 @@
+[Unit]
+Description=Proxy to bnu-raspberrypi go2rtc :1984 (canteiro stream.mp4 for the bg TV cast)
+Requires=canteiro-tv-proxy.socket
+After=network-online.target
+
+[Service]
+ExecStart=/lib/systemd/systemd-socket-proxyd --exit-idle-time=5min 100.91.64.62:1984
