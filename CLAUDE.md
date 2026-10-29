@@ -25,8 +25,10 @@ Root
     │   ├── plex/               Plex media server in an LXC (bg: LXC 102)
     │   └── win11/              Windows 11 VM (Tailscale node, e.g. bnu-win11) — folder not created yet
     ├── raspberry-pi/           Raspberry Pi — independent rack component (not a VM); runs Docker; serves as network monitoring node (device discovery, traffic analysis via ARP spoofing)
-    │   └── <site>-raspberrypi/
-    │       └── docker/         Docker deployments on that Pi (e.g. globalnet, netoverview)
+    │   ├── <site>-raspberrypi/
+    │   │   └── docker/         Docker deployments on that Pi (e.g. globalnet, netoverview)
+    │   ├── ara-raspberrypi/    Canteiro Pi of the ARA house build: docker/canteiro-relay (camera RTSP → tailnet), docker/canteiro-timelapse, ptz/, site-gate/, starlink-names/
+    │   └── bnu-raspberrypi/    The ARA canteiro JOBS run here (bnu holds the Frigate and the OpenAI-allowlisted IP): docker/canteiro-jobs = one image, services canteiro-alertas (Frigate vehicle events → OpenAI Decisions API → one WhatsApp alert per truck; truck TYPE = caçamba · munck · carroceria · prancha · betoneira · bomba; cars/vans learned as V-NNN — code in PR #45 / home-ara#210 until merged), canteiro-diario, canteiro-presenca, canteiro-watchdog, canteiro-sunset-compare; docker/canteiro-vigia (empty-site watch), docker/canteiro-hls, docker/go2rtc
     └── synology/               Synology NAS — independent rack component (mia only)
         └── mia-synology/
             └── docker/         e.g. copyparty
@@ -59,11 +61,11 @@ Sequence on a code change:
 
 > `deploy_all.ps1` is for **first-time setup only** (installing Docker and dropping the compose file on a new Pi). Do not use it as a routine update mechanism — the cron handles that.
 
-### New Docker container — registration checklist
+### New container, service or automation — registration checklist
 
-Every Docker container is created through Claude, so this checklist **is** the
-gate: creating, renaming, or retiring a container on **any** host is not done
-until, in the same session:
+Every container, scheduled job or automation is created through Claude, so this
+checklist **is** the gate: creating, renaming, or retiring one on **any** host is
+not done until, in the same session:
 
 1. **Folder** — compose file + README under the host's folder per the
    hierarchy rule (e.g. `scripts/proxmox/docker/bnu-docker/<container>/`).
@@ -78,9 +80,28 @@ until, in the same session:
 5. **Ship** — push globalnet `main` (deploys dashboard + docs via DockerHub →
    Pi cron), then bump the globalnet submodule pointer in this repo.
 
+6. **Upstream pointer** — the README of every producer the new thing consumes
+   (Frigate, WAHA, Home Assistant, go2rtc…) names it as a consumer, and so does
+   the producer's row in `REMOTE_ACCESS.md`. A session that starts from the
+   camera must be led to the alert, not stop at the detector.
+7. **Vocabulary** — the runbook/README carries the pt-BR words a question would
+   use (caminhão, munck, caçamba, betoneira…), not only the English category
+   ("truck type"): this repo is searched by grep, and a feature whose docs lack
+   the words of the question does not exist for the next session.
+8. **Map** — the folder tree above names the container; if it touches the ARA
+   build, a row in `homes/ara/CLAUDE.md` → *How to find any fact*, same PR.
+9. **Merge** — code, decision and docs reach `main` in the same session (or the
+   same day): a container running live whose code sits on an unmerged branch is
+   an unfinished deploy. Precedent: `canteiro-alertas` live since 09/10/2026
+   with its code on `feat/canteiro-alertas` (PR #45) + home-ara#210 + globalnet#57, no pointer
+   from the Frigate docs and no row in the ARA find-table — on 29/10/2026 a
+   session answered "which trucks are recognised?" from Frigate alone and
+   never found it (decisão Eduardo 29/10/2026, home-ara decision 0015).
+
 The dashboard renders an unregistered container as a nameless italic row — no
-box, no health LED, no Docs button. Treat that row, or a failing `make fleet`,
-as an unfinished deploy, not cosmetics. (Details: `DOCS_WORKFLOW.md`.)
+box, no health LED, no Docs button. Treat that row, a failing `make fleet`, or a
+feature that `grep` cannot reach from the words of the question, as an
+unfinished deploy, not cosmetics. (Details: `DOCS_WORKFLOW.md`.)
 
 ## Credentials
 

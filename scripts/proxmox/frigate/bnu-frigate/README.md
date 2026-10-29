@@ -14,7 +14,8 @@ listens on the LXC).
 | Logs | `/dev/shm/logs/frigate/current`, `/dev/shm/logs/go2rtc/current` |
 | Media | `/media/frigate` on the LXC root disk — **64 GB since 2026-10-23** (`pct resize 105 rootfs +40G` on bnu-proxmox, online, no restart; was 24 GB and 80 % full). Recordings are event-gated (alerts/detections, 10 days, `mode: all`), no continuous retention — see *Recording & retention* below for what that really keeps |
 | ffmpeg | bundled at `/usr/lib/ffmpeg/7.0/bin` (not in `PATH`) |
-| Detector | CPU tflite `/models/cpu_model.tflite` — its labelmap has **no `truck`** (config warning if tracked; trucks come through as `car`); the OpenVINO CPU plugin fails to load in this LXC |
+| Detector | CPU tflite `/models/cpu_model.tflite` — its labelmap has **no `truck`** (config warning if tracked; trucks come through as `car`); the OpenVINO CPU plugin fails to load in this LXC. **The truck TYPE on the canteiro (caçamba · munck · carroceria · prancha · betoneira · bomba) is not decided here** — see *Consumers* |
+| Consumers of the `canteiro` events | **`canteiro-alertas`** on bnu-raspberrypi — asks the OpenAI Decisions API about every vehicle event ≥ 10 s and posts one WhatsApp alert per truck to the obra group (runbook globalnet `docs/runbooks/canteiro-alertas.md` — globalnet#57, open; verdicts in `/var/lib/canteiro-alertas/alertas.jsonl`; code `scripts/raspberry-pi/bnu-raspberrypi/canteiro-alertas/`, PR #45 / home-ara#210 until merged); `canteiro-diario` (20:15 evidence pack for the Diário de Obra); `canteiro-vigia` (empty-site watch); HA `frigate_whatsapp.py` (raw alerts only while the canteiro LAN is empty). Before answering "what did the camera see / which truck", read these, not only this file |
 | GenAI review | Ollama at `mia-desktop:11434` (`qwen3-vl:8b`), Portuguese descriptions per event |
 | MQTT | `10.1.1.124` (bnu HA VM) — events feed Home Assistant |
 
