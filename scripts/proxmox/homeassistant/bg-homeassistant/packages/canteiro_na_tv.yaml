@@ -11,7 +11,8 @@
 # Start/stop bookmarks: two webhook automations created through the HA UI/config API (they live in
 # automations.yaml, not here, so the ids stay out of git) — "Webhook — Canteiro na TV (ligar)" →
 # script.canteiro_na_tv, "(parar)" → media_player.media_stop. Full URLs in the repo-root .env as
-# BG_TV_WEBHOOK_ON / BG_TV_WEBHOOK_OFF.
+# BG_TV_WEBHOOK_ON / BG_TV_WEBHOOK_OFF, in the form
+# http://bg-homeassistant.woodpecker-shark.ts.net:8123/api/webhook/<id> (tailnet only).
 script:
   canteiro_na_tv:
     alias: "Canteiro na TV"

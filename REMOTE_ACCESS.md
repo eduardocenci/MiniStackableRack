@@ -220,9 +220,16 @@ on bnu-raspberrypi). `/api/presence?from=<ISO UTC>&to=<ISO UTC>` accepts **short
   DEBUG and `cast.start_app("CC1AD845")`. Do not answer the prompt blind with
   `remote.send_command` — landing on *Negar* puts HA on the TV's block list
   (Settings → Connection → Device Connection Manager).
-- **HA webhook bookmarks use the HA tailnet IP over plain http**
-  (`http://100.99.70.69:8123/api/webhook/<id>`) — no DNS needed, and a
-  `*.ts.net` name would be forced to https by the HSTS preload list.
+- **HA webhook bookmarks use the full MagicDNS name over plain http**
+  (`http://bg-homeassistant.woodpecker-shark.ts.net:8123/api/webhook/<id>`)
+  so the link says which device it talks to (decisão Eduardo 2026-10-29).
+  bg HA has no `tailscale serve` (`:443` refused), but desktop Chrome loads
+  `http://…ts.net:8123` without upgrading it to https (checked 2026-10-29),
+  so the HSTS problem described in the bnu go2rtc README does not hit it;
+  iPhone Safari not tested yet.
+- **Finding a webhook id in the HA UI:** Automações → the automation → the
+  *Webhook* trigger card under *Quando* shows *ID do webhook* with a copy
+  button (or ⋮ → *Editar em YAML* → `webhook_id`).
 - Bare `curl` from this machine to a tailnet host is refused by the
   permission rules — reach the HTTP APIs through `devtool.py run <host>
   "curl -s http://127.0.0.1:…"`.
