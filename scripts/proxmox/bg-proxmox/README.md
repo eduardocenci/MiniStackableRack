@@ -41,8 +41,14 @@ in the repo-root `.env`).
 - **The first cast needs a one-time "Permitir" on the TV.** The Samsung
   receiver answers HA's launch with `USER_PENDING_AUTHORIZATION` and shows an
   allow/deny prompt; until someone accepts it with the remote, every cast
-  times out after 30 s in HA (seen 2026-10-29 — how to diagnose it is in
-  `REMOTE_ACCESS.md` → *BG site specifics*).
+  times out after 30 s in HA (how to diagnose it is in `REMOTE_ACCESS.md` →
+  *BG site specifics*). Accepted 2026-10-29; expect the prompt again after a
+  TV reset or if HA's IP changes.
+- **Verified 2026-10-29:** start link → Default Media Receiver, ~15 s
+  buffering (keyframe wait), then `playing` with the position advancing in
+  real time; bnu go2rtc showed bg-proxmox as one extra `mp4` consumer and
+  still one ara producer. Stop link → `media_stop`, the TV's Cast entity back
+  to `off` and the consumer gone.
 - TV: Samsung QN50Q7FAAGXZD (2025, Tizen, **Wi-Fi**, MAC `28:07:08:02:db:c1`)
   at `192.168.0.111` (DHCP — reserve it on the HUMAX). HA entities:
   `media_player.50_qled` (Cast — the one to use), `media_player.50_qled_2`
