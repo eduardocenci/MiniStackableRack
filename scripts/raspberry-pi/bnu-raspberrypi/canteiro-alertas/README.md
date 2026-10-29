@@ -20,16 +20,23 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
 |---|---|
 | container | `canteiro-alertas` (image `canteiro-jobs:local`, see [`../docker/canteiro-jobs/`](../docker/canteiro-jobs/)) |
 | logic | `homes/ara/canteiro/` (alertas, decisions, questions, metrics, datasets) — copied into the image; CI-tested in home-ara |
-| state | `/var/lib/canteiro-alertas/` — `state.json` (seen event ids, open episode, counters; a restart never re-alerts), `alertas.jsonl` (one line per decision), `heartbeat.json`, `cache/` (every Decisions answer — audit trail) |
+| state | `/var/lib/canteiro-alertas/` — `state.json` (seen event ids, open episode, counters, today's alerted trucks; a restart never re-alerts), `alertas.jsonl` (one line per decision), `heartbeat.json`, `cache/` (every Decisions answer — audit trail), `caminhoes/` (snapshot of each alerted truck, the day's gallery) |
 | env | `~/canteiro-jobs/env/canteiro-alertas.env` (600) — template [`canteiro-alertas.env.example`](canteiro-alertas.env.example) |
 | cost | ~US$ 0,0001 per vehicle event (~1.300 input tokens); `BUDGET_USD_DAY` caps it (default US$ 0,30) |
 
 ## Rules (from the backtest — details in decision 0010)
 
 - Trigger: vehicle event (`car`/`bus`/`motorcycle`) ≥ 10 s; alert when P(truck) ≥ 0,85;
-  the type is the one of the first event (munck · caçamba · carroceria · prancha).
+  the type is the one of the first event (caçamba · munck · **poliguindaste com caçamba**
+  (V3, 29/10/2026) · carroceria · prancha; betoneira/bomba = concretagem, off).
 - One episode per truck of ANY type (IoU ≥ 0,3 or ≤ 10 min since last sighting; closes
   after 20 min) — the same truck flipping munck/carroceria between events is one alert.
+- **Gallery of the day's trucks** (decisão 0010 adendo 29/10/2026 — the same carroceria was
+  alerted at 08:43 and 09:29 after the PT lens moved the box): before opening a new episode
+  on a day that already had an alert, ONE Decisions call compares the new snapshot with the
+  snapshots of the trucks alerted today (`STATE_DIR/caminhoes/<event>.jpg`, kept `CAM_DIAS`
+  = 7 days). P(id) ≥ `P_MESMO_CAMINHAO` (0,8) → same truck, joins its episode silently
+  (`alertas.jsonl` line: `galeria` + log "pela galeria"); anything else → normal alert.
 - Never: team van, cars, machines; below threshold; 19:00–06:00 (log only).
 - Caps: 6/hour, 15/day — one "alertas pausados" note to SmokeTests.
 - OpenAI failure (key, IP, credits, network) = no alert, only a log line.
