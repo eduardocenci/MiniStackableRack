@@ -20,7 +20,7 @@ Root
     │   │   └── <site>-homeassistant/
     │   ├── docker/             Docker host on Proxmox — one folder per deployment, one subfolder per container
     │   │   ├── bnu-docker/     LXC 101: waha, waha-listener, condfy-bridge, netoverview-agent, psvis-tracker
-    │   │   └── mia-docker/     LXC 102 (192.168.2.23, LAN-only): senior/ = ONE compose project /opt/senior — senior-waha, senior-postgres (Senior acervo bot; n8n/mcp/sync/whisper/nocodb planned)
+    │   │   └── mia-docker/     LXC 102 (192.168.2.23, LAN-only): senior/ = ONE compose project /opt/senior — senior-waha, senior-postgres (more senior-* planned)
     │   ├── frigate/            Frigate NVR in an LXC (bnu: LXC 105)
     │   ├── ollama/             Ollama LLM host in an LXC (bnu: LXC 106)
     │   ├── plex/               Plex media server in an LXC (bg: LXC 102)

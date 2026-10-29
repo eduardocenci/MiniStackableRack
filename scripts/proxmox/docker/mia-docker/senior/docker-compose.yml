@@ -1,6 +1,6 @@
-# Senior acervo bot (senior-sistemas, decisão 0021) — mia-docker (LXC 102, 192.168.2.23), /opt/senior/.
-# Every container carries the senior- prefix. Secrets live in /opt/senior/.env (root-only, never printed);
-# the authoritative copy of the key NAMES is the MiniStackableRack .env.example (MIA section).
+# senior stack — mia-docker (LXC 102, 192.168.2.23), /opt/senior/.
+# Every container carries the senior- prefix. Secrets live in /opt/senior/.env (root-only, never printed) under the
+# same MIA_SENIOR_* names as the repo-root .env (MIA section); .env.example lists them.
 # Images pinned to releases at least 14 days old (fleet update rule).
 name: senior
 
@@ -17,13 +17,13 @@ services:
       WHATSAPP_RESTART_ALL_SESSIONS: "True"
       WAHA_BASE_URL: http://192.168.2.23:3000   # media URLs must not say localhost (bnu incident 2026-10-03)
       WAHA_PRINT_QR: "False"
-      WAHA_API_KEY: ${SENIOR_WAHA_API_KEY}
+      WAHA_API_KEY: ${MIA_SENIOR_WAHA_API_KEY}
       WAHA_DASHBOARD_ENABLED: "true"
       WAHA_DASHBOARD_USERNAME: admin
-      WAHA_DASHBOARD_PASSWORD: ${SENIOR_WAHA_DASHBOARD_PASSWORD}
+      WAHA_DASHBOARD_PASSWORD: ${MIA_SENIOR_WAHA_DASHBOARD_PASSWORD}
       WHATSAPP_SWAGGER_USERNAME: admin
-      WHATSAPP_SWAGGER_PASSWORD: ${SENIOR_WAHA_DASHBOARD_PASSWORD}
-      # webhook to senior-n8n is set when the n8n flows exist (message.any, HMAC) — decisão 0021 §3
+      WHATSAPP_SWAGGER_PASSWORD: ${MIA_SENIOR_WAHA_DASHBOARD_PASSWORD}
+      # webhook (message.any, HMAC) is set once senior-n8n exists
     volumes:
       - ./waha/sessions:/app/.sessions
       - ./waha/media:/app/.media
@@ -35,11 +35,11 @@ services:
     environment:
       TZ: UTC
       POSTGRES_USER: senior
-      POSTGRES_PASSWORD: ${SENIOR_POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${MIA_SENIOR_POSTGRES_PASSWORD}
       POSTGRES_DB: acervo_bot
     volumes:
       - ./postgres/data:/var/lib/postgresql/data
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro   # 001_esquema.sql (repo) + 900_contatos_locais.sql (server only)
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro   # schema + server-only seed, first start only
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U senior -d acervo_bot"]
       interval: 30s

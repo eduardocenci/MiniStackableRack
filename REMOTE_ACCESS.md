@@ -69,7 +69,7 @@ those names do not exist.
 |---|---|---|
 | `bnu_docker` | `10.1.1.126` | **LXC 101** — hosts waha, waha-listener, condfy-bridge, netoverview-agent, psvis-tracker, weather-fusion (`:8791`) |
 | `bnu_waha` / `bnu_listener` / `bnu_nta` | `10.1.1.126:3000/:8788/:5005` | the containers inside LXC 101 |
-| `mia_docker` | `192.168.2.23` | **LXC 102 on mia-proxmox** (2026-10-29). Hosts `senior-waha` (`:3000`) and `senior-postgres` (no port), the Senior acervo bot. Shell: `devtool.py guest mia 102 "…"`. HTTP: `devtool.py lan mia 192.168.2.23 "curl …"`, or directly from the mia LAN (mia-desktop). See *MIA site specifics* |
+| `mia_docker` | `192.168.2.23` | **LXC 102 on mia-proxmox** (2026-10-29). Hosts `senior-waha` (`:3000`) and `senior-postgres` (no port). Shell: `devtool.py guest mia 102 "…"`. HTTP: `devtool.py lan mia 192.168.2.23 "curl …"`, or directly from the mia LAN (mia-desktop). See *MIA site specifics* |
 | `bnu_ollama` | `10.1.1.50:11434` | Ollama LXC 106 |
 | `bnu_frigate` | `10.1.1.160` | Frigate LXC 105 — *also* a tailnet node (`bnu-frigate`), so either route works. **REST API without auth at `http://bnu-frigate:5000/api`** (Frigate 0.17.1, used 2026-09-08 to find who held a tablet at the ARA canteiro): `/api/events?camera=canteiro&after=<epoch>&before=<epoch>&label=person` → `/api/events/<id>/snapshot.jpg?bbox=1&crop=0` (640×480, the *detect* substream); `/api/canteiro/recordings/<epoch, fractional ok>/snapshot.jpg` → **full-res 2304×1296** frame from the *record* stream (404 where nothing was recorded — recordings only exist around motion/alerts; `/api/canteiro/recordings?after&before` lists the 10 s segments); `/api/review?cameras=canteiro&after&before` (GenAI `metadata` was null). Fetch frames every 2–15 s in a 4-thread loop, tile them with PIL and read the sheet — the 15-min Drive timelapse almost never catches the moment **Consumers of the canteiro events (2026-10-29)** — who to read before concluding from Frigate alone: `canteiro-alertas` on bnu-raspberrypi decides the truck TYPE (caçamba · munck · carroceria · prancha · betoneira · bomba — V2 live; V3 with poliguindaste com caçamba (para retirar entulho) is experimental, regressed 29/10/2026) with the OpenAI Decisions API and posts one WhatsApp alert per truck — verdicts: `python scripts/devtool.py run bnu-raspberrypi "tail -5 /var/lib/canteiro-alertas/alertas.jsonl"`, runbook globalnet `docs/runbooks/canteiro-alertas.md` (globalnet#57, open); `canteiro-diario`, `canteiro-vigia` and HA `frigate_whatsapp.py` also read these events |
 | `bnu_zb` | `10.1.1.132` | SLZB-06 Zigbee gateway (same pattern at other sites) |
@@ -1154,9 +1154,9 @@ these hold live copies): `bnu-raspberrypi:~/globalnet/.env`, HA `secrets.yaml`,
 the NAS compose `.env` + `copyparty.local.conf`, on LXC 101
 `/opt/waha/docker-compose.yml` (hardcoded), `/opt/waha-listener/.env`,
 `/opt/condfy-bridge/.env`, `/opt/psvis-tracker/.env`, `/opt/weather-fusion/.env`,
-on mia LXC 102 `/opt/senior/.env` (`SENIOR_*`, mirrored in the root `.env` as
-`MIA_SENIOR_*`; the values were generated on the LXC, so on drift the LXC is
-the source — `scripts/proxmox/docker/mia-docker/senior/README.md`),
+on mia LXC 102 `/opt/senior/.env` (the same `MIA_SENIOR_*` names as the
+root `.env`; the WAHA and Postgres values were generated on the LXC, so on
+drift the LXC wins — `scripts/proxmox/docker/mia-docker/senior/README.md`),
 `bnu-raspberrypi:~/canteiro-jobs/env/canteiro-{watchdog,presenca,sunset-compare}.env`
 (WAHA creds + group JIDs for the canteiro job containers — moved from
 `/etc/canteiro-*.env` on 2026-08-29; the `/etc` copies linger only as
@@ -1260,7 +1260,7 @@ Closed on 2026-07-30: `FLN_HA_URL`/`FLN_HA_TOKEN` added (fleet test is now
 | Fleet dashboard, per-node runbooks, `architecture.yaml` | `globalnet/` |
 | Synology/DSM specifics, Copyparty | `scripts/synology/README.md` |
 | WhatsApp gateway, listener, condfy bridge | `scripts/proxmox/docker/bnu-docker/*/README.md` |
-| mia Docker LXC 102, Senior acervo bot (senior-waha, senior-postgres) | `scripts/proxmox/docker/mia-docker/README.md`, `…/senior/README.md` |
+| mia Docker LXC 102 (senior-waha, senior-postgres) | `scripts/proxmox/docker/mia-docker/README.md`, `…/senior/README.md` |
 
 ## Paper printers (recorded 2026-09-09 — Diário de Obra print leg)
 

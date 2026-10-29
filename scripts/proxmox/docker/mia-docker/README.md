@@ -1,7 +1,7 @@
 # mia-docker — LXC 102 on mia-proxmox
 
 Docker host of the mia rack, created **2026-10-29** for the `senior-*`
-containers (the Senior acervo bot — see [`senior/`](senior/README.md)).
+containers (see [`senior/`](senior/README.md)).
 Counterpart of bnu's LXC 101 (`../bnu-docker/`), but **LAN-only and not on
 the tailnet**.
 
@@ -17,14 +17,13 @@ the tailnet**.
 | Disk | rootfs `local-lvm:vm-102-disk-0`, 40 GB |
 | Network | `net0` on `vmbr0`, **static `192.168.2.23/24`**, gw + nameserver `192.168.2.1` (UCG Max), MAC `BC:24:11:47:8C:FF` |
 | Boot / TZ | `onboot: 1` · `America/Sao_Paulo` |
-| Description | "Senior acervo bot: containers senior-* (decisao 0021, senior-sistemas)" |
 
 **RAM budget.** mia-proxmox has 16 GB, of which the host sees 13925 MiB
 (`free -m`). The HA VM (4 GB) and the Win11 VM (4 GB — Eduardo: Win11 keeps
 **at least 4 GB**) left about 3.7 GB free, so the LXC is capped at 3 GB.
 After the first deploy the host showed 3303 MiB available (2026-10-29). The planned containers
-must fit inside this cap. `senior-whisper` is the heavy one, so check
-`free -m` inside the LXC before adding it.
+must fit inside this cap, so check `free -m` inside the LXC before adding
+any of them.
 
 ## Network: LAN-only
 
@@ -75,9 +74,9 @@ See `REMOTE_ACCESS.md` § MIA site specifics.)
 
 Why this differs from `bnu-docker/`, which has one folder per container:
 on LXC 101 each container is its own compose project in its own
-`/opt/<name>/`. Here the bot's containers form **one** compose project. They
-share a network (`senior_default`), a `.env` and a lifecycle, and the bot is
-deployed and rolled back as a unit. So the subfolder mirrors the deployed
+`/opt/<name>/`. Here the `senior-*` containers form **one** compose project.
+They share a network (`senior_default`), a `.env` and a lifecycle, and they
+are deployed and rolled back as a unit. So the subfolder mirrors the deployed
 directory, which is the compose project, and `senior/README.md` documents
 each container in it. Any unrelated service that later moves into this LXC
 gets its own sibling folder and its own `/opt/<name>/`.
