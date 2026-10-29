@@ -409,9 +409,11 @@ def _map_axes(fig, rect, bm):
 
 
 def _draw_route(ax, bm, latlon, alts, max_alt):
+    """Draws the altitude-coloured route; returns its map-px points (for the
+    label placer)."""
     pts = [bm.xy(a, b) for a, b in latlon]
     if len(pts) < 2:
-        return
+        return pts
     xs, ys = zip(*pts)
     ax.plot(xs, ys, color="white", lw=_lw(13), alpha=0.95, solid_capstyle="round",
             solid_joinstyle="round", zorder=4)
@@ -421,45 +423,207 @@ def _draw_route(ax, bm, latlon, alts, max_alt):
                         linewidths=_lw(7), capstyle="round", joinstyle="round", zorder=5)
     lc.set_array(vals)
     ax.add_collection(lc)
+    return pts
 
 
 def _draw_ghost(ax, bm, latlon):
     if len(latlon) < 2:
-        return
-    xs, ys = zip(*(bm.xy(a, b) for a, b in latlon))
+        return []
+    pts = [bm.xy(a, b) for a, b in latlon]
+    xs, ys = zip(*pts)
     ax.plot(xs, ys, color=GHOST, lw=_lw(4), alpha=0.9, solid_capstyle="round", zorder=3)
+    return pts
 
 
 def _draw_dashed(ax, bm, a, b, color=MUTED, width=2.5, z=3):
-    xs, ys = zip(*(bm.xy(p, q) for p, q in _gc_points(a[0], a[1], b[0], b[1])))
+    pts = [bm.xy(p, q) for p, q in _gc_points(a[0], a[1], b[0], b[1])]
+    xs, ys = zip(*pts)
     ax.plot(xs, ys, color=color, lw=_lw(width), ls=(0, (5, 5)), zorder=z)
+    return pts
 
 
-def _pin(ax, bm, lat, lon, kind, label, sub=None):
-    x, y = bm.xy(lat, lon)
-    if kind == "origin":
-        ax.add_patch(Circle((x, y), 12, fc="white", ec=INK, lw=_lw(3.5), zorder=8))
-    elif kind == "dest":
-        ax.add_patch(Circle((x, y), 14, fc=BLUE_DD, ec="white", lw=_lw(4.5), zorder=8))
-    else:  # an airport known from history (or FR24's destination hint)
-        ax.add_patch(Circle((x, y), 10, fc="white", ec=GHOST, lw=_lw(4), zorder=8))
-    right = x <= bm.w * 0.62
-    dx, ha = (24, "left") if right else (-24, "right")
-    _txt(ax, x + dx, y + 4, label, 32, "SemiBold", INK, ha=ha, path_effects=_HALO, zorder=9)
-    if sub:
-        _txt(ax, x + dx, y + 36, sub, 23, "Regular", INK2, ha=ha, path_effects=_HALO, zorder=9)
-    return right
+# ── label placement: collision-aware, one rule for every card ────────────────
+# Every label that competes for room — pin labels and ETA chips on the maps,
+# the series labels of the comparison panels, the notes on the profile strips
+# — goes through _place(): candidate slots in preference order, the first
+# that overlaps nothing wins, else the least bad. Rects are (x0, y0, x1, y1)
+# with x0 < x1 and y0 < y1 in whatever pixel frame the caller works in (map
+# axes: 1 unit = 1 px, y down; chart axes: matplotlib display px, y up).
+# Before 2026-10-29 every label had a fixed offset and the 29/10 CXJ⇄BNU
+# cards came out with ghost labels written over each other, ETA chips over
+# city names and the aircraft over "decolou 14:21".
+
+def _overlap(a, b):
+    return (max(0, min(a[2], b[2]) - max(a[0], b[0]))
+            * max(0, min(a[3], b[3]) - max(a[1], b[1])))
 
 
-def _eta_near(ax, bm, lat, lon, s, strong=True):
-    x, y = bm.xy(lat, lon)
-    w = _text_w(s, 24, "SemiBold") + 32
-    right = x <= bm.w * 0.62
-    bx = x + 24 if right else x - 24 - w
-    by = y + 52 if y < bm.h - 120 else y - 104
-    _rbox(ax, bx, by, w, 46, r=23, fc="white", ec=INK2 if strong else GHOST, width=2, z=12)
-    _txt(ax, bx + w / 2, by + 23 + 9, s, 24, "SemiBold", INK if strong else INK2,
-         ha="center", zorder=13)
+def _place(cands, size, taken, pts=(), bounds=None, pad=6):
+    """Rect for a `size`=(w, h) box at the first of `cands` (min corners, in
+    preference order) that overlaps no `taken` rect, swallows no `pts` point
+    (grown by `pad`) and stays inside `bounds`; otherwise the least bad one."""
+    w, h = size
+    P = np.asarray(list(pts), dtype=float) if len(pts) else None
+    best, best_cost = None, None
+    for x, y in cands:
+        r = (x, y, x + w, y + h)
+        cost = sum(_overlap(r, t) for t in taken)
+        if P is not None:
+            cost += 40 * int(np.count_nonzero(
+                (P[:, 0] >= r[0] - pad) & (P[:, 0] <= r[2] + pad)
+                & (P[:, 1] >= r[1] - pad) & (P[:, 1] <= r[3] + pad)))
+        if bounds:
+            cost += 200 * (max(0, bounds[0] - r[0]) + max(0, r[2] - bounds[2])
+                           + max(0, bounds[1] - r[1]) + max(0, r[3] - bounds[3]))
+        if cost == 0:
+            return r
+        if best_cost is None or cost < best_cost:
+            best, best_cost = r, cost
+    return best
+
+
+def _disp(ax, xs, ys):
+    """Data → display-px points of a series (set the limits first)."""
+    return [tuple(p) for p in ax.transData.transform(np.column_stack([list(xs), list(ys)]))]
+
+
+def _series_cands(pts, w, h, gap=7):
+    """Label slots along a plotted series (display px, bottom-left corners):
+    above it, then below, from the middle outwards."""
+    out = []
+    for side in (1, -1):
+        for f in (0.5, 0.3, 0.7, 0.15, 0.85):
+            x, y = pts[min(len(pts) - 1, int(round(f * (len(pts) - 1))))]
+            out.append((x - w / 2, y + gap if side > 0 else y - gap - h))
+    return out
+
+
+def _grid_cands(ax, w, h, near, n=(10, 6)):
+    """Fallback slots when every preferred one is busy: a grid over the axes,
+    nearest to the `near` points (the label's own series) first."""
+    b = ax.bbox
+    xs = np.linspace(b.x0 + 2, max(b.x0 + 2, b.x1 - w - 2), n[0])
+    ys = np.linspace(b.y0 + 2, max(b.y0 + 2, b.y1 - h - 2), n[1])
+    ref = np.asarray(list(near)[::max(1, len(near) // 80)], dtype=float)
+    out = []
+    for x in xs:
+        for y in ys:
+            d = float(np.min(np.hypot(ref[:, 0] - (x + w / 2), ref[:, 1] - (y + h / 2))))
+            out.append((d, x, y))
+    out.sort()
+    return [(x, y) for _, x, y in out]
+
+
+def _chart_label(ax, s, px, weight, color, cands, taken, pts, z=6, near=None, **kw):
+    """Draw `s` at the first free slot of `cands` (display px, bottom-left
+    corners) — else the nearest free cell of a grid over the axes — and
+    register the rect in `taken`. `near` = the label's own series (display
+    px): when the slot ends up away from it, a thin leader ties them."""
+    lines = s.split("\n")
+    w = max(_text_w(ln, px, weight) for ln in lines)
+    h = px * (1.15 if len(lines) == 1 else 1.3 * len(lines))
+    b = ax.bbox
+    ref = list(near) if near else [(cands[0][0] + w / 2, cands[0][1] + h / 2)]
+    r = _place(list(cands) + _grid_cands(ax, w, h, ref), (w, h), taken, pts,
+               (b.x0, b.y0, b.x1, b.y1))
+    taken.append(r)
+    inv = ax.transData.inverted()
+    if near:
+        P = np.asarray(list(near), dtype=float)
+        dx = np.maximum(np.maximum(r[0] - P[:, 0], 0), P[:, 0] - r[2])
+        dy = np.maximum(np.maximum(r[1] - P[:, 1], 0), P[:, 1] - r[3])
+        d = np.hypot(dx, dy)
+        i = int(np.argmin(d))
+        if d[i] > 24:
+            qx, qy = min(max(P[i, 0], r[0]), r[2]), min(max(P[i, 1], r[1]), r[3])
+            (x0, y0), (x1, y1) = inv.transform([(P[i, 0], P[i, 1]), (qx, qy)])
+            ax.plot([x0, x1], [y0, y1], color=AXIS, lw=_lw(1.6), zorder=z - 1, clip_on=False)
+    x, y = inv.transform((r[0], r[1]))
+    ax.text(x, y, s, fontproperties=_F(px, weight), color=color, ha="left", va="bottom",
+            zorder=z, **kw)
+    return r
+
+
+def _plane_rect(x, y, scale):
+    r = 18 * scale * 1.25 + 4  # maptile._PLANE spans ±15 × −16..18, drawn at 1.25×
+    return (x - r, y - r, x + r, y + r)
+
+
+def _credit_rect(bm):
+    w = _text_w("© OpenStreetMap", 16)
+    return (bm.w - 18 - w - 6, bm.h - 16 - 18, bm.w - 12, bm.h - 8)
+
+
+class _MapLabels:
+    """Airport pins on a map with their label block (code, sub-line and an
+    optional ETA chip) placed where it collides neither with the other blocks
+    nor with the routes, the aircraft or the map edge. Call pin() in order of
+    importance — the first caller gets the best slot."""
+
+    def __init__(self, ax, bm, line_pts, avoid=()):
+        self.ax, self.bm = ax, bm
+        self.pts = list(line_pts)
+        self.taken = [_credit_rect(bm)] + list(avoid)
+        self.bounds = (8, 8, bm.w - 8, bm.h - 8)
+
+    def pin(self, lat, lon, kind, label, sub=None, eta=None, strong=True):
+        ax, bm = self.ax, self.bm
+        x, y = bm.xy(lat, lon)
+        if kind == "origin":
+            rp = 12
+            ax.add_patch(Circle((x, y), rp, fc="white", ec=INK, lw=_lw(3.5), zorder=8))
+        elif kind == "dest":
+            rp = 14
+            ax.add_patch(Circle((x, y), rp, fc=BLUE_DD, ec="white", lw=_lw(4.5), zorder=8))
+        else:  # an airport known from history (or FR24's destination hint)
+            rp = 10
+            ax.add_patch(Circle((x, y), rp, fc="white", ec=GHOST, lw=_lw(4), zorder=8))
+        w, h = _text_w(label, 32, "SemiBold"), 38
+        if sub:
+            w, h = max(w, _text_w(sub, 23)), h + 32
+        cw = _text_w(eta, 24, "SemiBold") + 32 if eta else 0
+        if eta:
+            w, h = max(w, cw), h + 14 + 46
+        d = rp + 12
+        beside = [(x + d, y - 30), (x - d - w, y - 30)]  # code baseline level with the pin
+        if x > bm.w * 0.62:
+            beside.reverse()
+        cands = beside + [
+            (x - w / 2, y + d), (x - w / 2, y - d - h),                   # below, above
+            (x + d, y + d * 0.6), (x - d - w, y + d * 0.6),               # beside, lower
+            (x + d, y - h + d * 0.4), (x - d - w, y - h + d * 0.4),       # beside, higher
+        ]
+        grid = sorted(  # fallback: anywhere on the map, nearest to the pin first
+            (math.hypot(gx + w / 2 - x, gy + h / 2 - y), gx, gy)
+            for gx in np.linspace(8, max(8, bm.w - 8 - w), 9)
+            for gy in np.linspace(8, max(8, bm.h - 8 - h), 6))
+        cands += [(gx, gy) for _, gx, gy in grid]
+        r = _place(cands, (w, h), self.taken, self.pts, self.bounds)
+        self.taken.append(r)
+        self.taken.append((x - rp - 4, y - rp - 4, x + rp + 4, y + rp + 4))
+        qx, qy = min(max(x, r[0]), r[2]), min(max(y, r[1]), r[3])
+        if math.hypot(qx - x, qy - y) > rp + 30:  # the block sits away: tie it to the pin
+            ax.plot([x, qx], [y, qy], color=INK2, lw=_lw(2), zorder=7, solid_capstyle="round",
+                    path_effects=[pe.withStroke(linewidth=_lw(6), foreground="white")])
+        if r[2] <= x:
+            ha, tx = "right", r[2]
+        elif r[0] >= x:
+            ha, tx = "left", r[0]
+        else:
+            ha, tx = "center", (r[0] + r[2]) / 2
+        yb = r[1] + 30
+        _txt(ax, tx, yb, label, 32, "SemiBold", INK, ha=ha, path_effects=_HALO, zorder=9)
+        if sub:
+            yb += 32
+            _txt(ax, tx, yb, sub, 23, "Regular", INK2, ha=ha, path_effects=_HALO, zorder=9)
+        if eta:
+            by = yb + 14
+            bx = r[2] - cw if ha == "right" else r[0] if ha == "left" else tx - cw / 2
+            _rbox(ax, bx, by, cw, 46, r=23, fc="white", ec=INK2 if strong else GHOST,
+                  width=2, z=12)
+            _txt(ax, bx + cw / 2, by + 23 + 9, eta, 24, "SemiBold", INK if strong else INK2,
+                 ha="center", zorder=13)
+        return r
 
 
 def _plane(ax, x, y, heading, scale):
@@ -713,10 +877,10 @@ def _takeoff(o, dep, track, fid, next_ts):
     pts = [(o["lat"], o["lon"])] + [(p["latitude"], p["longitude"]) for p in trail]
     bm = _Basemap(pts, rect[2], rect[3], inset=(140, 200, 140, 200), min_span_km=160)
     ax = _map_axes(fig, rect, bm)
+    lines, avoid = [], []
     if len(trail) > 1:
-        _draw_route(ax, bm, [(p["latitude"], p["longitude"]) for p in trail],
-                    [_alt(p) for p in trail], max(_alt(p) for p in trail))
-    _pin(ax, bm, o["lat"], o["lon"], "origin", _code(o), f"decolou {_hm(dep)}")
+        lines = _draw_route(ax, bm, [(p["latitude"], p["longitude"]) for p in trail],
+                            [_alt(p) for p in trail], max(_alt(p) for p in trail))
     if head0 is not None:
         ox, oy = bm.xy(o["lat"], o["lon"])
         px, py = bm.xy(trail[-1]["latitude"], trail[-1]["longitude"]) if trail else (ox, oy)
@@ -724,6 +888,9 @@ def _takeoff(o, dep, track, fid, next_ts):
             r = math.radians(head0)
             px, py = ox + 56 * math.sin(r), oy - 56 * math.cos(r)
         _plane(ax, px, py, head0, 1.6)
+        avoid.append(_plane_rect(px, py, 1.6))  # the label goes where the aircraft is not
+    _MapLabels(ax, bm, lines, avoid).pin(o["lat"], o["lon"], "origin", _code(o),
+                                         f"decolou {_hm(dep)}")
 
     # METAR panel — the departure weather in full, icon first
     y0 = 1110
@@ -774,12 +941,23 @@ def _enroute(st, fid):
     fig, cv = _new_card()
     _header(cv, f"Em voo · T+{mins}", f"Em voo, rumo {st['cardinal']}",
             f"Decolou de {city} às {_hm(t0)} · há {mins} min")
+    wx_icon = bool(m_top)
     if top:
         lo, hi = _hm(t0 + top["lo_s"]), _hm(t0 + top["hi_s"])
-        eta_chip = {"label": "Chegada", "value": f"~{lo}" if lo == hi else f"~{lo}–{hi}",
-                    "sub": f"{_code(top)} · pelo histórico", "reserve": 58 if m_top else 0}
+        # "~12:45–12:53" does not fit beside the weather icon: same hour →
+        # "~12:45–53"; still too wide → the icon yields (the line below has it)
+        room = (W - 2 * M - 16 * 3) / 4 - 44
+        vals = [f"~{lo}"] if lo == hi else [f"~{lo}–{hi}"] + (
+            [f"~{lo}–{hi[3:]}"] if lo[:2] == hi[:2] else [])
+        val = next((v for v in vals if _text_w(v, 26, "SemiBold") <= room - (58 if wx_icon else 0)),
+                   None)
+        if val is None:
+            wx_icon = False
+            val = next((v for v in vals if _text_w(v, 26, "SemiBold") <= room), vals[-1])
+        eta_chip = {"label": "Chegada", "value": val,
+                    "sub": f"{_code(top)} · pelo histórico", "reserve": 58 if wx_icon else 0}
     else:
-        eta_chip = {"label": "Chegada", "value": "rota nova", "sub": "sem histórico no rumo"}
+        eta_chip = {"label": "Chegada", "value": "rota nova", "sub": "sem histórico"}
     cw = _chips(cv, 210, [
         {"label": "Altitude", "value": f"{_fmt_int_br(cur_alt)} ft", "sub": trend},
         {"label": "Velocidade", "value": f"{_fmt_int_br(cur_kt)} kt",
@@ -788,7 +966,7 @@ def _enroute(st, fid):
         eta_chip,
     ])
     _compass(cv, M + 2 * (cw + 16) + cw - 48, 280, 26, heading)
-    if m_top:  # weather at the most likely destination, at a glance
+    if wx_icon:  # weather at the most likely destination, at a glance
         _wx_icon(cv, M + 3 * (cw + 16) + cw - 46, 284, 60, metar.condition(m_top))
 
     rect = (M, 366, W - 2 * M, 540)
@@ -799,21 +977,28 @@ def _enroute(st, fid):
         pts.append((o["lat"], o["lon"]))
     bm = _Basemap(pts, rect[2], rect[3])
     ax = _map_axes(fig, rect, bm)
+    lines = []
     for g in ghosts:
-        _draw_ghost(ax, bm, [(p[1], p[2]) for p in g["pts"]])
+        lines += _draw_ghost(ax, bm, [(p[1], p[2]) for p in g["pts"]])
     for c in reversed(cands[:3]):
-        _draw_dashed(ax, bm, (cur["latitude"], cur["longitude"]), (c["lat"], c["lon"]),
-                     color=INK2 if c is top else GHOST, width=3 if c is top else 2.5, z=6)
-    _draw_route(ax, bm, flown, [_alt(p) for p in track], max(cur_alt, 1))
-    if o.get("lat") is not None:
-        _pin(ax, bm, o["lat"], o["lon"], "origin", _code(o), f"decolou {_hm(t0)}")
-    for c in cands[:3]:
-        _pin(ax, bm, c["lat"], c["lon"], "hist", _code(c), c.get("city"))
-        lo, hi = _hm(t0 + c["lo_s"]), _hm(t0 + c["hi_s"])
-        _eta_near(ax, bm, c["lat"], c["lon"], f"~{lo}" if lo == hi else f"~{lo}–{hi}",
-                  strong=c is top)
+        lines += _draw_dashed(ax, bm, (cur["latitude"], cur["longitude"]), (c["lat"], c["lon"]),
+                              color=INK2 if c is top else GHOST, width=3 if c is top else 2.5,
+                              z=6)
+    lines += _draw_route(ax, bm, flown, [_alt(p) for p in track], max(cur_alt, 1))
     x, y = bm.xy(cur["latitude"], cur["longitude"])
     _plane(ax, x, y, heading, 1.45)
+    # labels by importance: the likely destination, the origin, the alternatives
+    labels = _MapLabels(ax, bm, lines, [_plane_rect(x, y, 1.45)])
+    todo = list(cands[:3])
+    if o.get("lat") is not None:
+        todo.insert(1 if todo else 0, "origin")
+    for c in todo:
+        if c == "origin":
+            labels.pin(o["lat"], o["lon"], "origin", _code(o), f"decolou {_hm(t0)}")
+            continue
+        lo, hi = _hm(t0 + c["lo_s"]), _hm(t0 + c["hi_s"])
+        labels.pin(c["lat"], c["lon"], "hist", _code(c), c.get("city"),
+                   eta=f"~{lo}" if lo == hi else f"~{lo}–{hi}", strong=c is top)
     leg = [("ramp", "Altitude", "solo", f"{_fmt_int_br(cur_alt)} ft")]
     if ghosts:
         leg.append(("line", "voo anterior na rota", GHOST, False))
@@ -845,18 +1030,39 @@ def _enroute(st, fid):
     ymax = max(cruise_ref or 0, cur_alt, 5000) * 1.25
     if cruise_ref:
         ax2.plot([now_x, total], [cruise_ref] * 2, color=GHOST, lw=_lw(2.5), ls=(0, (2, 4)), zorder=2)
-        ax2.text(total - 4, cruise_ref + ymax * 0.05, f"cruzeiro típico {_fmt_int_br(cruise_ref)} ft",
-                 fontproperties=_F(19), color=INK2, ha="right", va="bottom")
     ax2.plot([now_x], [cur_alt], marker="o", ms=_lw(13), mfc=BLUE_DD, mec="white", mew=_lw(3), zorder=5)
-    ax2.text(now_x + 8, cur_alt + ymax * 0.05, "agora", fontproperties=_F(20, "SemiBold"),
-             color=INK, ha="left", va="bottom", zorder=6)
-    if top:
-        ax2.text((now_x + total) / 2, ymax * 0.12 + (max(terr[1]) if terr else 0),
-                 f"faltam ~{_fmt_int_br(total - now_x)} km até {_code(top)}",
-                 fontproperties=_F(20), color=INK2, ha="center", va="bottom")
     ax2.set_ylim(0, ymax)
     ax2.set_yticks(_nice_ticks(ymax * 0.95))
     _km_axis(ax2, max(total, now_x + 1))
+    # labels, placed against the line, the terrain and each other
+    taken, busy = [], _disp(ax2, fx, fy)
+    if terr:
+        busy += _disp(ax2, terr[0], terr[1])
+    xn, yn = ax2.transData.transform((now_x, cur_alt))
+    taken.append((xn - 9, yn - 9, xn + 9, yn + 9))
+    hpx = ax2.bbox.height
+    if cruise_ref:
+        ref_px = _disp(ax2, np.linspace(now_x, total, 40), [cruise_ref] * 40)
+        busy += ref_px
+        s = f"cruzeiro típico {_fmt_int_br(cruise_ref)} ft"
+        w = _text_w(s, 19)
+        xr, yr = ax2.transData.transform((total, cruise_ref))
+        _chart_label(ax2, s, 19, "Regular", INK2,
+                     [(xr - 4 - w, yr + 6), (xr - 4 - w, yr - 6 - 22),
+                      ((xn + xr) / 2 - w / 2, yr + 6)], taken, busy, near=ref_px)
+    w = _text_w("agora", 20, "SemiBold")
+    _chart_label(ax2, "agora", 20, "SemiBold", INK,
+                 [(xn + 10, yn + 8), (xn - 10 - w, yn + 8), (xn + 10, yn - 8 - 23),
+                  (xn - 10 - w, yn - 8 - 23)], taken, busy, z=7, near=[(xn, yn)])
+    if top:
+        s = f"faltam ~{_fmt_int_br(total - now_x)} km até {_code(top)}"
+        w = _text_w(s, 20)
+        xm = ax2.transData.transform(((now_x + total) / 2, 0))[0]
+        yg = ax2.transData.transform((0, max(terr[1]) if terr else 0))[1]
+        _chart_label(ax2, s, 20, "Regular", INK2,
+                     [(xm - w / 2, yg + f * hpx) for f in (0.10, 0.28, 0.46, 0.64)]
+                     + [(xm - w / 2 + dx, yg + 0.10 * hpx) for dx in (120, -120)],
+                     taken, busy)
 
     if m_top:
         cat, sub = _wx_short(m_top)
@@ -919,19 +1125,19 @@ def _landing_route(o, d, stats, ghosts):
         pts += [(p[1], p[2]) for p in g["pts"]][::10]
     bm = _Basemap(pts, rect[2], rect[3])
     ax = _map_axes(fig, rect, bm)
+    lines = []
     for g in ghosts:
-        _draw_ghost(ax, bm, [(p[1], p[2]) for p in g["pts"]])
+        lines += _draw_ghost(ax, bm, [(p[1], p[2]) for p in g["pts"]])
     if o.get("lat") is not None and d.get("lat") is not None:
-        _draw_dashed(ax, bm, (o["lat"], o["lon"]), (d["lat"], d["lon"]))
-    _draw_route(ax, bm, ll, stats["alt"], stats["max_alt_ft"])
-    if o.get("lat") is not None:
-        _pin(ax, bm, o["lat"], o["lon"], "origin", _code(o), f"decolou {_hm(dep)}")
+        lines += _draw_dashed(ax, bm, (o["lat"], o["lon"]), (d["lat"], d["lon"]))
+    lines += _draw_route(ax, bm, ll, stats["alt"], stats["max_alt_ft"])
+    labels = _MapLabels(ax, bm, lines)
     if d.get("lat") is not None:
-        _pin(ax, bm, d["lat"], d["lon"], "dest", _code(d), f"pousou {_hm(arr)}")
+        labels.pin(d["lat"], d["lon"], "dest", _code(d), f"pousou {_hm(arr)}")
     else:  # unknown destination: mark where it touched down
-        x, y = bm.xy(*ll[-1])
-        ax.add_patch(Circle((x, y), 14, fc=BLUE_DD, ec="white", lw=_lw(4.5), zorder=8))
-        _txt(ax, x + 24, y + 4, f"pousou {_hm(arr)}", 26, "SemiBold", INK, path_effects=_HALO, zorder=9)
+        labels.pin(ll[-1][0], ll[-1][1], "dest", f"pousou {_hm(arr)}")
+    if o.get("lat") is not None:
+        labels.pin(o["lat"], o["lon"], "origin", _code(o), f"decolou {_hm(dep)}")
     leg = [("ramp", "Altitude", "solo", f"{_fmt_int_br(stats['max_alt_ft'])} ft")]
     if ghosts:
         g = ghosts[0]
@@ -990,20 +1196,29 @@ def _landing_profile(o, d, stats, ghosts):
     top_alt = stats["max_alt_ft"]
     if terr:
         ax.fill_between(terr[0], terr[1], color=TERRAIN, lw=0, zorder=1)
-        ax.annotate(f"{_fmt_int_br(terr[1][i_t] / 3.28084)} m", (terr[0][i_t], terr[1][i_t]),
-                    xytext=(0, 8), textcoords="offset points", ha="center", va="bottom",
-                    fontproperties=_F(19), color=INK2)
     ax.plot(fx, fy, color=BLUE, lw=_lw(4), zorder=3, solid_joinstyle="round")
     for i in (c0, c1):
         ax.plot([dist[i]] * 2, [0, alt[i]], color=AXIS, lw=_lw(2), ls=(0, (3, 4)), zorder=2)
-    for x, lab in (((fx[0] + dist[c0]) / 2, f"subida · {_dur(climb_s)}"),
-                   ((dist[c0] + dist[c1]) / 2, f"cruzeiro · {_dur(cruise_s)}"),
-                   ((dist[c1] + fx[-1]) / 2, f"descida · {_dur(desc_s)}")):
-        ax.text(x, top_alt * 1.08, lab, fontproperties=_F(20, "Medium"), color=INK2,
-                ha="center", va="bottom")
     ax.set_ylim(0, top_alt * 1.3)
     ax.set_yticks(_nice_ticks(top_alt * 1.05))
     _km_axis(ax, total)
+    taken, busy = [], _disp(ax, fx, fy)
+    if terr:
+        busy += _disp(ax, terr[0], terr[1])
+        s = f"{_fmt_int_br(terr[1][i_t] / 3.28084)} m"
+        w = _text_w(s, 19)
+        xp, yp = ax.transData.transform((terr[0][i_t], terr[1][i_t]))
+        _chart_label(ax, s, 19, "Regular", INK2,
+                     [(xp - w / 2 + dx, yp + 8) for dx in (0, 70, -70, 140, -140)]
+                     + [(xp - w / 2, yp + 40)], taken, busy, near=[(xp, yp)])
+    y1 = ax.transData.transform((0, top_alt * 1.08))[1]  # phase row; a 2nd row above it
+    for xc, lab in (((fx[0] + dist[c0]) / 2, f"subida · {_dur(climb_s)}"),
+                    ((dist[c0] + dist[c1]) / 2, f"cruzeiro · {_dur(cruise_s)}"),
+                    ((dist[c1] + fx[-1]) / 2, f"descida · {_dur(desc_s)}")):
+        xc = ax.transData.transform((xc, 0))[0]
+        w = _text_w(lab, 20, "Medium")
+        _chart_label(ax, lab, 20, "Medium", INK2, [(xc - w / 2, y1), (xc - w / 2, y1 + 29)],
+                     taken, busy)
 
     # D — altitude AND speed vs minutes since wheels-up, next to previous flights
     head = "Comparado aos voos anteriores"
@@ -1036,31 +1251,53 @@ def _landing_profile(o, d, stats, ghosts):
             xmax = max(xmax, gx[-1])
     if exp:
         xmax = max(xmax, exp["mean_s"] / 60)
+    ex = exp["mean_s"] / 60 if exp else None
 
-    # altitude panel
+    # altitude panel — lines and limits first, then every label finds free room
     _txt(cv, M, 790, "Altitude (ft)", 20, "Medium", INK2)
     ax3 = _axes_px(fig, M + 70, 800, W - 2 * M - 70, 175)
     _style_axes(ax3)
     a_top = max([top_alt] + [max(gy) for _, _, gy, _ in gser])
     for g, gx, gy, _ in gser:
         ax3.plot(gx, gy, color=GHOST, lw=_lw(3.5), zorder=2)
-        rev = g["o_icao"] != o.get("icao")
-        ax3.text((gx[0] + gx[-1]) / 2, max(gy) * 1.03,
-                 f"{_dmy(g['dep_ts'])[:5]} · {g['o_iata']}→{g['d_iata']}" + (" (volta)" if rev else ""),
-                 fontproperties=_F(18), color=INK2, ha="center", va="bottom")
     ax3.plot(mx, my, color=BLUE, lw=_lw(4.5), zorder=4)
-    ax3.text((mx[0] + mx[-1]) / 2, max(my) * 0.9, f"{_dmy(dep)[:5]} · este voo",
-             fontproperties=_F(18, "SemiBold"), color=INK, ha="center", va="top", zorder=5)
     ax3.plot([mx[-1]], [0], marker="o", ms=_lw(14), mfc=BLUE_DD, mec="white", mew=_lw(3),
              zorder=6, clip_on=False)
     if exp:
-        ex = exp["mean_s"] / 60
         ax3.plot([ex, ex], [0, a_top * 1.02], color=INK2, lw=_lw(2), ls=(0, (4, 4)), zorder=3)
-        ax3.text(ex + 0.8, a_top * 0.55, f"esperado\n{_dur(exp['mean_s'])}", fontproperties=_F(18),
-                 color=INK2, ha="left", va="center", linespacing=1.3)
     ax3.set_ylim(0, a_top * 1.25)
     ax3.set_yticks(_nice_ticks(a_top * 1.05))
     _min_axis(ax3, xmax, labels=False)
+    taken, busy = [], []
+    mine_px = _disp(ax3, mx, my)
+    busy += mine_px
+    ghost_px = [_disp(ax3, gx, gy) for _, gx, gy, _ in gser]
+    for p in ghost_px:
+        busy += p
+    xe, ye = ax3.transData.transform((mx[-1], 0))
+    taken.append((xe - 10, ye - 10, xe + 10, ye + 10))
+    exp_px = _disp(ax3, [ex] * 40, np.linspace(0, a_top * 1.02, 40)) if exp else []
+    busy += exp_px
+    s = f"{_dmy(dep)[:5]} · este voo"
+    w, h = _text_w(s, 18, "SemiBold"), 18 * 1.15
+    c = _series_cands(mine_px, w, h)
+    _chart_label(ax3, s, 18, "SemiBold", INK, c[5:] + c[:5], taken, busy, z=7,
+                 near=mine_px)  # inside its own envelope first
+    if exp:
+        s = f"esperado\n{_dur(exp['mean_s'])}"
+        w = max(_text_w(ln, 18) for ln in s.split("\n"))
+        xx = ax3.transData.transform((ex, 0))[0]
+        b = ax3.bbox
+        _chart_label(ax3, s, 18, "Regular", INK2,
+                     [(xx + 8, b.y0 + f * b.height - 23) for f in (0.55, 0.75, 0.35, 0.9)]
+                     + [(xx - 8 - w, b.y0 + f * b.height - 23) for f in (0.55, 0.75, 0.35, 0.9)],
+                     taken, busy, near=exp_px, linespacing=1.3)
+    for (g, _, _, _), p in zip(gser, ghost_px):
+        rev = g["o_icao"] != o.get("icao")
+        s = f"{_dmy(g['dep_ts'])[:5]} · {g['o_iata']}→{g['d_iata']}" + (" (volta)" if rev else "")
+        w = _text_w(s, 18)
+        _chart_label(ax3, s, 18, "Regular", INK2, _series_cands(p, w, 18 * 1.15), taken, busy,
+                     near=p)
 
     # speed panel — same minutes axis, same previous flights
     _txt(cv, M, 1024, "Velocidade (kt)", 20, "Medium", INK2)
@@ -1071,30 +1308,46 @@ def _landing_profile(o, d, stats, ghosts):
         sel = [(a, b) for a, b in zip(x, k) if b >= 50]
         return ([a for a, _ in sel], [b for _, b in sel]) if sel else (x, k)
 
-    v_all = []
+    v_all, gspd = [], []
     for g, gx, _, gk in gser:
-        sx, sk = airborne_speed(gx, gk)
-        ax4.plot(sx, sk, color=GHOST, lw=_lw(3.5), zorder=2)
-        v_all += sk
-        if g.get("cruise_kt"):
-            ax4.text((gx[0] + gx[-1]) / 2, max(sk) + 6,
-                     f"{_dmy(g['dep_ts'])[:5]} · cruzeiro {_fmt_int_br(g['cruise_kt'])} kt",
-                     fontproperties=_F(18), color=INK2, ha="center", va="bottom", zorder=5)
+        gsx, gsk = airborne_speed(gx, gk)
+        ax4.plot(gsx, gsk, color=GHOST, lw=_lw(3.5), zorder=2)
+        v_all += gsk
+        gspd.append((g, gsx, gsk))
     sx, sk = airborne_speed(mx, mk)
     ax4.plot(sx, sk, color=ORANGE, lw=_lw(4), zorder=4)
     v_all += sk
     cx0, cx1 = (ts[c0] - dep) / 60, (ts[c1] - dep) / 60
     ax4.plot([cx0, cx1], [stats["cruise_kt"]] * 2, color=INK2, lw=_lw(2), ls=(0, (5, 4)), zorder=5)
-    ax4.text((cx0 + cx1) / 2, stats["cruise_kt"] - 24,
-             f"{_dmy(dep)[:5]} · cruzeiro {_fmt_int_br(stats['cruise_kt'])} kt",
-             fontproperties=_F(18, "SemiBold"), color=INK, ha="center", va="top", zorder=6)
-    if exp:
-        ex = exp["mean_s"] / 60
-        ax4.plot([ex, ex], [0, 1e4], color=INK2, lw=_lw(2), ls=(0, (4, 4)), zorder=3)
     v_lo, v_hi = min(v_all), max(v_all)
-    ax4.set_ylim(max(0, v_lo * 0.85), v_hi * 1.2)
-    ax4.set_yticks([t for t in range(0, int(v_hi * 1.2) + 1, 100) if t >= v_lo * 0.85])
+    y_lo, y_hi = max(0, v_lo * 0.85), v_hi * 1.2
+    if exp:
+        ax4.plot([ex, ex], [y_lo, y_hi], color=INK2, lw=_lw(2), ls=(0, (4, 4)), zorder=3)
+    ax4.set_ylim(y_lo, y_hi)
+    ax4.set_yticks([t for t in range(0, int(y_hi) + 1, 100) if t >= y_lo])
     _min_axis(ax4, xmax, labels=True)
+    taken, busy = [], []
+    mine_px = _disp(ax4, sx, sk)
+    busy += mine_px
+    ghost_px = [_disp(ax4, gsx, gsk) for _, gsx, gsk in gspd]
+    for p in ghost_px:
+        busy += p
+    if exp:
+        busy += _disp(ax4, [ex] * 40, np.linspace(y_lo, y_hi, 40))
+    busy += _disp(ax4, np.linspace(cx0, cx1, 30), [stats["cruise_kt"]] * 30)
+    xa, ya = ax4.transData.transform((cx0, stats["cruise_kt"]))
+    xb = ax4.transData.transform((cx1, stats["cruise_kt"]))[0]
+    s = f"{_dmy(dep)[:5]} · cruzeiro {_fmt_int_br(stats['cruise_kt'])} kt"
+    w, h = _text_w(s, 18, "SemiBold"), 18 * 1.15
+    _chart_label(ax4, s, 18, "SemiBold", INK,
+                 [((xa + xb) / 2 - w / 2, ya + 10), ((xa + xb) / 2 - w / 2, ya - 10 - h)]
+                 + _series_cands(mine_px, w, h), taken, busy, z=7, near=mine_px)
+    for (g, _, _), p in zip(gspd, ghost_px):
+        if g.get("cruise_kt"):
+            s = f"{_dmy(g['dep_ts'])[:5]} · cruzeiro {_fmt_int_br(g['cruise_kt'])} kt"
+            w = _text_w(s, 18)
+            _chart_label(ax4, s, 18, "Regular", INK2, _series_cands(p, w, 18 * 1.15), taken, busy,
+                         near=p)
 
     _txt(cv, W - M, H - 22, ("Relevo: Copernicus DEM via Open-Meteo · " if terr else "")
          + "trajeto: Flightradar24", 17, "Regular", MUTED, ha="right")

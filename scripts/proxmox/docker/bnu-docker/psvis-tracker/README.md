@@ -32,6 +32,21 @@ vetor (`_wx_icon`: sol, sol entre nuvens, nuvem, chuva, trovoada, neblina,
 névoa) a partir de `metar.condition()` — a mesma chave que escolhe o emoji da
 legenda (☀️ ⛅ ☁️ 🌧️ ⛈️ 🌫️), então imagem e texto sempre concordam.
 
+**Rótulos sem sobreposição (2026-10-29)**: todo texto que disputa espaço —
+código/cidade/chip de ETA de cada aeroporto nos mapas, rótulos dos voos
+anteriores e do "esperado" nos painéis de comparação, "agora"/"faltam"/
+"cruzeiro típico" na faixa de perfil, pico do relevo e fases — passa pelo
+posicionador `_place` de `cards.py`: uma lista de posições candidatas em
+ordem de preferência, vence a primeira que não cruza outro rótulo, nenhuma
+linha desenhada (rota, voos anteriores, pernas tracejadas, avião) nem a borda
+do painel; se nenhuma estiver livre, a menos ruim. Nos mapas a classe
+`_MapLabels` recebe os pinos **por ordem de importância** (destino provável →
+origem → alternativas; no pouso destino → origem) e o primeiro fica com a
+melhor vaga. Motivo: nos cartões do CXJ⇄BNU de 29/10 os rótulos `23/08 ·
+CXJ→BNU` e `29/10 · BNU→CXJ (volta)` saíram um sobre o outro, o chip
+`~12:45` do CXJ cobriu "Porto Alegre", e o avião cobriu "decolou 14:21".
+Teste sem enviar nada: `data/_test/render_test.py` (ver Teste manual).
+
 **Nunca perde mensagem**: cartão de pouso falhou → sai a imagem antiga
 (gráfico + mapa) com a mesma legenda; cartão em voo falhou → mapa OSM antigo;
 cartão de decolagem falhou 3× (20 s entre tentativas — logo após a decolagem
@@ -208,3 +223,18 @@ python scripts/devtool.py ha bnu POST "/api/services/rest_command/psvis_flight_r
 
 Reenviar ao grupo real = trocar `"test":true` por `"force":true` — só a pedido
 do Eduardo (feito para 41f01799 em 2026-10-03).
+
+**Render offline (sem WhatsApp)** — `render_test.py` roda dentro do container
+a partir do volume e gera os 4 cartões de cada voo que ainda tem playback em
+`/data/playbacks/` (decolagem e em voo simulados como `sim:true`). Com um
+`cards.py` ao lado em `/data/_test/` ele usa esse em vez do `/app/cards.py` —
+é como conferir uma mudança de layout antes do rebuild. O `run` do devtool
+estoura o timeout de leitura em ~2 min; lance destacado e puxe o resultado:
+
+```bash
+python scripts/devtool.py run bnu-proxmox "pct push 101 /tmp/render_test.py /opt/psvis-tracker/data/_test/render_test.py"   # após devtool push para /tmp
+python scripts/devtool.py guest bnu 101 "cd /opt/psvis-tracker && nohup docker exec -w /data/_test psvis-tracker python render_test.py > data/_test/render.log 2>&1 &"
+python scripts/devtool.py guest bnu 101 "cd /opt/psvis-tracker/data/_test && tar czf out.tgz out"
+python scripts/devtool.py run bnu-proxmox "pct pull 101 /opt/psvis-tracker/data/_test/out.tgz /tmp/psvis-out.tgz"
+MSYS_NO_PATHCONV=1 python scripts/devtool.py pull bnu-proxmox /tmp/psvis-out.tgz out.tgz   # Git Bash reescreve /tmp sem isso
+```
