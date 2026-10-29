@@ -112,11 +112,16 @@ diagnostics.
   misses the boundary — `#EXT-X-TARGETDURATION:8` is normal.
 - The muxer stays hot (`hlsAlwaysRemux`), so page loads start immediately
   instead of waiting for a keyframe.
-- **`docker logs canteiro-hls` lies on this Pi**: it stopped at 2026-09-03
-  while the json log file kept growing (86 MB on 29/10). Read the file
-  itself: `sudo grep -a … /var/lib/docker/containers/<id>/<id>-json.log`
-  (`<id>` from `docker inspect -f '{{.Id}}' canteiro-hls`). The recreate on
-  2026-10-29 started a fresh log file; check whether the bug comes back.
+- **`docker logs canteiro-hls` can go blind**: from 2026-09-03 to
+  2026-10-29 it stopped at 09-03 while the json log file kept growing
+  (86 MB). The cause, confirmed on the ara relay the same day: a NUL-filled
+  line from a power cut or hard reset stops every forward read (`docker
+  logs`, `--since`, the API with `since=`), while `--tail N` still works.
+  The watchdog's crash counter reads with `since=`, so it was blind too
+  (heals came from the playlist test). The recreate on 2026-10-29 started a
+  clean file. Test: `sudo grep -a -c -P '\x00' /var/lib/docker/containers/<id>/<id>-json.log`
+  (`<id>` from `docker inspect -f '{{.Id}}' canteiro-hls`); if it is > 0, read the file
+  with `sudo grep -a`, or `docker compose up -d --force-recreate`.
 - `ERR [path canteiro] [RTSP source] EOF` followed 5–10 s later by
   `[path canteiro] stream is online` (sometimes with a `bad status code:
   404` in between) is the fix working at each excursion, not an incident;

@@ -175,10 +175,23 @@ the heal should stay silent. Do **not** add a second reader of the main
 stream from bnu: 1.4 Mbps per copy, and two copies stalled the Starlink
 upload on 2026-08-26. Details:
 `scripts/raspberry-pi/bnu-raspberrypi/docker/canteiro-hls/README.md`.
-On bnu, **`docker logs canteiro-hls` is stale**: it stops at 2026-09-03,
-while the json log file keeps growing (86 MB on 29/10). Read it with
-`sudo grep -a` on `/var/lib/docker/containers/<id>/<id>-json.log`, as on
-the ara relay. `docker logs go2rtc` reads normally.
+**A NUL line in a json-file log blinds every forward read of it**, on any
+Pi that loses power or is hard-reset: `docker logs`, `docker logs --since …`
+and the Engine API `GET /containers/<name>/logs?since=…` stop at the first
+NUL-filled line (often silently returning nothing), while a small
+`--tail N` reads backwards from the end and works. Checked 2026-10-29 on
+the ara relay: 3 NUL lines (lines 7444, 12140, 74277 — the shed power
+cuts), forward reads stop at 2026-10-09 14:46, `--since 10m` → 0 lines,
+`--tail 50` → 50. On bnu, `docker logs canteiro-hls` had the same symptom
+from 2026-09-03 to 2026-10-29 (86 MB file still growing; the recreate of
+that day deleted it, so the NULs could not be confirmed). The
+canteiro-watchdog's crash counter reads that API with `since=`, so it was
+blind all that time; its heals came from the playlist test only. For
+history, `sudo grep -a` the file `/var/lib/docker/containers/<id>/<id>-json.log`
+(`<id>` from `docker inspect -f '{{.Id}}' <name>`); test a log with
+`sudo grep -a -c -P '\x00' <file>`. Recreating the container
+(`docker compose up -d --force-recreate`) starts a clean file.
+`docker logs go2rtc` on bnu reads normally.
 
 It was staged on the mia LAN (`ara-raspberrypi2.local` over mDNS there).
 - **SSH is key only.** Imager's public-key mode writes
