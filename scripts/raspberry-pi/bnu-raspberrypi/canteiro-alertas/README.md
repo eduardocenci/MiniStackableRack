@@ -27,8 +27,12 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
 ## Rules (from the backtest — details in decision 0010)
 
 - Trigger: vehicle event (`car`/`bus`/`motorcycle`) ≥ 10 s; alert when P(truck) ≥ 0,85;
-  the type is the one of the first event (caçamba · munck · **poliguindaste com caçamba (para
-  retirar entulho)** (V3, 29/10/2026) · carroceria · prancha; betoneira/bomba = concretagem, off).
+  the type is the one of the first event (caçamba · munck · carroceria · prancha; betoneira/bomba
+  = concretagem, off). **V3** adds *poliguindaste com caçamba (para retirar entulho)* but is
+  EXPERIMENTAL: on the six 29/10/2026 snapshots every V3 variant pulled munck towards carroceria
+  and never scored the poliguindaste above 0,14, while the Decisions API itself varies a lot
+  between identical calls — V2 stays live (`QUESTIONS=v2`) until a V3 passes the backtest gate
+  (home-ara decision 0010, adendo 29/10/2026).
 - One episode per truck of ANY type (IoU ≥ 0,3 or ≤ 10 min since last sighting; closes
   after 20 min) — the same truck flipping munck/carroceria between events is one alert.
 - **Gallery of the day's trucks** (decisão 0010 adendo 29/10/2026 — the same carroceria was

@@ -7,7 +7,8 @@ desde 13/10/2026 os caminhões vão ao grupo da obra "Cenci Céu Azul Casa-Hanga
 Loop a cada POLL_S segundos:
   Frigate (bnu LXC 105) /api/events da câmera `canteiro`, rótulos de veículo →
   evento com ≥ MIN_DUR_S → snapshot (o mesmo ?quality=80 dos pacotes do diário) →
-  OpenAI Decisions API (perguntas V3 do home-ara, `detail=auto`) →
+  OpenAI Decisions API (perguntas V2 do home-ara, `detail=auto`; a V3 com
+  "poliguindaste com caçamba" existe mas regrediu na amostra de 29/10 — não está ao vivo) →
   canteiro.alertas.Motor (episódios, horário silencioso, tetos, estado persistido) →
   WAHA sendImage.
 
@@ -90,7 +91,7 @@ POLL_S = int(E("POLL_S", "15"))
 STALE_S = int(E("STALE_S", "1800"))            # evento mais velho que isso na 1ª vez = só marca visto
 JANELA_S = int(E("JANELA_S", "7200"))          # quanto do passado cada rodada consulta no Frigate
 BUDGET_USD_DAY = float(E("BUDGET_USD_DAY", "0.30"))
-VERSION = E("QUESTIONS", "v3")                     # v3 = poliguindaste com caçamba (29/10/2026)
+VERSION = E("QUESTIONS", "v2")                     # v3 (poliguindaste) é EXPERIMENTAL: regrediu em 29/10/2026 — ver README
 APRENDER = E("APRENDER_VEICULOS", "1") == "1"      # cadastro de carros/vans (decisão 0011)
 DESCONHECIDOS = E("DESCONHECIDOS", "0") == "1"     # aviso de veículo nunca visto — desligado
 P_CONHECIDO = float(E("P_CONHECIDO", "0.8"))       # galeria: P(id) para "conhecido"
