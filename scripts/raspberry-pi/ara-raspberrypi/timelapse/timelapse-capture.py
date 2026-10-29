@@ -60,6 +60,20 @@ Subcommands
              copies); skips days already present in posicao1/Luminancia125.
   sunrise    same for the sunrise windows T T+10 T+20; the 05:00 start
              covers the earliest sunrise of the year (~05:15, December).
+  sunrise/sunset --resume
+             relaunched by the entrypoint when the container (re)starts
+             inside a sequence's span (shed power cut 27/10/2026 ~18:27:
+             the sunset run died after its first window, no Luminancia125
+             that day, no Dia de Trabalho grid on 27 AND 28/10 — the grid
+             uses the previous day as baseline). Windows whose posicao1
+             frame is already in the outbox are skipped; windows the
+             outage really lost are reported (alert); the luminance choice
+             then sees the whole day. A flock on /var/lib/timelapse/state
+             keeps a cron start and a resume from running twice.
+  inprogress prints "sunrise", "sunset" or nothing: whether a sequence
+             would be running now (used by the entrypoint to decide the
+             resume and to keep today's solar frames local on the
+             upload-on-start).
   pos2test / pos3test
              recipe -> snap to /tmp/pos<N>test.jpg -> reverse, no outbox
              writes — health/re-calibration check.
@@ -127,6 +141,12 @@ def send_alert(text):
         return False
 
 OUTBOX = os.path.join(BASE, "outbox")
+STATE = os.path.join(BASE, "state")   # locks das sequencias (bind mount, sobrevive ao restart)
+# Spans das sequencias (hora local) para `inprogress`: do minuto do cron ate a
+# ultima janela + excursoes (~6 min) + folga. Fora disso, nada a retomar.
+SUNRISE_CRON_MIN = 5 * 60            # 0 5 * * *
+SUNSET_CRON_MIN = 16 * 60 + 40       # 40 16 * * *
+SEQ_TAIL_MIN = 15                    # T+20 + pos2/pos3 + luminancia
 RELAY_PT = "rtsp://127.0.0.1:8554/canteiro"
 RELAY_FIXA = "rtsp://127.0.0.1:8554/canteiro-alt"
 PTZ = "/usr/local/bin/canteiro-ptz"
@@ -715,8 +735,49 @@ def cmd_trabalho():
     return 0 if ok else 1
 
 
-def run_windows(T, windows, label):
-    print(f"{label} today: {int(T // 60):02d}:{int(T % 60):02d}")
+def _seq_lock(label):
+    """flock nao-bloqueante por sequencia: um cron start e um --resume nunca
+    rodam juntos (o lock morre com o processo — sem lock velho apos restart).
+    Devolve o fd aberto (manter vivo) ou None se outra instancia esta rodando."""
+    import fcntl
+    os.makedirs(STATE, exist_ok=True)
+    fd = os.open(os.path.join(STATE, f"{label}.lock"), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        os.close(fd)
+        return None
+    os.write(fd, f"{os.getpid()} {datetime.now():%Y-%m-%d %H:%M:%S}\n".encode())
+    return fd
+
+
+def _window_done(folder, day_str):
+    """Ja existe a pos1 desta janela de hoje no outbox (capturada antes de um
+    reinicio)? O upload-on-start do entrypoint deixa os quadros solares de hoje
+    no outbox enquanto `inprogress` diz que ha sequencia a retomar."""
+    return bool(glob.glob(os.path.join(OUTBOX, "posicao1", folder, f"{day_str}_*.jpg")))
+
+
+def cmd_inprogress():
+    """Imprime a sequencia que estaria rodando agora (sunrise/sunset) ou nada."""
+    now = datetime.now()
+    mins = now.hour * 60 + now.minute
+    T_rise = sunrise_minutes(date.today())
+    T_set = sunset_minutes(date.today())
+    if SUNRISE_CRON_MIN <= mins <= T_rise + SUNRISE_WINDOWS[-1][0] + SEQ_TAIL_MIN:
+        print("sunrise")
+    elif SUNSET_CRON_MIN <= mins <= T_set + SUNSET_WINDOWS[-1][0] + SEQ_TAIL_MIN:
+        print("sunset")
+    return 0
+
+
+def run_windows(T, windows, label, resume=False):
+    print(f"{label} today: {int(T // 60):02d}:{int(T % 60):02d}"
+          + (" (retomada apos reinicio do container)" if resume else ""))
+    lock = _seq_lock(label)
+    if lock is None:
+        print(f"{label}: outra instancia em andamento, saindo", file=sys.stderr)
+        return 0
     def reanchor_safely(tag):
         try:
             return cmd_reanchor(tag=tag)
@@ -725,8 +786,12 @@ def run_windows(T, windows, label):
             return 1
 
     failures = 0
+    day_str = datetime.now().strftime("%Y-%m-%d")
     for off, folder in windows:
         target = (T + off) * 60  # seconds after midnight
+        if resume and _window_done(folder, day_str):
+            print(f"[{folder}] ja capturada antes do reinicio, pulando")
+            continue
         # re-ancora ~60 s antes de CADA janela: as excursoes derivam ~150-300 px
         # por janela (tilt sempre p/ baixo — gravidade; pan por backlash) e a
         # baseline do firmware anda com tracking encadeado (medido 01/09/2026)
@@ -744,7 +809,8 @@ def run_windows(T, windows, label):
         if now_s < target:
             time.sleep(target - now_s)
         elif now_s > target + 300:
-            fail(f"janela {folder} perdida (>5 min de atraso)")
+            fail(f"janela {folder} perdida (>5 min de atraso"
+                 + (" — container parado/reiniciado durante a sequencia)" if resume else ")"))
             failures += 1
             continue
         stamp = datetime.now().strftime("%Y-%m-%d_%H%M")
@@ -792,9 +858,12 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd == "trabalho":
         return cmd_trabalho()
+    resume = "--resume" in sys.argv[2:]
     if cmd == "sunset":
-        rc = run_windows(sunset_minutes(date.today()), SUNSET_WINDOWS, "sunset")
+        rc = run_windows(sunset_minutes(date.today()), SUNSET_WINDOWS, "sunset", resume)
         return max(rc, cmd_luminancia())   # 1 se a captura OU a selecao falhar
+    if cmd == "inprogress":
+        return cmd_inprogress()
     if cmd == "luminancia":
         args = sys.argv[2:]
         if args[:1] == ["--backfill"] and len(args) >= 3:
@@ -803,7 +872,7 @@ def main():
         root = args[args.index("--root") + 1] if "--root" in args else None
         return cmd_luminancia(day, root)
     if cmd == "sunrise":
-        return run_windows(sunrise_minutes(date.today()), SUNRISE_WINDOWS, "sunrise")
+        return run_windows(sunrise_minutes(date.today()), SUNRISE_WINDOWS, "sunrise", resume)
     if cmd == "pos2test":
         return cmd_postest("posicao2")
     if cmd == "pos3test":

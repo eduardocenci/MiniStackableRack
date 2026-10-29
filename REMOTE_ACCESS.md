@@ -138,6 +138,25 @@ repointed the same day:
 - globalnet `ARA_STARLINK_GRPC`, `architecture.yaml` and `app.py`;
 - HA `frigate_whatsapp.py`.
 
+**Shed power cuts (seen 2026-10-27 ~18:27 and 2026-10-28 ~07:21).** The
+Pi's journal is **volatile** (`/var/log/journal` exists but is empty,
+`journalctl --list-boots` lists only the current boot), so a reboot leaves
+no trace on the Pi beyond `uptime -s`. Signature in the container logs: an
+rclone `NOTICE: Time may be set wrong - time from "oauth2.googleapis.com"
+is -Nm… different` right after the restart (fake-hwclock restores the last
+hourly save, so the clock is minutes behind until NTP corrects it — the
+`canteiro-timelapse-clock-resync` unit then restarts the container). To tell
+a power cut from a Pi crash, read the Starlink dish and router uptimes
+through the relays, from the bnu vigia container (it has `grpcurl`):
+`docker exec canteiro-vigia grpcurl -plaintext -max-time 15 -d
+'{"get_status":{}}' ara-raspberrypi2:9200 SpaceX.API.Device.Device/Handle |
+grep uptimeS` (dish; `:9000` = router) — Pi, dish and router with the same
+uptime = the whole shed lost power (both dates above). A cut inside a
+sunrise/sunset sequence used to kill the day's photos and the next day's
+Dia de Trabalho grid; since 2026-10-29 the `canteiro-timelapse` container
+resumes the sequence on restart and the bnu grid falls back to an earlier
+baseline (see `scripts/raspberry-pi/ara-raspberrypi/timelapse/README.md`).
+
 It was staged on the mia LAN (`ara-raspberrypi2.local` over mDNS there).
 - **SSH is key only.** Imager's public-key mode writes
   `/etc/ssh/sshd_config.d/50-cloud-init.conf` = `PasswordAuthentication
