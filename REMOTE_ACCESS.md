@@ -133,7 +133,8 @@ shed): reach it with plain `ssh eduardocenci@ara-raspberrypi2`.
 node still sits offline in the tailnet. The successor joined as its own
 node, **`ara-raspberrypi2` (`100.65.218.33`)**, and every consumer was
 repointed the same day:
-- bnu go2rtc;
+- bnu go2rtc (since 2026-10-29 only `canteiro-sub`; the main stream is
+  pulled by bnu `canteiro-hls`, see below);
 - the bnu canteiro-jobs env: `ARA_NTO_URL` and the watchdog's `ARA_HOST`;
 - globalnet `ARA_STARLINK_GRPC`, `architecture.yaml` and `app.py`;
 - HA `frigate_whatsapp.py`.
@@ -156,6 +157,41 @@ sunrise/sunset sequence used to kill the day's photos and the next day's
 Dia de Trabalho grid; since 2026-10-29 the `canteiro-timelapse` container
 resumes the sequence on restart and the bnu grid falls back to an earlier
 baseline (see `scripts/raspberry-pi/ara-raspberrypi/timelapse/README.md`).
+
+**The camera drops its RTSP stream at the start of most PTZ excursions**
+(timelapse sequences 05:00–06:00 and 16:40–19:00 BRT). The relay logs
+`[path canteiro] [RTSP source] EOF` and reopens the camera 5 s later with
+a new RTP timestamp base (history: grep the raw relay json log as above;
+29/10 08:27:06Z, 08:37:06Z, 08:47:05Z; 28/10 21:09:42Z, 21:19:41Z). The
+timelapse grabs are unaffected (6 attempts). Until 2026-10-29 the bnu
+go2rtc pulled the main stream and swapped its producer under its
+consumers' sessions. That timestamp jump crash-looped the `/live` HLS
+muxer until the watchdog's auto-heal, 1–3 `🔧 Auto-heal do /live` pairs
+per sequence in Casa SmokeTests. Since then the main stream's single
+puller at bnu is `canteiro-hls` (mediamtx, `alwaysAvailable` with a
+"sem sinal" card), and go2rtc reads it from `127.0.0.1:8555`. Expect an
+EOF → `stream is online` pair in its log, 5–10 s apart, per excursion;
+the heal should stay silent. Do **not** add a second reader of the main
+stream from bnu: 1.4 Mbps per copy, and two copies stalled the Starlink
+upload on 2026-08-26. Details:
+`scripts/raspberry-pi/bnu-raspberrypi/docker/canteiro-hls/README.md`.
+**A NUL line in a json-file log blinds every forward read of it**, on any
+Pi that loses power or is hard-reset: `docker logs`, `docker logs --since …`
+and the Engine API `GET /containers/<name>/logs?since=…` stop at the first
+NUL-filled line (often silently returning nothing), while a small
+`--tail N` reads backwards from the end and works. Checked 2026-10-29 on
+the ara relay: 3 NUL lines (lines 7444, 12140, 74277 — the shed power
+cuts), forward reads stop at 2026-10-09 14:46, `--since 10m` → 0 lines,
+`--tail 50` → 50. On bnu, `docker logs canteiro-hls` had the same symptom
+from 2026-09-03 to 2026-10-29 (86 MB file still growing; the recreate of
+that day deleted it, so the NULs could not be confirmed). The
+canteiro-watchdog's crash counter reads that API with `since=`, so it was
+blind all that time; its heals came from the playlist test only. For
+history, `sudo grep -a` the file `/var/lib/docker/containers/<id>/<id>-json.log`
+(`<id>` from `docker inspect -f '{{.Id}}' <name>`); test a log with
+`sudo grep -a -c -P '\x00' <file>`. Recreating the container
+(`docker compose up -d --force-recreate`) starts a clean file.
+`docker logs go2rtc` on bnu reads normally.
 
 It was staged on the mia LAN (`ara-raspberrypi2.local` over mDNS there).
 - **SSH is key only.** Imager's public-key mode writes

@@ -1,4 +1,5 @@
-# canteiro-hls — mediamtx as an HLS packager only (bnu-raspberrypi)
+# canteiro-hls — mediamtx: HLS packager AND the bnu end of the canteiro main
+# stream (bnu-raspberrypi)
 #
 # Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/docker/canteiro-hls/mediamtx.yml
 # Live copy:          bnu-raspberrypi:~/canteiro-hls/mediamtx.yml (ro mount into the container)
@@ -8,19 +9,39 @@
 # longer than that rotates the segment out from under hls.js, the /live page
 # hard-restarts, and a restart then waits up to 4 s (camera GOP) for a
 # keyframe. That was the "stream keeps interrupting" complaint.
-# mediamtx packages the SAME local go2rtc producer into honest 4 s segments
-# with a 7-segment (~28 s) window, so the page can hold a real buffer that
-# rides out Starlink jitter. It reads rtsp://127.0.0.1:8554/canteiro — the
-# shared go2rtc producer — so Starlink still carries exactly one copy.
+# mediamtx packages the stream into honest 4 s segments with a 7-segment
+# (~28 s) window, so the page can hold a real buffer that rides out Starlink
+# jitter.
+#
+# Why it pulls the relay itself (2026-10-29): the camera closes its RTSP
+# session at the start of most PTZ excursions of the timelapse (sunrise
+# 05:00–06:00, sunset 16:40–19:00). The ara relay then drops its readers and
+# reopens the camera ~5 s later with a NEW random RTP timestamp base. While
+# go2rtc was the WAN puller it swapped its producer under the SAME RTSP
+# session it served here, so this muxer got a timestamp jump it never digests
+# ("sample timestamp is impossible to handle", crash-looping every 10 s) until
+# the watchdog restarted both containers ~100 s later.
+# Now this path is the single puller of the main stream (Starlink still
+# carries exactly one copy) and go2rtc reads it from 127.0.0.1:8555:
+#   - mediamtx sees the relay EOF itself and reconnects (5 s pause, +5 s when
+#     it races the relay's own camera reconnect → back in ~5–10 s);
+#   - alwaysAvailable keeps every reader (the HLS muxer, go2rtc and through it
+#     Frigate/TV) connected meanwhile, fills the gap with offline.mp4 on repeat
+#     and re-bases the camera on one continuous timeline — no muxer crash, no
+#     hls.js restart, no auto-heal.
 
 logLevel: info
 
-# HLS server only — go2rtc owns RTSP :8554 / HTTP :1984 on this Pi.
+# go2rtc owns RTSP :8554 / HTTP :1984 on this Pi; this RTSP server is only the
+# local hop to go2rtc (127.0.0.1:8555, TCP — no UDP listeners).
 api: no
 metrics: no
 pprof: no
 playback: no
-rtsp: no
+rtsp: yes
+rtspAddress: 127.0.0.1:8555
+rtspTransports: [tcp]
+rtspEncryption: "no"
 rtmp: no
 webrtc: no
 srt: no
@@ -38,5 +59,11 @@ hlsAlwaysRemux: yes      # muxer always hot → instant page loads, no
 
 paths:
   canteiro:
-    source: rtsp://127.0.0.1:8554/canteiro
+    source: rtsp://ara-raspberrypi2:8554/canteiro
     rtspTransport: tcp
+    # The card carries the camera's exact tracks (H265 2304x1296 + AAC 16 kHz
+    # mono): mediamtx refuses a source whose tracks differ from the offline
+    # stream's, and the built-in card (alwaysAvailableTracks) cannot do 16 kHz
+    # AAC. Regenerate with make-offline-card.sh if the camera streams change.
+    alwaysAvailable: yes
+    alwaysAvailableFile: /offline.mp4

@@ -3,12 +3,20 @@
 # Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/docker/go2rtc/go2rtc.yaml
 # Live copy:          bnu-raspberrypi:~/go2rtc/go2rtc.yaml (ro mount at /config/go2rtc.yaml)
 #
-# Purpose: pulls the tailnet-only relay on ara-raspberrypi2 ONCE per stream and
-# fans it out on the bnu house LAN, so ara's Starlink upload always carries a
-# single copy of each stream (two parallel main-stream readers stalled it —
-# 2026-08-26). Consumers:
-#   - canteiro-hls: mediamtx HLS packager for the browser /live page
-#     (rtsp://127.0.0.1:8554/canteiro)
+# Purpose: fans the ARA camera out on the bnu house LAN. ara's Starlink upload
+# always carries a single copy of each stream (two parallel main-stream
+# readers stalled it — 2026-08-26):
+#   - main stream: pulled ONCE by canteiro-hls (mediamtx, alwaysAvailable) and
+#     read here from rtsp://127.0.0.1:8555/canteiro (2026-10-29). Until then
+#     go2rtc pulled the relay itself, but it swaps a dropped producer under
+#     its consumers' live sessions — the camera's PTZ-excursion EOFs came out
+#     as RTP timestamp jumps that crash-looped the HLS muxer (see
+#     ../canteiro-hls/mediamtx.yml). mediamtx keeps the readers connected
+#     with an offline card and one continuous timeline instead.
+#   - canteiro_sub: still pulled from the relay directly (Frigate detect only).
+# Consumers:
+#   - canteiro-hls: upstream of `canteiro` (above) and HLS packager for the
+#     browser /live page
 #   - Samsung AU8000 60" TV via DLNA — progressive fMP4 over HTTP:
 #       http://10.1.1.123:1984/api/stream.mp4?src=canteiro         (HEVC, copy)
 #       http://10.1.1.123:1984/api/stream.mp4?src=canteiro_h264    (H.264 transcode,
@@ -24,7 +32,7 @@ api:
   listen: ":1984"
 
 # RTSP serves BOTH the internal ffmpeg-transcode return path AND the LAN
-# consumers (canteiro-hls on localhost, Frigate LXC on 10.1.1.160) — it must
+# consumers (Frigate LXC on 10.1.1.160) — it must
 # listen on all interfaces, not 127.0.0.1. No reader auth: reachable from the
 # house LAN and tailnet only, same trust level as the :1984 HTTP API.
 rtsp:
@@ -33,7 +41,9 @@ webrtc:
   listen: ""
 
 streams:
-  canteiro: rtsp://ara-raspberrypi2:8554/canteiro
+  # Main stream via canteiro-hls (localhost, never drops: during a camera or
+  # Starlink outage it carries the "sem sinal" card instead of an EOF).
+  canteiro: rtsp://127.0.0.1:8555/canteiro
   # PT-lens 640x480 H264 substream — bnu Frigate's detect feed (cheap decode,
   # light on the Starlink upload).
   canteiro_sub: rtsp://ara-raspberrypi2:8554/canteiro-sub
