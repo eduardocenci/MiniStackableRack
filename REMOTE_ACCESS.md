@@ -211,6 +211,48 @@ on bnu-raspberrypi). `/api/presence?from=<ISO UTC>&to=<ISO UTC>` accepts **short
 > clean; mia was offline 31/08 — if its dashboard ever shows `172.17.0.x`,
 > delete the rows the same way.
 
+### BG site specifics (learned 2026-10-29)
+
+- **bg-proxmox is the bg LAN's door to the tailnet** (`192.168.0.120`
+  static, firewall off): bg HA and the TV cannot originate to the tailnet,
+  so bg-proxmox re-serves bnu services on its LAN IP — `waha-proxy.service`
+  (socat `:3001` → bnu WAHA) and `canteiro-tv-proxy.socket`
+  (`systemd-socket-proxyd` `:1984` → bnu-raspberrypi go2rtc). Unit files and
+  deploy steps: `scripts/proxmox/bg-proxmox/`.
+- **Living-room TV** = Samsung QN50Q7FAAGXZD (2025 Tizen, Wi-Fi, MAC
+  `28:07:08:02:db:c1`) at `192.168.0.111` (DHCP — reserve on the HUMAX).
+  Identify it with `devtool.py run bg-proxmox "curl -s
+  http://192.168.0.111:8001/api/v2/"` (`modelName`, `PowerState`). It has a
+  **native Google Cast receiver** (`:8008/:8009`, HA
+  `media_player.50_qled`, cast model "Q70F"); the samsungtv entity is
+  `media_player.tv_sala_qn50q7faagxzd`, DLNA `media_player.50_qled_2`.
+- **Cast "timed out after 30 s" on a Samsung = a pending on-screen
+  authorization**, not a network problem. The receiver answers `LAUNCH` with
+  `LAUNCH_STATUS: USER_PENDING_AUTHORIZATION` and waits for someone to press
+  *Permitir/Allow* with the remote (once per sender; HA's cast integration is
+  one sender). HA only logs `CastMediaPlayerEntity._quick_play Failed …
+  timed out`. To see the real status, run pychromecast inside the HA Core
+  container through the guest agent — pipe a script on stdin (`docker cp`
+  into the container did not work):
+  `echo <base64> | base64 -d | docker exec -i homeassistant python3 -` via
+  `devtool.py guest bg 100 "…"`, with `pychromecast.socket_client` logging at
+  DEBUG and `cast.start_app("CC1AD845")`. Do not answer the prompt blind with
+  `remote.send_command` — landing on *Negar* puts HA on the TV's block list
+  (Settings → Connection → Device Connection Manager).
+- **HA webhook bookmarks use the full MagicDNS name over plain http**
+  (`http://bg-homeassistant.woodpecker-shark.ts.net:8123/api/webhook/<id>`)
+  so the link says which device it talks to (decisão Eduardo 2026-10-29).
+  bg HA has no `tailscale serve` (`:443` refused), but desktop Chrome loads
+  `http://…ts.net:8123` without upgrading it to https (checked 2026-10-29),
+  so the HSTS problem described in the bnu go2rtc README does not hit it;
+  iPhone Safari not tested yet.
+- **Finding a webhook id in the HA UI:** Automações → the automation → the
+  *Webhook* trigger card under *Quando* shows *ID do webhook* with a copy
+  button (or ⋮ → *Editar em YAML* → `webhook_id`).
+- Bare `curl` from this machine to a tailnet host is refused by the
+  permission rules — reach the HTTP APIs through `devtool.py run <host>
+  "curl -s http://127.0.0.1:…"`.
+
 ### MIA site specifics (learned 2026-08-26 as PLY; site renamed 2026-08-31)
 
 - **mia is the former ply** (rack migrated Plymouth → Miami, renamed 2026-08-31).

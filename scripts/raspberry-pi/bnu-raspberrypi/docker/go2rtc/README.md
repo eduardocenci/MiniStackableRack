@@ -9,7 +9,8 @@ canteiro stream from ara exactly once:
 rtsp://ara-raspberrypi2:8554/canteiro ──tailnet (1 copy each)──▶ go2rtc on bnu-raspberrypi
                      + /canteiro-sub                             ├─ rtsp://10.1.1.123:8554/canteiro + canteiro_sub → bnu Frigate LXC 105 (record + person/vehicle detect, 2026-08-26)
                                                                  ├─ rtsp://127.0.0.1:8554/canteiro → canteiro-hls (mediamtx :8888 → browser /live page, 2026-08-29)
-                                                                 └─ /api/stream.mp4?src=canteiro → 55" TV (Cast)
+                                                                 ├─ /api/stream.mp4?src=canteiro → 55" TV (Cast)
+                                                                 └─ same URL ─tailnet─▶ bg-proxmox :1984 forward → bg 50" TV (Cast, on demand, 2026-10-29)
 ```
 
 (The mpv wall view of this stream on the Pi's own screen —
@@ -66,6 +67,14 @@ cast uses `http://10.1.1.123:1984/...` — IPs are not HSTS'd).
 Consumed by the **bnu HA script `script.canteiro_na_tv`** ("Canteiro na
 TV"), which casts the **HEVC passthrough** URL to the 55" Neo QLED
 (`media_player.qn85f1443`, Samsung's 2026 native Google Cast receiver).
+
+The **bg twin** (2026-10-29) is bg HA `script.canteiro_na_tv` → the
+living-room 50" QLED (`media_player.50_qled`), fetching this same
+`stream.mp4` through the `canteiro-tv-proxy` forward on bg-proxmox
+(`http://192.168.0.120:1984/…`, see `scripts/proxmox/bg-proxmox/`) — one
+more reader of the shared producer, so ara's Starlink still carries one
+copy; bnu's WAN upload carries ~2 Mbps extra while it plays. Its own
+start/stop links are `BG_TV_WEBHOOK_ON` / `BG_TV_WEBHOOK_OFF`.
 
 **One-click control (browser bookmarks).** Two HA webhook automations on
 bnu-homeassistant expose start/stop as plain-GET URLs (no login — the long

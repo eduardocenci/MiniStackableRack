@@ -1,0 +1,35 @@
+# Canteiro na TV (bg) — casts the ARA canteiro camera to the Bento living-room TV.
+# Twin of bnu HA script.canteiro_na_tv (scripts/raspberry-pi/bnu-raspberrypi/docker/go2rtc/README.md).
+#
+#   ara canteiro-relay ─tailnet (the one Starlink copy)─▶ go2rtc on bnu-raspberrypi (100.91.64.62:1984)
+#     ─tailnet─▶ bg-proxmox canteiro-tv-proxy (192.168.0.120:1984, socket-activated; see scripts/proxmox/bg-proxmox/)
+#     ─bg LAN─▶ TV Sala 50" QLED (QN50Q7FA, 2025) native Google Cast receiver — media_player.50_qled, 192.168.0.111
+#
+# HEVC passthrough progressive MP4, never the canteiro_h264 transcode and never HLS (the Samsung
+# Cast receiver rejects go2rtc's HLS). The URL is an IP because Cast receivers cannot resolve names.
+#
+# Start/stop bookmarks: two webhook automations created through the HA UI/config API (they live in
+# automations.yaml, not here, so the ids stay out of git) — "Webhook — Canteiro na TV (ligar)" →
+# script.canteiro_na_tv, "(parar)" → media_player.media_stop. Full URLs in the repo-root .env as
+# BG_TV_WEBHOOK_ON / BG_TV_WEBHOOK_OFF, in the form
+# http://bg-homeassistant.woodpecker-shark.ts.net:8123/api/webhook/<id> (tailnet only).
+script:
+  canteiro_na_tv:
+    alias: "Canteiro na TV"
+    icon: mdi:cctv
+    mode: restart
+    sequence:
+      - action: media_player.turn_on
+        target:
+          entity_id: media_player.50_qled
+        continue_on_error: true
+      - wait_template: "{{ states('media_player.50_qled') != 'unavailable' }}"
+        timeout:
+          seconds: 20
+        continue_on_timeout: true
+      - action: media_player.play_media
+        target:
+          entity_id: media_player.50_qled
+        data:
+          media_content_id: "http://192.168.0.120:1984/api/stream.mp4?src=canteiro"
+          media_content_type: "video/mp4"
