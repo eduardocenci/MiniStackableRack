@@ -123,6 +123,16 @@ messages + 18 media pulled, group send path reachable). Note: paramiko key auth 
 `root@bnu-proxmox` is refused from this machine (`Authentication failed`) — the script
 falls back to `PROXMOX_PW` automatically; plain `ssh` in Git Bash is unaffected.
 
+**A standing consumer on mia-desktop (2026-10-30): the Claudinho runner**
+(`python -m canteiro.claudinho loop`, home-ara decision 0016, started at logon)
+polls the listener's `GET /pending?rule=caminhao` every 30 s through this same
+forwarder and starts it itself (`gitignore/claudinho/forwarder.log`) when
+neither the `.env` URL nor `127.0.0.1:18788` answers. That is the pattern for any
+listener rule whose consumer is off the bnu LAN: **poll, don't `notify_url`** —
+LXC 101 is not a tailnet node and cannot reach mia-desktop. Its answers go out
+through `127.0.0.1:13000` (WAHA `sendText` with `reply_to` = the listener's
+message id `true_<chat>_<key-id>`, verified 2026-10-30 in Casa SmokeTests).
+
 ### ARA (home build — dashboard site `home: true`, still not in devtool.py)
 
 `ara-raspberrypi2` is a tailnet node (the "computadorzinho" in the canteiro
