@@ -10,6 +10,13 @@ spawns a headless Claude run of the `finance-hangar` skill.
 **No LLM here** — plumbing only. Adding a WhatsApp automation = adding a rule,
 not a service.
 
+Rules and their consumers:
+
+| Rule | Matches (obra group) | Consumer |
+|---|---|---|
+| `finance` | Eduardo's "Casa, financeiro" wake word | `notify_url` → `scripts/finance_trigger.py` on bnu-win11 (headless `finance-hangar`) |
+| `caminhao` | every truck alert `canteiro-alertas` posts (`🚚 *… no canteiro* — HH:MM`) | **polled** by mia-desktop: `python -m canteiro.claudinho loop` (home-ara, decision 0016) answers with the Claudinho ✻ delivery/pickup guess — no `notify_url`, LXC 101 cannot reach the tailnet (since 2026-10-30) |
+
 ## Where it runs
 
 bnu-proxmox → LXC 101 `docker` → container `waha-listener`, on the
@@ -113,7 +120,12 @@ name. Changing it requires recreating the container (env vars are read at
 start): `docker compose up -d`.
 
 Rule tweaks do **not** need a restart — `rules.yaml` is re-read per event
-(it is bind-mounted, so re-push + nothing else).
+(it is bind-mounted, so re-push + nothing else). **Re-push IN PLACE**
+(`cat > rules.yaml`, `cp new rules.yaml`), never `mv new rules.yaml`: the
+compose binds the single FILE, the container keeps the old inode, and the new
+rule silently never loads — seen 2026-10-30 (`caminhao`); recovering from a
+`mv` takes `docker restart waha-listener`. Check with `GET /health` →
+`rules`.
 
 Media knobs (code defaults; the compose sets none): `MEDIA_BACKFILL_DAYS`
 (30), `MEDIA_REPAIR_HOURS` (6; 0 = no repair thread), `MEDIA_MAX_PASSES` (3),
