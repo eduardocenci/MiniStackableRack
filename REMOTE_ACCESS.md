@@ -123,6 +123,24 @@ messages + 18 media pulled, group send path reachable). Note: paramiko key auth 
 `root@bnu-proxmox` is refused from this machine (`Authentication failed`) — the script
 falls back to `PROXMOX_PW` automatically; plain `ssh` in Git Bash is unaffected.
 
+**A standing consumer on mia-desktop (2026-10-30): the Claudinho runner**
+(`python -m canteiro.claudinho loop`, home-ara decision 0016, started at logon)
+polls the listener's `GET /pending?rule=caminhao` every 30 s through this same
+forwarder and starts it itself (`gitignore/claudinho/forwarder.log`) when
+neither the `.env` URL nor `127.0.0.1:18788` answers. That is the pattern for any
+listener rule whose consumer is off the bnu LAN: **poll, don't `notify_url`** —
+LXC 101 is not a tailnet node and cannot reach mia-desktop. Its answers go out
+through `127.0.0.1:13000` (WAHA `sendText` with `reply_to` = the listener's
+message id `true_<chat>_<key-id>`, verified 2026-10-30 in Casa SmokeTests).
+It runs as the Windows scheduled task **`Claudinho`** (at logon, registered
+2026-11-01 with Eduardo's OK): `pythonw.exe C:\Users\eduar\wt\claudinho-loop.pyw`,
+a local launcher that pins the code clone (`C:\Users\eduar\wt\ara-claudinho`) and
+`MSR_PARENT_REPO`. Is it alive? `gitignore/claudinho/heartbeat.json` (`ts` within
+30 s, `ok: true`, `pid`) and `Get-ScheduledTask Claudinho` (state `Running`). Restart
+with `Stop-ScheduledTask Claudinho; Start-ScheduledTask Claudinho`. Only one instance
+can run (it binds `127.0.0.1:18790`; a second one exits silently). Shadow or live
+is `CLAUDINHO_MODO` (default `sombra`).
+
 ### ARA (home build — dashboard site `home: true`, still not in devtool.py)
 
 `ara-raspberrypi2` is a tailnet node (the "computadorzinho" in the canteiro

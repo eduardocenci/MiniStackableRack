@@ -25,3 +25,14 @@ rules:
     modes:
       aprovado: "aprovado"
     notify_url: "${FINANCE_NOTIFY_URL}"
+
+  # Claudinho ✻ (home-ara decision 0016) — every truck alert canteiro-alertas
+  # posts in the obra group ("🚚 *Caminhão munck no canteiro* — 13:25") queues
+  # a job; mia-desktop pulls the queue (`python -m canteiro.claudinho loop`,
+  # home-ara) through the bnu LAN forwarder, works out the delivery/pickup in
+  # a headless Claude run and answers. No notify_url: LXC 101 is not on the
+  # tailnet and cannot reach mia-desktop — the desktop polls.
+  - name: caminhao
+    chat: "120363402090094156@g.us"
+    from_me: true
+    pattern: '^\S+\s+\*[^*]+ no canteiro\* — \d{1,2}:\d{2}'

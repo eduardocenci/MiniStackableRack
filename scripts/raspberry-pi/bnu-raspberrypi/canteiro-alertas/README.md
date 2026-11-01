@@ -23,6 +23,7 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
 | state | `/var/lib/canteiro-alertas/` — `state.json` (seen event ids, open episode, counters, today's alerted trucks; a restart never re-alerts), `alertas.jsonl` (one line per decision), `heartbeat.json`, `cache/` (every Decisions answer — audit trail), `caminhoes/` (snapshot of each alerted truck, the day's gallery) |
 | env | `~/canteiro-jobs/env/canteiro-alertas.env` (600) — template [`canteiro-alertas.env.example`](canteiro-alertas.env.example) |
 | cost | ~US$ 0,0001 per vehicle event (~1.300 input tokens); `BUDGET_USD_DAY` caps it (default US$ 0,30) |
+| consumers | **Claudinho ✻** (home-ara decision 0016, since 30/10/2026): the waha-listener rule `caminhao` queues every truck alert this container posts in the obra group; mia-desktop (`python -m canteiro.claudinho loop`) answers it with the delivery/pickup it was, quoting the alert. It parses the caption's first line (`<emoji> *<label> no canteiro* — HH:MM (Nº do dia)`) — change that line or the labels (`canteiro.alertas.NOMES`) and `canteiro.claudinho.CLASSES` + the listener rule must follow (test `test_rotulos_batem_com_o_motor`) |
 
 ## Rules (from the backtest — details in decision 0010)
 
