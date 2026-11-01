@@ -138,8 +138,12 @@ a local launcher that pins the code clone (`C:\Users\eduar\wt\ara-claudinho`) an
 `MSR_PARENT_REPO`. Is it alive? `gitignore/claudinho/heartbeat.json` (`ts` within
 30 s, `ok: true`, `pid`) and `Get-ScheduledTask Claudinho` (state `Running`). Restart
 with `Stop-ScheduledTask Claudinho; Start-ScheduledTask Claudinho`. Only one instance
-can run (it binds `127.0.0.1:18790`; a second one exits silently). Shadow or live
-is `CLAUDINHO_MODO` (default `sombra`).
+can run (it binds `127.0.0.1:18790`; a second one exits silently). The launcher
+sets `CLAUDINHO_MODO=live`: answers go straight to the obra group as a quoted
+reply from the first truck (Eduardo, 2026-11-01; the code default `sombra` sends
+to Casa SmokeTests). After changing the launcher or the clone, restart the task
+and check that the heartbeat `pid` changed: a Start right after a Stop can still
+find the lock held and exit, leaving the task `Ready` with nothing running.
 
 ### ARA (home build — dashboard site `home: true`, still not in devtool.py)
 
