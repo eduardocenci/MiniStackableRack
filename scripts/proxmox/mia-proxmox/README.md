@@ -1,8 +1,15 @@
 # mia-proxmox — host-level config
 
 Proxmox host of the mia rack. LAN `192.168.2.20/24` (vmbr0, static; subnet 192.168.2.0/24 since the 2026-09-04 IP-plan cutover), tailnet
-`mia-proxmox` (100.86.13.113). Guests: VM 100 `mia-homeassistant`
-(LAN `192.168.2.21`), VM 101 Win11.
+`mia-proxmox` (100.86.13.113). PVE node name is still `ply-proxmox`.
+
+| Guest | What | LAN | Notes |
+|---|---|---|---|
+| VM 100 | `mia-homeassistant` | `192.168.2.21` | 4 GB |
+| VM 101 | Win11 (`mia-win11`) | `192.168.2.22` | 4 GB (keep ≥ 4 GB) |
+| LXC 102 | `mia-docker` — Docker host for the `senior-*` containers, since 2026-10-29 | `192.168.2.23` (static, **LAN-only**, not on the tailnet) | 4 cores · 3 GB · 40 GB; reach with `devtool.py guest mia 102 "…"`. Folder: [`../docker/mia-docker/`](../docker/mia-docker/README.md) |
+
+No vzdump backup job is configured on this host (checked 2026-10-29).
 
 ## Tailnet forwards for mia HA (`systemd/`)
 
