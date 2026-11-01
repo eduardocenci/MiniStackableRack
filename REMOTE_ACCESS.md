@@ -132,6 +132,14 @@ listener rule whose consumer is off the bnu LAN: **poll, don't `notify_url`** â€
 LXC 101 is not a tailnet node and cannot reach mia-desktop. Its answers go out
 through `127.0.0.1:13000` (WAHA `sendText` with `reply_to` = the listener's
 message id `true_<chat>_<key-id>`, verified 2026-10-30 in Casa SmokeTests).
+It runs as the Windows scheduled task **`Claudinho`** (at logon, registered
+2026-11-01 with Eduardo's OK): `pythonw.exe C:\Users\eduar\wt\claudinho-loop.pyw`,
+a local launcher that pins the code clone (`C:\Users\eduar\wt\ara-claudinho`) and
+`MSR_PARENT_REPO`. Is it alive? `gitignore/claudinho/heartbeat.json` (`ts` within
+30 s, `ok: true`, `pid`) and `Get-ScheduledTask Claudinho` (state `Running`). Restart
+with `Stop-ScheduledTask Claudinho; Start-ScheduledTask Claudinho`. Only one instance
+can run (it binds `127.0.0.1:18790`; a second one exits silently). Shadow or live
+is `CLAUDINHO_MODO` (default `sombra`).
 
 ### ARA (home build â€” dashboard site `home: true`, still not in devtool.py)
 
