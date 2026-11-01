@@ -15,7 +15,7 @@ Rules and their consumers:
 | Rule | Matches (obra group) | Consumer |
 |---|---|---|
 | `finance` | Eduardo's "Casa, financeiro" wake word | `notify_url` → `scripts/finance_trigger.py` on bnu-win11 (headless `finance-hangar`) |
-| `caminhao` | every truck alert `canteiro-alertas` posts (`🚚 *… no canteiro* — HH:MM`) | **polled** by mia-desktop: `python -m canteiro.claudinho loop` (home-ara, decision 0016) answers with the Claudinho ✻ delivery/pickup guess — no `notify_url`, LXC 101 cannot reach the tailnet (since 2026-10-30) |
+| `caminhao` | every truck alert `canteiro-alertas` posts (`🚚 *… no canteiro* — HH:MM`) | **polled** by mia-desktop: `python -m canteiro.claudinho loop` (home-ara, decision 0016) answers with the Claudinho 🫡 delivery/pickup guess — no `notify_url`, LXC 101 cannot reach the tailnet (since 2026-10-30) |
 
 ## Where it runs
 

@@ -26,7 +26,7 @@ rules:
       aprovado: "aprovado"
     notify_url: "${FINANCE_NOTIFY_URL}"
 
-  # Claudinho ✻ (home-ara decision 0016) — every truck alert canteiro-alertas
+  # Claudinho 🫡 (home-ara decision 0016) — every truck alert canteiro-alertas
   # posts in the obra group ("🚚 *Caminhão munck no canteiro* — 13:25") queues
   # a job; mia-desktop pulls the queue (`python -m canteiro.claudinho loop`,
   # home-ara) through the bnu LAN forwarder, works out the delivery/pickup in
