@@ -70,7 +70,7 @@ See `REMOTE_ACCESS.md` § MIA site specifics.)
 | Repo folder | On the LXC | What |
 |---|---|---|
 | `install-docker.sh` | — | Host preparation (Docker CE + Compose plugin) |
-| [`senior/`](senior/README.md) | `/opt/senior/` | Compose project **`senior`**. Running: `senior-waha`, `senior-postgres`. Planned: `senior-n8n`, `senior-mcp`, `senior-sync`, `senior-whisper`, `senior-nocodb` |
+| [`senior/`](senior/README.md) | `/opt/senior/` | Compose project **`senior`**. Running: `senior-waha` (`:3000`), `senior-postgres`, `senior-n8n` (`:5678`), `senior-whisper`, `senior-mcp`, `senior-agente`, `senior-painel` (`:8080`), `senior-sync`. Planned: `senior-nocodb`. Nightly backup to the NAS |
 
 Why this differs from `bnu-docker/`, which has one folder per container:
 on LXC 101 each container is its own compose project in its own
