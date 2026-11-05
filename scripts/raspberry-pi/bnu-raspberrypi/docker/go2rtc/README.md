@@ -12,8 +12,11 @@ rtsp://ara-raspberrypi2:8554/canteiro ──tailnet (1 copy)──▶ canteiro-h
                                                             ├─ :8888 HLS → browser /live page
                                                             └─ rtsp://127.0.0.1:8555/canteiro ──▶ go2rtc `canteiro`
 rtsp://ara-raspberrypi2:8554/canteiro-sub ──tailnet (1 copy)──────────────────▶ go2rtc `canteiro_sub`
+rtsp://ara-raspberrypi2:8554/canteiro-alt-sub ──tailnet (1 copy, 2026-11-04)──▶ go2rtc `canteiro_fixa_sub` (fixed lens, 640×480)
+rtsp://ara-raspberrypi2:8554/canteiro-alt ──on demand only──────────────────▶ go2rtc `canteiro_fixa` (fixed lens, HEVC main)
 go2rtc on bnu-raspberrypi
   ├─ rtsp://10.1.1.123:8554/canteiro + canteiro_sub → bnu Frigate LXC 105 (record + person/vehicle detect, 2026-08-26)
+  ├─ rtsp://10.1.1.123:8554/canteiro_fixa_sub → bnu Frigate camera `canteiro_fixa` (detect 5 fps + record, 2026-11-04)
   └─ /api/stream.mp4?src=canteiro → 55" TV (Cast)
 ```
 
@@ -136,7 +139,12 @@ python scripts/devtool.py run bnu-raspberrypi "docker logs go2rtc --tail 20"
 
 Streams are pulled from the relay **on demand** (go2rtc connects upstream
 only while a client is reading). Since 2026-08-26 the bnu Frigate holds
-`canteiro` + `canteiro_sub` open 24/7 (record + detect), so the Starlink
-upload carries those two continuously (~main + substream bitrate) — that is
-the budgeted baseline, and it is still one copy of each; TV/browser viewers
-keep adding zero upstream load.
+`canteiro` + `canteiro_sub` open 24/7 (record + detect), and since
+2026-11-04 also `canteiro_fixa_sub` (the fixed lens' 640×480 substream,
+detect + record of the `canteiro_fixa` camera), so the Starlink upload
+carries those three continuously (~1.25 Mbps main + ~0.1 Mbps per
+substream, measured 2026-11-04 at night) — that is the budgeted baseline,
+and it is still one copy of each; TV/browser viewers keep adding zero
+upstream load. **`canteiro_fixa` (the fixed lens' HEVC main) is on demand
+only** — do not point Frigate or any 24/7 reader at it: a second main
+stream doubles the baseline, which is what stalled the uplink on 2026-08-26.

@@ -128,9 +128,23 @@ entertainment-room TV (see `scripts/proxmox/mia-proxmox/README.md`).
 
 ```
 iM9+ camera (ARA LAN) ─▶ mediamtx on ara-raspberrypi2 ─tailnet/Starlink─▶ go2rtc on bnu-raspberrypi (10.1.1.123)
-                                                     (1 copy per stream)      └─▶ this LXC: canteiro (HEVC main, record)
+  PT lens (channel 1)                                (1 copy per stream)      └─▶ this LXC: canteiro (HEVC main, record)
                                                                                   canteiro_sub (H264 640×480, detect)
+  fixed lens (channel 2, since 2026-11-04)                                       canteiro_fixa (H264 640×480 substream,
+                                                                                  detect 5 fps + record — main stream on demand only)
 ```
+
+**`canteiro_fixa` (2026-11-04)** — the same iM9's FIXED lens, aimed by Eduardo at the path
+vehicles take in (many only pass the PT lens and park out of its angle). Detect and record both
+come from its 640×480 substream: the fixed lens' HEVC main stream (~1.25 Mbps constant, like the
+PT main) would double the obra's Starlink upload 24/7, and two main streams already stalled it on
+2026-08-26 — it is only on the bnu go2rtc as `canteiro_fixa`, pulled while someone watches. So
+`/api/canteiro_fixa/recordings/<ts>/snapshot.jpg` is 640×480, not 2304×1296. Detect runs at 5 fps
+(`min_initialized: 2`, car `threshold: 0.7`, `min_area: 800`) so a 2–3 s crossing still becomes an
+event; GenAI review is off for it (same scene as the PT lens). `canteiro-alertas` reads both lenses
+and keeps ONE episode per truck across them (home-ara decision 0010, adendo 04/11/2026); the HA
+scripts treat it as an obra camera (`CEUAZUL_CAMERAS`, digest exclusion). Trade the record role for
+the main stream only after measuring the daytime uplink headroom.
 
 **Never point this LXC at `ara-raspberrypi2` directly** — the bnu-raspberrypi
 go2rtc is the single shared Starlink pull; a second main-stream reader

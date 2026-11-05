@@ -24,6 +24,7 @@ timestamp is impossible to handle", /live answers 500) —
 | `rtsp://ara-raspberrypi2:8554/canteiro` | lens on `channel=1`, main stream (HEVC 2304×1296) — pulled 24/7 (`sourceOnDemand: no`) |
 | `rtsp://ara-raspberrypi2:8554/canteiro-alt` | lens on `channel=2`, main stream — pulled on demand |
 | `rtsp://ara-raspberrypi2:8554/canteiro-sub` | lens on `channel=1`, substream (H264 640×480) — on demand; bnu Frigate's detect feed (held open 24/7 while Frigate is up, added 2026-08-26) |
+| `rtsp://ara-raspberrypi2:8554/canteiro-alt-sub` | lens on `channel=2` (fixed), substream (H264 640×480, 20 fps) — on demand; bnu Frigate's `canteiro_fixa` detect **and record** feed since 2026-11-04 (held open 24/7). The fixed lens' main stream stays on demand: pulling two HEVC mains 24/7 (~1.25 Mbps each, `BitrateLimit` 1280 kbps on both channels per ONVIF) stalled the uplink on 2026-08-26 |
 
 The relay has no reader auth: it is reachable only from the tailnet and the
 house LAN, and the camera credential stays on this Pi.

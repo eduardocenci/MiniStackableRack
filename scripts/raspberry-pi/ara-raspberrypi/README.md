@@ -34,7 +34,7 @@ Starlink uplink carries.
 
 | Device | Address | Notes |
 |---|---|---|
-| Intelbras iM9+ Full Color ("iM9 M Full Color-9411", model iM9-M) | `192.168.1.56` | Dual-lens site camera: RTSP channel 1 = **PT lens** (motorized, auto-tracking — aim it with [`ptz/`](ptz/)), channel 2 = fixed lens. RTSP always on at `:554` (Digest, user `admin`, password = the **Device Password** set in the Mibo app, `.env` `ARA_CANTEIRO_CAM_KEY`). ONVIF on `:80`. DHCP lease — pin a reservation in the Starlink app if it drifts. |
+| Intelbras iM9+ Full Color ("iM9 M Full Color-9411", model iM9-M) | `192.168.1.56` | Dual-lens site camera: RTSP channel 1 = **PT lens** (motorized, auto-tracking — aim it with [`ptz/`](ptz/)), channel 2 = **fixed lens** (aimed by Eduardo on 2026-11-04 at the path vehicles take in; its 640×480 substream is relayed as `canteiro-alt-sub` and is the bnu Frigate camera `canteiro_fixa`, detect + record). RTSP always on at `:554` (Digest, user `admin`, password = the **Device Password** set in the Mibo app, `.env` `ARA_CANTEIRO_CAM_KEY`). ONVIF on `:80`. DHCP lease — pin a reservation in the Starlink app if it drifts. |
 | Starlink router | `192.168.1.1` | House LAN gateway. Local gRPC `:9000` (client names — [`starlink-names/`](starlink-names/)) |
 | Starlink dish | `192.168.100.1` | Behind the router. Local gRPC `:9200` (no auth): live throughput, latency, power draw, obstruction — relayed to the tailnet as `ara-raspberrypi2:9200` by [`docker/starlink-proxy/`](docker/starlink-proxy/) |
 

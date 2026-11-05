@@ -10,7 +10,8 @@ mostly because Frigate never produced a usable event).
 
 ```
 Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberrypi, container)
-   camera "canteiro"      snapshot.jpg     │  ≥ 10 s vehicle event
+   cameras "canteiro" (PT)  recording      │  vehicle event ≥ 10 s (PT) / ≥ 3 s (fixed lens)
+   + "canteiro_fixa" (fixed) frames        │  ONE episode per truck across both lenses
                                             ├─▶ OpenAI /v1/decisions (V2 questions, gpt-6-luna)
                                             ├─▶ canteiro.alertas.Motor (episodes, quiet hours, caps)
                                             └─▶ WAHA sendImage (LXC 101) ──▶ obra group / SmokeTests
@@ -42,6 +43,18 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
   `fonte` and `quadros` (what each frame answered).
 - One episode per truck of ANY type (IoU ≥ 0,3 or ≤ 10 min since last sighting; closes
   after 20 min) — the same truck flipping munck/carroceria between events is one alert.
+- **Two lenses, one alert (adendo 0010, 04/11/2026).** The iM9's FIXED lens is a second
+  Frigate camera, `canteiro_fixa` (640×480 substream, 5 fps, `FRIGATE_CAMERAS=canteiro=10,
+  canteiro_fixa=3`): Eduardo aimed it at the path vehicles take in, where many only pass the
+  PT lens and park out of its angle (30/10/2026: a Versátil carroceria seen only by the
+  timelapse, no alert). The two streams overlap a lot, so the engine (`Motor`, rule 2c) joins
+  by time across lenses (≤ 10 min since the episode's last sighting) but compares IoU only
+  within the SAME lens (one box per lens in `state.json` `ep.boxes`); 10–20 min apart on the
+  other lens → the day's gallery decides (its references come from both lenses and its
+  context says so). Recording frames of the fixed lens are 640×480 (its HEVC main stream is
+  not pulled 24/7 — see `../docker/go2rtc/README.md`); short events classify at the nearest
+  point, +1 s and the middle. The vehicle registry (0011) stays on the PT lens only.
+  `alertas.jsonl` lines carry `camera`.
 - **Gallery of the day's trucks** (decisão 0010 adendo 29/10/2026 — the same carroceria was
   alerted at 08:43 and 09:29 after the PT lens moved the box): before opening a new episode
   on a day that already had an alert, ONE Decisions call compares the new snapshot with the
