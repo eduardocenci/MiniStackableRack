@@ -548,7 +548,8 @@ cameras:
         - car
         - bus
         - motorcycle
-        - bicycle
+        # no `bicycle`: the workers' bike parks in this lens' foreground all day — a stationary
+        # bicycle object would keep one endless detection event (and its recording) open
       filters:
         car:
           min_score: 0.5
