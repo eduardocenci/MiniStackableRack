@@ -63,4 +63,4 @@ paths:
     source: rtsp://admin:__ARA_CANTEIRO_CAM_KEY__@192.168.1.56:554/cam/realmonitor?channel=2&subtype=1
     rtspTransport: tcp
     sourceOnDemand: yes     # fixed-lens 640x480 H264 substream — bnu Frigate `canteiro_fixa`
-                            # detect + record feed (2026-11-04; held open 24/7 while Frigate is up)
+                            # detect feed (2026-11-04; held open 24/7 while Frigate is up; also its record feed until 2026-11-05, when record moved to canteiro-alt)

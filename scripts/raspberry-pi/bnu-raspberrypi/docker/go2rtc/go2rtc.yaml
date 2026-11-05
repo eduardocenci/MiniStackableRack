@@ -48,7 +48,7 @@ streams:
   # light on the Starlink upload).
   canteiro_sub: rtsp://ara-raspberrypi2:8554/canteiro-sub
   # Fixed-lens (channel 2) 640x480 H264 substream — bnu Frigate's `canteiro_fixa`
-  # detect + record feed since 2026-11-04 (held open 24/7 by Frigate; ~0.1 Mbps).
+  # detect feed since 2026-11-04 (held open 24/7 by Frigate; ~0.1-0.4 Mbps; also its record feed until 2026-11-05).
   canteiro_fixa_sub: rtsp://ara-raspberrypi2:8554/canteiro-alt-sub
   # Fixed-lens HEVC main stream (2304x1296, ~1.4 Mbps) — held open 24/7 by the bnu
   # Frigate since 2026-11-05 (record of `canteiro_fixa`): the SECOND main stream over
