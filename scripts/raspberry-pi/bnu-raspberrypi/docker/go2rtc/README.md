@@ -13,10 +13,10 @@ rtsp://ara-raspberrypi2:8554/canteiro ──tailnet (1 copy)──▶ canteiro-h
                                                             └─ rtsp://127.0.0.1:8555/canteiro ──▶ go2rtc `canteiro`
 rtsp://ara-raspberrypi2:8554/canteiro-sub ──tailnet (1 copy)──────────────────▶ go2rtc `canteiro_sub`
 rtsp://ara-raspberrypi2:8554/canteiro-alt-sub ──tailnet (1 copy, 2026-11-04)──▶ go2rtc `canteiro_fixa_sub` (fixed lens, 640×480)
-rtsp://ara-raspberrypi2:8554/canteiro-alt ──on demand only──────────────────▶ go2rtc `canteiro_fixa` (fixed lens, HEVC main)
+rtsp://ara-raspberrypi2:8554/canteiro-alt ──tailnet (1 copy, 2026-11-05)──────▶ go2rtc `canteiro_fixa` (fixed lens, HEVC main)
 go2rtc on bnu-raspberrypi
   ├─ rtsp://10.1.1.123:8554/canteiro + canteiro_sub → bnu Frigate LXC 105 (record + person/vehicle detect, 2026-08-26)
-  ├─ rtsp://10.1.1.123:8554/canteiro_fixa_sub → bnu Frigate camera `canteiro_fixa` (detect 5 fps + record, 2026-11-04)
+  ├─ rtsp://10.1.1.123:8554/canteiro_fixa_sub + canteiro_fixa → bnu Frigate camera `canteiro_fixa` (detect 5 fps on the sub since 2026-11-04; record on the HEVC main since 2026-11-05)
   └─ /api/stream.mp4?src=canteiro → 55" TV (Cast)
 ```
 
@@ -139,12 +139,46 @@ python scripts/devtool.py run bnu-raspberrypi "docker logs go2rtc --tail 20"
 
 Streams are pulled from the relay **on demand** (go2rtc connects upstream
 only while a client is reading). Since 2026-08-26 the bnu Frigate holds
-`canteiro` + `canteiro_sub` open 24/7 (record + detect), and since
-2026-11-04 also `canteiro_fixa_sub` (the fixed lens' 640×480 substream,
-detect + record of the `canteiro_fixa` camera), so the Starlink upload
-carries those three continuously (~1.25 Mbps main + ~0.1 Mbps per
-substream, measured 2026-11-04 at night) — that is the budgeted baseline,
-and it is still one copy of each; TV/browser viewers keep adding zero
-upstream load. **`canteiro_fixa` (the fixed lens' HEVC main) is on demand
-only** — do not point Frigate or any 24/7 reader at it: a second main
-stream doubles the baseline, which is what stalled the uplink on 2026-08-26.
+`canteiro` + `canteiro_sub` open 24/7 (record + detect), since 2026-11-04
+also `canteiro_fixa_sub` (the fixed lens' 640×480 substream, its detect
+feed) and since 2026-11-05 `canteiro_fixa` (the fixed lens' HEVC main, its
+record feed), so the Starlink upload carries **two main streams + two
+substreams** continuously — still one copy of each; TV/browser viewers
+keep adding zero upstream load.
+
+**Two main streams (2026-11-05, decisão Eduardo — "tentar de novo").** The
+2026-08-26 stall was two copies of the PT main at daytime bitrate while the
+tailnet path was unmeasured. Measured on 2026-11-05 at night before
+switching: each main ≈ 1.3–1.4 Mbps (ONVIF `BitrateLimit` 1280 kbps on both
+channels), each sub ≈ 0.1–0.2 Mbps; the dish's raw upload ≈ 8 Mbps (12 s
+to speed.cloudflare.com with the streams running); the path the streams
+actually take — **Tailscale via DERP São Paulo, never a direct UDP
+connection** (`tailscale ping` from either side: "direct connection not
+established", although both `netcheck`s report UDP ok and
+`MappingVariesByDestIP: false`) — carried only **3.4–3.7 Mbps more** on
+top of the 1.9 Mbps the streams already used (10 s TCP sink test to
+bnu:5299). In the first hour after the switch (03:03–04:03 UTC) the tunnel
+(`tailscale0` tx on ara) averaged 3.2 Mbps (p95 3.8, peak 6.2) — inside the
+measured DERP capacity with ~1.5–2 Mbps of headroom at night — with **zero
+relay discards in 60 min**; the first 13 min were unstable (4 stalls ≥ 5 s of
+the PT main, 1 drop of the fixed main, i.e. fresh TCP sessions after the
+restarts), the next 47 min clean, at the baseline stall rate (~1.4/h over
+the previous 27 h). The workday is the real test (daytime congestion, the
+crew's phones, timelapse uploads). The real limiter is the DERP TCP path over a lossy
+link (0.8–2.2 % TCP retransmits on the relay's reader sockets, ~2 stalls of
+the PT main per hour already before the change), not the dish — so the
+relay now buffers 2048 packets per reader (`writeQueueSize`, ~13 s of a
+main) instead of discarding after ~3 s, and the first lever if two mains
+prove too much is a **direct tailnet path** (fixed UDP port for tailscaled
+on bnu-raspberrypi + port-forward on the bnu router), then lowering the
+fixed lens' bitrate via ONVIF, then a Starlink plan with more upload (the
+100 Mbps figure of the current plan is download — irrelevant here, we use
+0.3 Mbps down). **Rollback** = point the `record` role of Frigate's
+`canteiro_fixa` back at `canteiro_fixa_sub` (go2rtc then drops the pull on
+its own). Watch: `ssh ara-raspberrypi2 'docker logs canteiro-relay --tail
+300 | grep -c "too slow"'`, Frigate `/api/stats` `camera_fps` of both
+cameras, go2rtc `i/o timeout` lines, and the ad-hoc sampler
+`~/uplink-monitor/uplink.csv` on ara (10 s rows: dish up/down bps, ping,
+drop, tailscale0/wlan0 Mbps, relay discards, per-reader TCP retransmits;
+`python3 ~/uplink-monitor/uplink_report.py <csv> <split ISO UTC>` prints
+before/after statistics).

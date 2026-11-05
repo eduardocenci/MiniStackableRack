@@ -51,8 +51,9 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
   by time across lenses (≤ 10 min since the episode's last sighting) but compares IoU only
   within the SAME lens (one box per lens in `state.json` `ep.boxes`); 10–20 min apart on the
   other lens → the day's gallery decides (its references come from both lenses and its
-  context says so). Recording frames of the fixed lens are 640×480 (its HEVC main stream is
-  not pulled 24/7 — see `../docker/go2rtc/README.md`); short events classify at the nearest
+  context says so). Recording frames of the fixed lens are 2304×1296 since 2026-11-05 (its
+  HEVC main is Frigate's record feed; on 2026-11-04 they were 640×480 — see
+  `../docker/go2rtc/README.md`, "Two main streams"); short events classify at the nearest
   point, +1 s and the middle. The vehicle registry (0011) stays on the PT lens only.
   `alertas.jsonl` lines carry `camera`.
 - **Gallery of the day's trucks** (decisão 0010 adendo 29/10/2026 — the same carroceria was

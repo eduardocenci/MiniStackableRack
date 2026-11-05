@@ -39,8 +39,11 @@ go2rtc: #
       - ffmpeg:rtsp://admin:<BNU_DOORBELL_PW>@10.1.1.65:554/Streaming/Channels/101#video=copy#audio=copy   # Before: rtsp://admin:<BNU_DOORBELL_PW>@10.1.1.65:554/Streaming/Channels/101
     canteiro: rtsp://10.1.1.123:8554/canteiro
     canteiro_sub: rtsp://10.1.1.123:8554/canteiro_sub
-    # fixed lens (channel 2) 640x480 H264 substream — detect + record of `canteiro_fixa` (2026-11-04)
+    # fixed lens (channel 2): 640x480 H264 substream = detect of `canteiro_fixa` (2026-11-04);
+    # HEVC main = its record since 2026-11-05 (second 24/7 main stream over the Starlink uplink —
+    # measured attempt, see scripts/proxmox/frigate/bnu-frigate/README.md)
     canteiro_fixa_sub: rtsp://10.1.1.123:8554/canteiro_fixa_sub
+    canteiro_fixa: rtsp://10.1.1.123:8554/canteiro_fixa
   # http://10.1.1.160:1984/stream.html?src=frente_campainha&src=frente_garagem&src=frente_overview&src=frente_pedestres&src=frente_principal&src=fundos_overview&src=lateral_direita&src=lateral_esquerda&mode=webrtc,mse,hls,mjpeg
 
 ffmpeg:
@@ -521,20 +524,24 @@ cameras:
     friendly_name: Canteiro ARA — lente fixa
     # Second lens of the SAME iM9 (channel 2, FIXED — no auto-tracking), aimed since
     # 2026-11-04 at the path vehicles take in: many only pass the PT lens and park out of
-    # its angle. Detect AND record on its 640x480 H264 substream (relay `canteiro-alt-sub`
-    # on ara → go2rtc `canteiro_fixa_sub` on bnu). Its HEVC main stream (~1.25 Mbps
-    # constant) is NOT pulled 24/7: that would double the obra's Starlink upload, which
-    # two main streams already stalled on 2026-08-26 — it stays on demand as `canteiro_fixa`
-    # on the bnu go2rtc. Consequence: recording frames here are 640x480.
+    # its angle. Detect on its 640x480 H264 substream (relay `canteiro-alt-sub` on ara →
+    # go2rtc `canteiro_fixa_sub` on bnu); record on its HEVC main (relay `canteiro-alt` →
+    # go2rtc `canteiro_fixa`) since 2026-11-05 — the second 24/7 main stream over the
+    # Starlink uplink (~1.4 Mbps each; two mains stalled it on 2026-08-26, retried with
+    # measurements on 2026-11-05). If the uplink stalls again (relay logs "reader is too
+    # slow", camera_fps drops here), point `record` back at canteiro_fixa_sub.
     # Consumers: canteiro-alertas (one truck episode across both lenses — home-ara 0010,
     # adendo 04/11/2026); HA frigate_whatsapp.py treats it as an obra camera.
     ffmpeg:
       inputs:
+        - path: rtsp://127.0.0.1:8554/canteiro_fixa
+          input_args: preset-rtsp-restream
+          roles:
+            - record
         - path: rtsp://127.0.0.1:8554/canteiro_fixa_sub
           input_args: preset-rtsp-restream
           roles:
             - detect
-            - record
     detect:
       width: 640
       height: 480

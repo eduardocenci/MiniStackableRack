@@ -249,7 +249,7 @@ on bnu-raspberrypi). `/api/presence?from=<ISO UTC>&to=<ISO UTC>` accepts **short
 
 | ARA LAN-only device | Address | What it is |
 |---|---|---|
-| Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by the `canteiro-relay` container on the Pi (`rtsp://ara-raspberrypi2:8554/canteiro`). Each lens also has a 640×480 H264 substream (`subtype=1`; channel 1's is relayed as `canteiro-sub` — the bnu Frigate detect feed since 2026-08-26; channel 2's as `canteiro-alt-sub` → bnu go2rtc `canteiro_fixa_sub` → **Frigate camera `canteiro_fixa`** (detect 5 fps + record, since 2026-11-04 — the FIXED lens, aimed at the path vehicles take in; its HEVC main stays on demand as go2rtc `canteiro_fixa`). No third stream (`subtype=2` → 404, probed 2026-11-04); ONVIF `GetVideoEncoderConfigurationOptions` caps the substreams at 640×480 and lists 1280×720/1920×1080/2304×1296 for the mains (`BitrateLimit` 1280 kbps), so a higher-res fixed feed means the main stream, not a bigger substream. ONVIF **events work** (PullPoint, probed 2026-08-26): topics are motion/tamper/scene-change only — **no person/vehicle classification locally** (that stays in the Imou cloud/Mibo app; CGI remains 401) |
+| Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by the `canteiro-relay` container on the Pi (`rtsp://ara-raspberrypi2:8554/canteiro`). Each lens also has a 640×480 H264 substream (`subtype=1`; channel 1's is relayed as `canteiro-sub` — the bnu Frigate detect feed since 2026-08-26; channel 2's as `canteiro-alt-sub` → bnu go2rtc `canteiro_fixa_sub` → **Frigate camera `canteiro_fixa`** (detect 5 fps, since 2026-11-04 — the FIXED lens, aimed at the path vehicles take in; its HEVC main, relayed as `canteiro-alt` → bnu go2rtc `canteiro_fixa`, is that camera's **record** feed since 2026-11-05 — the second 24/7 main stream over the uplink, see "Canteiro uplink" below). No third stream (`subtype=2` → 404, probed 2026-11-04); ONVIF `GetVideoEncoderConfigurationOptions` caps the substreams at 640×480 and lists 1280×720/1920×1080/2304×1296 for the mains (`BitrateLimit` 1280 kbps), so a higher-res fixed feed means the main stream, not a bigger substream. ONVIF **events work** (PullPoint, probed 2026-08-26): topics are motion/tamper/scene-change only — **no person/vehicle classification locally** (that stays in the Imou cloud/Mibo app; CGI remains 401) |
 | Starlink router | `192.168.1.1` | house LAN gateway (DHCP for the whole `192.168.1.0/24`). **Local gRPC API works** (`192.168.1.1:9000`, reflection on): `grpcurl -plaintext -d '{"wifi_get_clients":{}}' 192.168.1.1:9000 SpaceX.API.Device.Device/Handle` → associated clients with **name+MAC+IP** (what the app shows; `wifi_set_client_given_name` also exists). No local roster of DISCONNECTED clients (that list lives in the Starlink cloud — probed 2026-08-26). `grpcurl` v1.9.1 installed at `/usr/local/bin` on the Pi; the `starlink-names` container syncs these names into netoverview nicknames every 5 min. **Relayed onto the tailnet as `ara-raspberrypi2:9000`** by the `router-proxy` socat container (since 2026-10-22, twin of `starlink-proxy`): every `CLIENT` entry carries **`associatedTimeS`** (seconds since it joined the Wi-Fi, firmware apiVersion 132), so `now − associatedTimeS` pins the second a phone connected — the signal `canteiro-vigia` on bnu-raspberrypi uses to arm itself (Wi-Fi empty of people) and to judge each detection; the 5-min netoverview ARP scan is only its fallback |
 | Starlink dish | `192.168.100.1` | behind the router (any LAN client reaches it). **Local gRPC API works** (`192.168.100.1:9200`, plaintext, no auth, reflection on — probed 2026-08-30): `get_status` = instantaneous down/uplink throughput, pop latency, obstruction, alerts; `get_history` = 900 s of 1 Hz ring buffers (throughput, latency, drop rate, **`powerIn` watts**) + outage event log. **Relayed onto the tailnet as `ara-raspberrypi2:9200`** by the `starlink-proxy` socat container (since 2026-08-30) — globalnet reads the ARA live WAN ▼▲ + dish ⚡ from it. Same `Device/Handle` service as the router, different RPCs |
 
@@ -269,6 +269,36 @@ on bnu-raspberrypi). `/api/presence?from=<ISO UTC>&to=<ISO UTC>` accepts **short
 > wiped from the bnu DB (29/08 canteiro-jobs build blip); bg/fln were
 > clean; mia was offline 31/08 — if its dashboard ever shows `172.17.0.x`,
 > delete the rows the same way.
+
+#### Canteiro uplink — what it really carries and how to measure it (2026-11-05)
+
+Everything the obra sends to bnu rides **Tailscale via DERP São Paulo**: `tailscale
+ping bnu-raspberrypi` from ara (and the reverse) ends in "direct connection not
+established" although both `tailscale netcheck`s say UDP ok, `MappingVariesByDestIP:
+false`, no PortMapping (no UPnP on either router). So the camera streams are TCP
+(RTSP) inside WireGuard inside the DERP TCP/TLS connection, over Starlink — stalls
+of a few seconds are normal (~2 EOF/online pairs per hour in `docker logs
+canteiro-hls` on bnu, 0.8–2.2 % TCP retransmits on the relay's reader sockets) and
+the relay used to discard frames on them ("reader is too slow" — 224 lines on
+2026-11-04 with ONE main stream, peaks at 05h and 12h UTC; `writeQueueSize: 2048`
+since 2026-11-05 rides out ~13 s). Measured 2026-11-05 ~00:00 BRT, streams running:
+
+| What | How | Result |
+|---|---|---|
+| Dish raw upload | on ara: `head -c 60000000 /dev/urandom > /tmp/up.bin; curl -s -o /dev/null --max-time 12 -w '%{speed_upload}' -T /tmp/up.bin https://speed.cloudflare.com/__up` | 0.99 MB/s ≈ **8 Mbps** on top of the streams |
+| Path to bnu (DERP) | sink on bnu `python3 /tmp/listener.py` (accept + count bytes on :5299), 10 s `socket.send` loop from ara | **3.4–3.7 Mbps** spare on top of the 1.9 Mbps the streams used |
+| Per-reader TCP health | on ara: `ss -tin state established '( sport = :8554 )'` (rtt, `retrans:x/total`, `unacked`, `cwnd`, `delivery_rate`) | rtt 50–55 ms, retrans 0.8–2.2 % |
+| Dish telemetry | `grpcurl -plaintext -d '{"get_status":{}}' localhost:9200 SpaceX.API.Device.Device/Handle` (`uplinkThroughputBps`, `popPingLatencyMs`, `popPingDropRate`, `alerts` — `lowerSignalThanPredicted` has been on); `get_history` = 900 s of 1 Hz ring buffers | uplink 1–6 Mbps samples, ping 20–37 ms, drop 0 |
+| Stream bitrates | bnu: `curl -s http://127.0.0.1:1984/api/streams` twice, Δ`bytes_recv` per producer | PT main 1.28, fixed main 1.40, subs 0.16–0.17 Mbps |
+| Continuous sampler | ara `~/uplink-monitor/uplink_monitor.py` (nohup, 10 s rows → `uplink.csv`: dish up/down/ping/drop/alerts, `tailscale0`/`wlan0` Mbps, load, relay discards since last row, per-reader rtt/retrans/unacked); `uplink_report.py <csv> <split ISO UTC>` = before/after stats | tunnel 1.9 → 3.2 Mbps mean (p95 3.8) in the first hour after the second main (03:03 UTC), 0 relay discards; 13 unstable min after the restarts, then clean |
+
+Levers, in order, if two mains prove too much for the DERP path: a direct tailnet path
+(fixed `tailscaled --port` on bnu-raspberrypi + UDP port-forward on the bnu router —
+the dish has ~2× the headroom the DERP path shows); lower the fixed lens' main
+bitrate via ONVIF (`SetVideoEncoderConfiguration`, both channels sit at the 1280 kbps
+cap); a Starlink plan with more **upload** (download is irrelevant: 0.3 Mbps used).
+`speed.cloudflare.com` and the TCP sink test saturate the uplink for ~10 s — run
+them at night.
 
 ### MIA site specifics (learned 2026-08-26 as PLY; site renamed 2026-08-31)
 

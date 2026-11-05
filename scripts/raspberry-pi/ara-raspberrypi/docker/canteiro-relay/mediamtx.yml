@@ -26,6 +26,12 @@ logLevel: info
 rtsp: yes
 rtspAddress: :8554
 rtspTransports: [tcp]   # no UDP listeners; the tailnet consumer uses TCP
+# Per-reader write queue (default 512 packets ~ 3 s of the HEVC main). The readers sit on
+# bnu behind a Tailscale DERP (TCP) path over Starlink: a 2-3 s stall overflowed the queue
+# and the relay logged "reader is too slow, discarding N frames" (73 lines on 2026-11-04
+# alone, 1-2 % TCP retransmits on the reader sockets). 2048 rides out ~13 s before
+# discarding, at ~2.5 MB of RAM per reader (2026-11-05, two-main-stream attempt).
+writeQueueSize: 2048
 rtmp: no
 hls: no
 webrtc: no
