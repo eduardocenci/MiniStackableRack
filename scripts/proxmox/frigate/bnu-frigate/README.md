@@ -14,7 +14,7 @@ listens on the LXC).
 | Logs | `/dev/shm/logs/frigate/current`, `/dev/shm/logs/go2rtc/current` |
 | Media | `/media/frigate` on the LXC root disk — **64 GB since 2026-10-23** (`pct resize 105 rootfs +40G` on bnu-proxmox, online, no restart; was 24 GB and 80 % full). Recordings are event-gated (alerts/detections, 10 days, `mode: all`), no continuous retention — see *Recording & retention* below for what that really keeps |
 | ffmpeg | bundled at `/usr/lib/ffmpeg/7.0/bin` (not in `PATH`) |
-| Detector | CPU tflite `/models/cpu_model.tflite` — its labelmap has **no `truck`** (config warning if tracked; trucks come through as `car`); the OpenVINO CPU plugin fails to load in this LXC. **The truck TYPE on the canteiro (caçamba · munck · carroceria · prancha · betoneira · bomba — V2 live; V3 with poliguindaste com caçamba (para retirar entulho) is experimental, regressed 29/10/2026) is not decided here** — see *Consumers* |
+| Detector | CPU tflite `/models/cpu_model.tflite` — its labelmap has **no `truck`** (config warning if tracked; trucks come through as `car`); the OpenVINO CPU plugin fails to load in this LXC. **The truck TYPE on the canteiro (caçamba · munck · poliguindaste com caçamba (para retirar entulho) · carroceria · prancha · betoneira · bomba — V3 on recording frames since 29/10/2026 18:56) is not decided here** — see *Consumers* |
 | Consumers of the `canteiro` events | **`canteiro-alertas`** on bnu-raspberrypi — asks the OpenAI Decisions API about every vehicle event ≥ 10 s and posts one WhatsApp alert per truck to the obra group (runbook globalnet `docs/runbooks/canteiro-alertas.md` — globalnet#57, open; verdicts in `/var/lib/canteiro-alertas/alertas.jsonl`; code `scripts/raspberry-pi/bnu-raspberrypi/canteiro-alertas/` (PR #45 merged 29/10/2026; engine home-ara#210, gallery/V3 PR #52)); `canteiro-diario` (20:15 evidence pack for the Diário de Obra); `canteiro-vigia` (empty-site watch); HA `frigate_whatsapp.py` (raw alerts only while the canteiro LAN is empty). Before answering "what did the camera see / which truck", read these, not only this file |
 | GenAI review | Ollama at `mia-desktop:11434` (`qwen3-vl:8b`), Portuguese descriptions per event |
 | MQTT | `10.1.1.124` (bnu HA VM) — events feed Home Assistant |
@@ -128,9 +128,25 @@ entertainment-room TV (see `scripts/proxmox/mia-proxmox/README.md`).
 
 ```
 iM9+ camera (ARA LAN) ─▶ mediamtx on ara-raspberrypi2 ─tailnet/Starlink─▶ go2rtc on bnu-raspberrypi (10.1.1.123)
-                                                     (1 copy per stream)      └─▶ this LXC: canteiro (HEVC main, record)
+  PT lens (channel 1)                                (1 copy per stream)      └─▶ this LXC: canteiro (HEVC main, record)
                                                                                   canteiro_sub (H264 640×480, detect)
+  fixed lens (channel 2, since 2026-11-04)                                       canteiro_fixa (HEVC main, record — since 2026-11-05;
+                                                                                  H264 640×480 substream, detect 5 fps)
 ```
+
+**`canteiro_fixa` (2026-11-04)** — the same iM9's FIXED lens, aimed by Eduardo at the path
+vehicles take in (many only pass the PT lens and park out of its angle). Detect comes from its
+640×480 substream; **record comes from its HEVC main (2304×1296, ~1.4 Mbps) since 2026-11-05**
+(bnu go2rtc `canteiro_fixa` → relay `canteiro-alt`) — the second 24/7 main stream over the obra's
+Starlink uplink, re-tried with measurements after the 2026-08-26 stall (numbers, limits and
+rollback: `scripts/raspberry-pi/bnu-raspberrypi/docker/go2rtc/README.md`, "Two main streams").
+On 2026-11-04 both roles were on the substream and recording frames were 640×480. Detect runs at 5 fps
+(`min_initialized: 2`, car `threshold: 0.7`, `min_area: 800`) so a 2–3 s crossing still becomes an
+event; GenAI review is off for it (same scene as the PT lens). `canteiro-alertas` reads both lenses
+and keeps ONE episode per truck across them (home-ara decision 0010, adendo 04/11/2026); the HA
+scripts treat it as an obra camera (`CEUAZUL_CAMERAS`, digest exclusion). If the uplink stalls
+(relay "reader is too slow" in series, `camera_fps` dropping on either canteiro camera), point the
+`record` role back at `canteiro_fixa_sub` — go2rtc drops the main pull on its own.
 
 **Never point this LXC at `ara-raspberrypi2` directly** — the bnu-raspberrypi
 go2rtc is the single shared Starlink pull; a second main-stream reader

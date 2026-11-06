@@ -61,7 +61,7 @@ log = logging.getLogger(__name__)
 _SEVERITY_EMOJI = {"alert": "🟡", "detection": "🔵"}
 
 # ── ARA (obra) routing + presence gate ────────────────────────────────────────
-CEUAZUL_CAMERAS = {"canteiro", "canteiro_sub"}
+CEUAZUL_CAMERAS = {"canteiro", "canteiro_sub", "canteiro_fixa"}   # canteiro_fixa = the iM9 fixed lens (2026-11-04)
 # Tailnet IP of ara-raspberrypi2 — MagicDNS names may not resolve inside the
 # HA container (same reason canteiro-watchdog defaults to the IP)
 ARA_NTO_DEVICES = "http://100.65.218.33:5000/api/devices"

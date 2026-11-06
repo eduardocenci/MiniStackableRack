@@ -1504,7 +1504,7 @@ def _run_inner(mode: str, secrets: dict, ha_token: str, debug_mode: bool) -> Non
     # Obra (ARA) cameras have their own per-review channel to Casa Céu Azul
     # (frigate_whatsapp.py) — keep them out of the Casa Blumenau digest.
     reviews = [r for r in reviews
-               if is_relevant(r) and r.get("camera") not in ("canteiro", "canteiro_sub")]
+               if is_relevant(r) and r.get("camera") not in ("canteiro", "canteiro_sub", "canteiro_fixa")]
     if not reviews:
         raise _DigestSkip("no relevant events (person/car/animal) in window")
 
