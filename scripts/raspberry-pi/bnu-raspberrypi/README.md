@@ -25,6 +25,7 @@ removed on 2026-08-29 (decisão Eduardo: camera on the Pi screen not needed).
 | [`canteiro-sunset-compare/`](canteiro-sunset-compare/) | container, Mon–Fri 20:10 America/Sao_Paulo ([`docker/canteiro-jobs/`](docker/canteiro-jobs/)): fetches yesterday's + today's `posicao1/por-do-sol` frames from Drive `CeuAzul/Timelapse/` (rclone), stacks them vertically (ffmpeg) and sends the "Dia de Trabalho" comparison to WhatsApp via WAHA `sendImage` |
 | [`canteiro-vigia/`](canteiro-vigia/) | container, 10 s loop, own image ([`docker/canteiro-vigia/`](docker/canteiro-vigia/)): **empty-obra watch** — armed while no person's device is on the canteiro Wi-Fi (Fri evening → Mon morning in practice, holidays and empty weeknights too): every person/vehicle Frigate tracks on the ARA camera = one WhatsApp message per episode to "Casa Céu Azul" with the snapshot and whether a known device joined the Wi-Fi in the following minute (🟢, also disarms) or none did (🔴 "alguém estranho"); car first + person after = second message with the person's photo. Wi-Fi read from the Starlink router's `associatedTimeS` through the ara `router-proxy`. Decisão Eduardo 22/10/2026 |
 | wayvnc | VNC access to the desktop session |
+| [`tailscale-exit-node/`](tailscale-exit-node/) | Tailscale exit node — tailnet clients can route their internet traffic out through the bnu WAN (since 2026-10-18) |
 
 ## Docker auto-update cron (and disk-space guard)
 
