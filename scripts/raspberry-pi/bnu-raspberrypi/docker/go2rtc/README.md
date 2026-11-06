@@ -1,16 +1,34 @@
 # go2rtc — canteiro restream for LAN devices (bnu-raspberrypi)
 
-Bridges the tailnet-only ARA camera relay onto the bnu house LAN, and is the
-**single upstream consumer**: everything at bnu (the TV cast, the browser
-live view AND the bnu Frigate NVR) reads from this go2rtc, which pulls each
-canteiro stream from ara exactly once:
+Bridges the tailnet-only ARA camera relay onto the bnu house LAN: everything
+at bnu (the TV cast, phone/PC viewers AND the bnu Frigate NVR) reads from
+this go2rtc, and ara's Starlink carries each canteiro stream exactly once.
+Since 2026-10-29 the **main stream** reaches go2rtc through canteiro-hls
+(mediamtx, the one that pulls it from ara, with `alwaysAvailable`); the
+substream is still pulled here directly:
 
 ```
-rtsp://ara-raspberrypi2:8554/canteiro ──tailnet (1 copy each)──▶ go2rtc on bnu-raspberrypi
-                     + /canteiro-sub                             ├─ rtsp://10.1.1.123:8554/canteiro + canteiro_sub → bnu Frigate LXC 105 (record + person/vehicle detect, 2026-08-26)
-                                                                 ├─ rtsp://127.0.0.1:8554/canteiro → canteiro-hls (mediamtx :8888 → browser /live page, 2026-08-29)
-                                                                 └─ /api/stream.mp4?src=canteiro → 55" TV (Cast)
+rtsp://ara-raspberrypi2:8554/canteiro ──tailnet (1 copy)──▶ canteiro-hls (mediamtx, alwaysAvailable)
+                                                            ├─ :8888 HLS → browser /live page
+                                                            └─ rtsp://127.0.0.1:8555/canteiro ──▶ go2rtc `canteiro`
+rtsp://ara-raspberrypi2:8554/canteiro-sub ──tailnet (1 copy)──────────────────▶ go2rtc `canteiro_sub`
+go2rtc on bnu-raspberrypi
+  ├─ rtsp://10.1.1.123:8554/canteiro + canteiro_sub → bnu Frigate LXC 105 (record + person/vehicle detect, 2026-08-26)
+  └─ /api/stream.mp4?src=canteiro → 55" TV (Cast)
 ```
+
+**Why the main stream goes through mediamtx (2026-10-29):** the camera
+closes its RTSP session at the start of most PTZ excursions of the
+timelapse; the relay reopens it 5 s later with a new RTP timestamp base.
+go2rtc reconnects its producer fine (~6 s), but it swaps it under the
+consumers' live sessions, so they get a timestamp jump — the HLS muxer
+crash-looped until the watchdog's auto-heal (~100 s, 1–3× per solar
+sequence). No go2rtc option changes that. mediamtx with `alwaysAvailable`
+keeps its readers connected with a "sem sinal" card and one continuous
+timeline instead — so go2rtc's `canteiro` producer no longer sees EOFs at
+all, and during a camera or Starlink outage its consumers (TV, MSE, Frigate
+record, watchdog frame) get the card. Full story:
+[`../canteiro-hls/README.md`](../canteiro-hls/README.md).
 
 (The mpv wall view of this stream on the Pi's own screen —
 `canteiro-screen.service` — was removed on 2026-08-29, decisão Eduardo.)
@@ -40,7 +58,7 @@ substream (channel=1&subtype=1, H.264 640×480 — zero transcode) instead.
 | `…:1984/stream.html?src=canteiro&mode=hls` | go2rtc's own HLS page — diagnostics only: ~1 s live window (2 fake-0.5 s segments), collapses on any hiccup; also **Safari/iOS only** (desktop Chrome has no native HLS) |
 | `…:1984/stream.html?src=canteiro&mode=mse` | low-latency view (~1 s behind live, but stutters on every network hiccup — HEVC via MSE) |
 | `…:1984/stream.html?src=canteiro_h264` | browser fallback if a device can't decode HEVC (starts the on-demand transcode — occasional use only) |
-| `…:8554/canteiro` · `…:8554/canteiro_sub` | RTSP (TCP) — Frigate's record feed (HEVC main) and detect feed (H.264 640×480 substream); also what canteiro-hls reads on localhost |
+| `…:8554/canteiro` · `…:8554/canteiro_sub` | RTSP (TCP) — Frigate's record feed (HEVC main) and detect feed (H.264 640×480 substream) |
 | `…:1984/` | go2rtc web UI (diagnostics) |
 
 Every viewer above consumes the **shared local producer** — N phones/PCs
