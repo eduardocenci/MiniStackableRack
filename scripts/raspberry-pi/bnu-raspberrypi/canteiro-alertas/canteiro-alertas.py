@@ -8,7 +8,7 @@ Loop a cada POLL_S segundos:
   Frigate (bnu LXC 105) /api/events das lentes FRIGATE_CAMERAS — a PT `canteiro` e, desde
   04/11/2026, a lente FIXA `canteiro_fixa` (adendo 0010 de 04/11: apontada para a passagem
   por onde os veículos chegam e muitas vezes só passam pela PT) —, rótulos de veículo →
-  evento com ≥ o gatilho da sua lente (PT 10 s, fixa 3 s) → até 3 QUADROS DA GRAVAÇÃO
+  evento com ≥ o gatilho da sua lente (PT 10 s, fixa 1 s) → até 3 QUADROS DA GRAVAÇÃO
   (PT 2304×1296, fixa 640×480: ponto mais perto da trilha do evento, +3 s — +1 s num evento
   curto —, meio; snapshot 640×480 só quando não há gravação) →
   OpenAI Decisions API (perguntas V3 do home-ara, `detail=auto`, melhor quadro =
@@ -114,7 +114,7 @@ CFG = Config(thr=float(E("THR", "0.85")), min_dur_s=int(E("MIN_DUR_S", "10")),
 
 
 def _lentes(spec: str, padrao: int) -> dict[str, int]:
-    """FRIGATE_CAMERAS="canteiro=10,canteiro_fixa=3" → {lente: gatilho em s}; sem "=N" vale MIN_DUR_S."""
+    """FRIGATE_CAMERAS="canteiro=10,canteiro_fixa=1" → {lente: gatilho em s}; sem "=N" vale MIN_DUR_S."""
     out: dict[str, int] = {}
     for item in spec.split(","):
         nome, _, dur = item.strip().partition("=")
@@ -124,7 +124,7 @@ def _lentes(spec: str, padrao: int) -> dict[str, int]:
 
 
 # Lentes da iM9 no Frigate (adendo 0010, 04/11/2026): a PT com os 10 s do backtest; a lente FIXA,
-# apontada para a passagem, com 3 s — quem só passa. Um caminhão visto pelas duas é UM episódio.
+# apontada para a passagem, com 1 s (3 s até 08/11/2026) — quem só passa. Um caminhão visto pelas duas é UM episódio.
 CAMERAS = _lentes(E("FRIGATE_CAMERAS", FRIGATE_CAMERA), CFG.min_dur_s)
 if FRIGATE_CAMERA not in CAMERAS:
     CAMERAS = {FRIGATE_CAMERA: CFG.min_dur_s, **CAMERAS}
@@ -306,7 +306,7 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
                     PENDENTES.pop(eid)          # passou rápido: não é visita
             continue
         cam = e.get("camera") or FRIGATE_CAMERA
-        if last - start < CAMERAS.get(cam, CFG.min_dur_s):   # gatilho da lente (PT 10 s, fixa 3 s)
+        if last - start < CAMERAS.get(cam, CFG.min_dur_s):   # gatilho da lente (PT 10 s, fixa 1 s)
             continue
         if first and now - start > STALE_S:      # backlog da partida: não alerta o passado
             motor.ignorar(eid, now, "backlog da partida (> STALE_S)")

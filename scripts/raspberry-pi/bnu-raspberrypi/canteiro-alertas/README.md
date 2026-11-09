@@ -10,7 +10,7 @@ mostly because Frigate never produced a usable event).
 
 ```
 Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberrypi, container)
-   cameras "canteiro" (PT)  recording      │  vehicle event ≥ 10 s (PT) / ≥ 3 s (fixed lens)
+   cameras "canteiro" (PT)  recording      │  vehicle event ≥ 10 s (PT) / ≥ 1 s (fixed lens)
    + "canteiro_fixa" (fixed) frames        │  ONE episode per truck across both lenses
                                             ├─▶ OpenAI /v1/decisions (V2 questions, gpt-6-luna)
                                             ├─▶ canteiro.alertas.Motor (episodes, quiet hours, caps)
@@ -45,7 +45,7 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
   after 20 min) — the same truck flipping munck/carroceria between events is one alert.
 - **Two lenses, one alert (adendo 0010, 04/11/2026).** The iM9's FIXED lens is a second
   Frigate camera, `canteiro_fixa` (640×480 substream, 5 fps, `FRIGATE_CAMERAS=canteiro=10,
-  canteiro_fixa=3`): Eduardo aimed it at the path vehicles take in, where many only pass the
+  canteiro_fixa=1` — 1 s since 08/11/2026, 3 s until then): Eduardo aimed it at the path vehicles take in, where many only pass the
   PT lens and park out of its angle (30/10/2026: a Versátil carroceria seen only by the
   timelapse, no alert). The two streams overlap a lot, so the engine (`Motor`, rule 2c) joins
   by time across lenses (≤ 10 min since the episode's last sighting) but compares IoU only
