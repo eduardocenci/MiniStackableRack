@@ -23,7 +23,21 @@ episódio fica em STATE_DIR/caminhoes/<evento>.jpg; antes de alertar um caminhã
 novo num dia que já teve alerta, UMA pergunta à Decisions API compara o snapshot
 novo com as referências do dia (payload_galeria) — P(id) ≥ P_MESMO_CAMINHAO (0,8)
 = o mesmo caminhão, entra no episódio dele sem alerta; qualquer outra resposta,
-dúvida ou falha = alerta normal. Fica em `galeria` na linha do alertas.jsonl.
+dúvida ou falha = alerta normal. Fica em `galeria` na linha do alertas.jsonl. Desde
+09/11/2026 (adendo 0010) também vale a MASSA: P(nenhum) ≤ 1 − P_MESMO_CAMINHAO = é um dos
+caminhões do dia (o mais provável) — às 13:05 de 09/11 a resposta foi 0,37 + 0,37 + 0,22 em
+três referências que eram o MESMO caminhão e "nenhum" ≈ 0,04.
+
+Chegada e saída pela lente da ENTRADA (adendo 0010 de 09/11/2026 — a carroceria da Marcondes
+saiu como 4 alertas; Eduardo quer "o 1º e o último (saída) no máximo"): para os eventos de
+ENTRADA_LENTE o serviço lê a direção na trilha do evento (`data.path_data`,
+canteiro.alertas.direcao_trilha — x caindo = chegando, ENTRADA_SENTIDO) e a passa ao motor
+(regra 2d: chegada = alerta "· chegando"; saída = 2ª e última mensagem "· saindo (chegou às
+HH:MM)"; parado/PT sem chegada nova pela entrada = o mesmo caminhão). Evento ainda aberto sem
+direção clara espera até DIRECAO_ESPERA_S (30 s) antes de ser avaliado — a saída só se decide
+com o evento encerrado. Tipo com < tipo_min (0,4) da massa de caminhão sai como "Caminhão no
+canteiro" + "Tipo incerto: …" (regra 2f); a distribuição inteira de cada quadro fica em
+`quadros[].probs` no alertas.jsonl.
 
 A lógica é o pacote `canteiro/` do home-ara (submódulo homes/ara), copiado para a
 imagem canteiro-jobs — este arquivo só faz a E/S.
@@ -68,7 +82,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # /app/canteiro (cópia do home-ara)
 
-from canteiro.alertas import NOMES, Classif, Config, Motor, hhmm  # noqa: E402
+from canteiro.alertas import NOMES, Classif, Config, Motor, direcao_trilha, hhmm  # noqa: E402
 from canteiro.decisions import (MAX_SIDE, BudgetExceeded, Client, build_payload,  # noqa: E402
                                 data_url, estimate_image_tokens, estimate_text_tokens,
                                 prepare_image, usd)
@@ -106,7 +120,10 @@ DESCONHECIDOS = E("DESCONHECIDOS", "0") == "1"     # aviso de veículo nunca vis
 P_CONHECIDO = float(E("P_CONHECIDO", "0.8"))       # galeria: P(id) para "conhecido"
 P_NOVO = float(E("P_NOVO", "0.8"))                 # galeria: P(nenhum) para "novo"; o resto = indeterminado
 CROPS_DIAS = int(E("CROPS_DIAS", "60"))            # recortes de toda visita guardados por N dias
-P_MESMO_CAMINHAO = float(E("P_MESMO_CAMINHAO", "0.8"))  # galeria do dia: P(id) para "o mesmo caminhão"
+P_MESMO_CAMINHAO = float(E("P_MESMO_CAMINHAO", "0.8"))  # galeria do dia: P(id) para "o mesmo caminhão" (ou P(nenhum) ≤ 1 − isto)
+ENTRADA_LENTE = E("ENTRADA_LENTE", "canteiro_fixa")  # lente da passagem: a trilha do evento dá chegada/saída (regra 2d)
+ENTRADA_SENTIDO = int(E("ENTRADA_SENTIDO", "-1"))    # sinal de dx de quem CHEGA (−1: x caindo = entrando, lente fixa 09/11/2026)
+DIRECAO_ESPERA_S = int(E("DIRECAO_ESPERA_S", "30"))  # evento aberto sem direção clara: espera até isto antes de avaliar
 CAM_DIAS = int(E("CAM_DIAS", "7"))                 # snapshots dos caminhões alertados guardados por N dias
 
 CFG = Config(thr=float(E("THR", "0.85")), min_dur_s=int(E("MIN_DUR_S", "10")),
@@ -312,18 +329,24 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
             motor.ignorar(eid, now, "backlog da partida (> STALE_S)")
             changed = True
             continue
+        direcao = None
+        if cam == ENTRADA_LENTE:                 # regra 2d: o que a trilha diz na lente da entrada
+            direcao = direcao_trilha((e.get("data") or {}).get("path_data") or [], not e.get("end_time"),
+                                     last - start, ENTRADA_SENTIDO)
+            if direcao is None and not e.get("end_time") and now - start < DIRECAO_ESPERA_S:
+                continue                         # cedo demais (saída só com o evento encerrado): próxima rodada
         raw_snap = snapshot(eid)
         if raw_snap is None:
             continue
         c, err, meta, raw, fonte = classificar(e, raw_snap, classify, start, last, cam)
         box = (e.get("data") or {}).get("box")
         galeria_log: dict = {}
-        msgs = motor.processar(eid, start, last, box, c, now, camera=cam,
+        msgs = motor.processar(eid, start, last, box, c, now, camera=cam, direcao=direcao,
                                mesmo_caminhao=lambda novo, cands: mesmo_caminhao(raw, cands, classify, galeria_log))
         if any(t["evento"] == eid for t in motor.s.get("caminhoes") or []):   # abriu episódio: vira referência
             guardar_caminhao(eid, raw)
         rec = {"ts": now, "id": eid, "camera": cam, "inicio": start, "dur_s": round(last - start),
-               "label": e.get("label"),
+               "label": e.get("label"), "direcao": direcao,
                "p_caminhao": round(c.p_truck, 3) if c else None, "classe": c.truck_class if c else None,
                "p_entrega": c.p_entrega if c else None, "p_concretagem": c.p_concretagem if c else None,
                "erro": err, "fonte": fonte, **meta, "galeria": galeria_log or None, "mensagens": []}
@@ -380,6 +403,9 @@ def instantes(e: dict, start: float, last: float) -> list[tuple[str, float]]:
     cands.append(("+1s", start + 1) if curto else ("+3s", start + 3))
     if e.get("end_time"):
         cands.append(("meio", start + (last - start) / 2))
+    elif last - start >= 20:
+        cands.append(("agora", last - 10))        # evento em curso: o quadro mais recente que a gravação já tem
+                                                  # (Poter 14:30 de 09/11: 54 s de evento julgados só no +3 s)
     out: list[tuple[str, float]] = []
     for nome, ts in cands:
         if all(abs(ts - t) >= 2 for _, t in out):
@@ -418,7 +444,10 @@ def classificar(e: dict, raw_snap: bytes, classify, start: float, last: float,
     frames = []
     err = None
     meta: dict = {}
-    for nome, ts in (instantes(e, start, last) if QUADROS > 0 else []):
+    plano = instantes(e, start, last) if QUADROS > 0 else []
+    for i, (nome, ts) in enumerate(plano):
+        if tent and nome != "agora" and frames and len(frames) == 1 and frames[0][0].p_truck < P_CARRO:
+            continue                             # 1º quadro diz carro: só o "agora" ainda merece olhar
         q = quadro_gravacao(ts, camera)
         if q is None:
             tent.append({"q": nome, "t": round(ts - start, 1), "sem": True})
@@ -426,7 +455,8 @@ def classificar(e: dict, raw_snap: bytes, classify, start: float, last: float,
         c, err, m = classify(q)
         tent.append({"q": nome, "t": round(ts - start, 1), "p": round(c.p_truck, 3) if c else None,
                      "classe": c.truck_class if c else None,
-                     "p_classe": round(c.probs.get(c.truck_class) or 0.0, 3) if c else None, "erro": err})
+                     "p_classe": round(c.probs.get(c.truck_class) or 0.0, 3) if c else None, "erro": err,
+                     "probs": {k: round(v, 3) for k, v in c.probs.items() if v and v >= 0.005} if c else None})
         if c is None:
             continue
         frames.append((c, q, nome))
@@ -434,15 +464,17 @@ def classificar(e: dict, raw_snap: bytes, classify, start: float, last: float,
                 for k, v in m.items()}
         if (c.probs.get(c.truck_class) or 0.0) >= P_CONFIANTE and c.p_truck >= CFG.thr:
             break
-        if len(frames) == 1 and c.p_truck < P_CARRO:
-            break
+        if len(frames) == 1 and c.p_truck < P_CARRO and not any(n == "agora" for n, _ in plano[i + 1:]):
+            break                                # carro no 1º quadro: para — salvo se ainda há o "agora"
     if not frames:
         c, err, m = classify(raw_snap)
         return c, err, {**m, "quadros": tent or None}, raw_snap, "snapshot"
     agg, (cref, q, nome) = agregar(frames)
     meta["quadros"] = tent
     meta["agregado"] = {"classe": agg.truck_class, "p": round(agg.p_truck, 3),
-                        "p_classe": round(agg.probs.get(agg.truck_class) or 0.0, 3), "n": len(frames)}
+                        "p_classe": round(agg.probs.get(agg.truck_class) or 0.0, 3), "n": len(frames),
+                        "tipo": round(agg.share(), 3),
+                        "probs": {k: round(v, 3) for k, v in agg.probs.items() if v and v >= 0.005}}
     return agg, None, meta, q, f"gravacao:{nome}"
 
 
@@ -506,10 +538,11 @@ def mesmo_caminhao(raw: bytes, cands: list[dict], classify, galeria_log: dict) -
         return None
     probs = {k: (v or 0.0) for k, v in q.probabilities.items()}
     galeria_log.update(sorted(probs.items(), key=lambda kv: -kv[1])[:3])
-    top, p = max(probs.items(), key=lambda kv: kv[1])
-    if top != "nenhum" and p >= P_MESMO_CAMINHAO:
-        log(f"galeria: mesmo caminhão de {top} (P {p:.2f}) — sem alerta")
-        return top
+    nenhum = probs.get("nenhum") or 0.0
+    top, p = max(((k, v) for k, v in probs.items() if k != "nenhum"), key=lambda kv: kv[1], default=("nenhum", 0.0))
+    if top != "nenhum" and (p >= P_MESMO_CAMINHAO or nenhum <= 1 - P_MESMO_CAMINHAO):
+        log(f"galeria: mesmo caminhão de {top} (P {p:.2f}, nenhum {nenhum:.2f}) — sem alerta")
+        return top                                # a massa pode estar repartida entre referências do MESMO caminhão
     return None
 
 

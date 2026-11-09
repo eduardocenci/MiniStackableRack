@@ -62,6 +62,37 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
   snapshots of the trucks alerted today (`STATE_DIR/caminhoes/<event>.jpg`, kept `CAM_DIAS`
   = 7 days). P(id) ≥ `P_MESMO_CAMINHAO` (0,8) → same truck, joins its episode silently
   (`alertas.jsonl` line: `galeria` + log "pela galeria"); anything else → normal alert.
+  Since 09/11/2026 the MASS counts too: P(nenhum) ≤ 1 − `P_MESMO_CAMINHAO` = one of today's
+  trucks (the most probable reference) — at 13:05 on 09/11 the answer was 0,37 + 0,37 + 0,22
+  across three references of the SAME truck and "nenhum" ≈ 0,04, and the rule still said "new".
+- **Arrival and departure through the ENTRANCE lens — "first and last"** (adendo 0010,
+  09/11/2026: the Marcondes carroceria stayed 1h45 and went out as 4 alerts; Eduardo deleted
+  them and wants the first and the last at most). For events of `ENTRADA_LENTE` (the fixed
+  lens) the service reads the direction in the event's track (`data.path_data`,
+  `canteiro.alertas.direcao_trilha`, `ENTRADA_SENTIDO` −1 = x decreasing is coming in) and
+  passes it to the engine (rule 2d): **chegando** → the alert says "· chegando"; **saindo**
+  → the episode's second and last message, "· saindo (chegou às HH:MM)" (`Mensagem.tipo`
+  `saida`, with the exit frame); **parado** on the entrance lens, or any PT-lens sighting,
+  while the last truck of the day came in through the entrance and has not left (≤ 60 min
+  since its last sighting) = that truck, joined silently BEFORE the gallery ("sem chegada
+  nova pela canteiro_fixa" in the log). A truck that left drops out of the gallery (back
+  again = new visit). A departure can only be decided once the event has ENDED (a parking
+  manoeuvre also drives "out": 11:20:46 on 09/11 moved +0,27 at 30 s and +0,07 at the end), so
+  an open entrance-lens event without a clear direction waits up to `DIRECAO_ESPERA_S`
+  (30 s) before it is evaluated. `alertas.jsonl` lines carry `direcao`.
+- **Weak sightings keep the episode alive** (rule 2e, 09/11/2026): P(truck) between 0,5 and
+  the threshold never alerts, but extends the open episode — on 09/11 the truck was seen 9
+  times at 0,46–0,82 between the alerts and the engine "lost" it three times.
+- **Honest type** (rule 2f, 09/11/2026 — Poter 14:31: "betoneira" with 26 % of the truck
+  mass, the caption said "confiança 94 %", which is P(truck)): the type is named only when
+  the winning class holds ≥ 0,4 of the truck mass (`Config.tipo_min`); below that the alert
+  is "🚚 *Caminhão no canteiro*" + "Tipo incerto: betoneira 28 % ou caçamba 24 %." with no
+  unloading line, and the footer shows both numbers when a type is named ("confiança 95% ·
+  tipo 75%"). Every frame's full class distribution is logged (`quadros[].probs`,
+  `agregado.probs`/`tipo`) so V3 can be re-tuned offline.
+- **Latest frame of an event still running**: an open event ≥ 20 s also classifies the frame
+  at now − 10 s ("agora"), even when the first frame said "car" — on 09/11 the PT lens had the
+  Poter poliguindaste for 54 s and judged it on the +3 s frame alone (P 0,04).
 - Never: team van, cars, machines; below threshold; 19:00–06:00 (log only).
 - Caps: 6/hour, 15/day — one "alertas pausados" note to SmokeTests.
 - OpenAI failure (key, IP, credits, network) = no alert, only a log line.
