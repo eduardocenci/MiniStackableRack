@@ -22,8 +22,9 @@ timestamp is impossible to handle", /live answers 500) —
 | Path | What it is |
 |---|---|
 | `rtsp://ara-raspberrypi2:8554/canteiro` | lens on `channel=1`, main stream (HEVC 2304×1296) — pulled 24/7 (`sourceOnDemand: no`) |
-| `rtsp://ara-raspberrypi2:8554/canteiro-alt` | lens on `channel=2`, main stream — pulled on demand |
+| `rtsp://ara-raspberrypi2:8554/canteiro-alt` | lens on `channel=2` (fixed), main stream (HEVC 2304×1296, ~1.4 Mbps) — on demand; bnu go2rtc `canteiro_fixa` → bnu Frigate's `canteiro_fixa` **record** feed since 2026-11-05 (held open 24/7 — the second main over the uplink, measured attempt; see the bnu go2rtc README, "Two main streams") |
 | `rtsp://ara-raspberrypi2:8554/canteiro-sub` | lens on `channel=1`, substream (H264 640×480) — on demand; bnu Frigate's detect feed (held open 24/7 while Frigate is up, added 2026-08-26) |
+| `rtsp://ara-raspberrypi2:8554/canteiro-alt-sub` | lens on `channel=2` (fixed), substream (H264 640×480, 20 fps) — on demand; bnu Frigate's `canteiro_fixa` **detect** feed since 2026-11-04 (held open 24/7; it was also the record feed until 2026-11-05, when record moved to the main — `canteiro-alt` above) |
 
 The relay has no reader auth: it is reachable only from the tailnet and the
 house LAN, and the camera credential stays on this Pi.
