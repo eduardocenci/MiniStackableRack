@@ -11,7 +11,7 @@ so a layout change can be checked before the rebuild:
 
 Output: /data/_test/out/<fid>-{takeoff,enroute,1,2}.png — take-off and en-route
 are simulated from the playback like `sim:true` (trail cut at wheels-up /
-T+10, no destination hindsight); METAR and terrain come from the network, so
+T+10 — T+19 from the São Paulo region —, no destination hindsight); METAR and terrain come from the network, so
 a full run of ~10 flights takes a few minutes: launch it with nohup and a log.
 """
 import gzip
@@ -75,13 +75,14 @@ def render(fid):
 
     try:  # take-off (sim: trail cut at wheels-up)
         png, _cap = cards.takeoff_card(origin, dep, [p for p in track if p["timestamp"] <= dep + 60],
-                                       fid, next_ts=dep + 600)
+                                       fid, next_ts=dep + enroute.delay_s(origin))
         open(f"{OUT}/{fid}-takeoff.png", "wb").write(png)
     except Exception:
         traceback.print_exc()
 
-    try:  # en-route at T+10 (sim: no destination hindsight)
-        st = enroute.analyze(origin, enroute.truncate_after_takeoff(track, 600), None, exclude_fid=fid)
+    try:  # en-route at T+10 / T+19 (sim: no destination hindsight)
+        st = enroute.analyze(origin, enroute.truncate_after_takeoff(track, enroute.delay_s(origin)),
+                             None, exclude_fid=fid)
         open(f"{OUT}/{fid}-enroute.png", "wb").write(cards.enroute_card(st, fid))
     except Exception:
         traceback.print_exc()

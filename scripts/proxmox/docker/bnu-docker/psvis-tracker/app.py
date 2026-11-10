@@ -40,8 +40,8 @@ MAX_TRIES = int(os.environ.get("MAX_TRIES", "10"))
 # 15 min: the sweep is the UNIVERSAL capture path — a landing at any airport
 # with no HA event still gets stored and reported within one interval.
 SYNC_INTERVAL_S = int(os.environ.get("SYNC_INTERVAL_S", "900"))
-# T+10 en-route update after take-off (FR24 rarely knows the destination then)
-ENROUTE_DELAY_S = int(os.environ.get("ENROUTE_DELAY_S", "600"))
+# When the en-route update goes out — T+10, or T+19 from the São Paulo region
+# (2026-11-09): enroute.delay_s(origin); ENROUTE_DELAY_S / _SP_S live there.
 # Airborne watch: HA take-off events are only guaranteed near Blumenau, so the
 # tracker polls the FR24 list itself — a take-off ANYWHERE is noticed within
 # one interval, gets its text (non-BNU origins; HA already covers BNU) and its
@@ -201,11 +201,12 @@ def _run_report(flight_id, jid, force, fallback_text=""):
 
 
 def _run_enroute(flight_id, jid, force, sim, delay_s=None):
-    """T+10 after take-off: cardinal heading, route-so-far map and arrival
-    estimates for previously-seen destinations along the heading. May be
+    """T+10 after take-off (T+19 from the São Paulo region — enroute.delay_s):
+    cardinal heading, route-so-far map and arrival estimates for
+    previously-seen destinations along the heading. May be
     triggered by the HA event AND by the airborne watch — the claim marker
     below makes whichever wakes first the only sender."""
-    delay = ENROUTE_DELAY_S if delay_s is None else delay_s
+    delay = enroute.ENROUTE_DELAY_S if delay_s is None else delay_s
     if not force and delay > 0:
         time.sleep(delay)
     fid = flight_id
@@ -234,16 +235,18 @@ def _run_enroute(flight_id, jid, force, sim, delay_s=None):
                     raise ValueError("live trail empty")
             except Exception:  # not live any more (or endpoint hiccup)
                 origin, track, dest_hint = enroute.from_playback(fr24.playback(fid))
-            if sim:  # test path: pretend we are ENROUTE_DELAY_S into the flight
-                track = enroute.truncate_after_takeoff(track, ENROUTE_DELAY_S)
+            if sim:  # test path: pretend we are delay_s(origin) into the flight
+                track = enroute.truncate_after_takeoff(track, enroute.delay_s(origin))
                 dest_hint = None  # no hindsight: FR24 rarely knows it at T+10
             elif not force:
                 # The scheduled delay comes from the list's "real departure",
                 # which FR24 sometimes stamps at transponder-on on the ground
                 # (41f01799: 10:20 vs wheels-up 11:22 → update sent at "há
                 # 0 min"). The trail's first airborne point is the truth.
+                # The origin decides the delay (São Paulo region → T+19); a
+                # watch that scheduled us without knowing it corrects itself here.
                 t0 = enroute.takeoff_ts(track)
-                wait = (t0 + ENROUTE_DELAY_S - time.time()) if t0 else 0
+                wait = (t0 + enroute.delay_s(origin) - time.time()) if t0 else 0
                 if wait > 30 and not waited:
                     waited = True
                     log.info("en-route %s: trail take-off is recent — waiting %ds", fid, wait)
@@ -337,7 +340,7 @@ def _build_takeoff(fid, sim, entry):
     if origin.get("lat") is None and entry:
         origin = enroute._airport_side(((entry.get("airport") or {}).get("origin")))
     png, caption = cards.takeoff_card(origin, dep, track, fid,
-                                      next_ts=dep + ENROUTE_DELAY_S)
+                                      next_ts=dep + enroute.delay_s(origin))
     return fid, png, caption
 
 
@@ -350,6 +353,12 @@ def _home_takeoff_backup(fid, entry, dep):
         return
     log.warning("home take-off %s not announced by HA — tracker sends it", fid)
     _run_takeoff(fid, GROUP_JID, _takeoff_text(entry) if entry else "", entry=entry)
+
+
+def _entry_origin(entry):
+    """Origin airport side ({lat, lon, …}) of a flight-list entry, or None."""
+    o = ((entry or {}).get("airport") or {}).get("origin")
+    return enroute._airport_side(o) if o else None
 
 
 def _airborne_check():
@@ -369,7 +378,7 @@ def _airborne_check():
                          kwargs={"entry": entry}, daemon=True).start()
         log.info("remote take-off of %s — card scheduled", fid)
     if GROUP_JID and not _already_reported(f"enroute:{fid}"):
-        delay = max(0, dep + ENROUTE_DELAY_S - now)
+        delay = max(0, dep + enroute.delay_s(_entry_origin(entry)) - now)
         threading.Thread(
             target=_run_enroute, args=(fid, GROUP_JID, False, False, delay), daemon=True
         ).start()
@@ -460,7 +469,8 @@ def _on_airborne_first_seen(fid, row, just_took_off=False):
                              kwargs={"entry": entry}, daemon=True).start()
             log.info("live watch: take-off of %s — card scheduled", fid)
     if GROUP_JID and not _already_reported(f"enroute:{fid}"):
-        delay = max(0, dep + ENROUTE_DELAY_S - now)
+        origin = _entry_origin(entry) or db.airport_by_iata(o_iata)
+        delay = max(0, dep + enroute.delay_s(origin) - now)
         threading.Thread(
             target=_run_enroute, args=(fid, GROUP_JID, False, False, delay), daemon=True
         ).start()
