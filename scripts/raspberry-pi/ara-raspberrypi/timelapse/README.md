@@ -340,6 +340,11 @@ pouso (+208,−168), (+176,+44), (+220,+28) → re-âncora final (−96,−60),
 pessoa no canteiro** (eventos `person` 19:53–19:55 nas duas lentes) e o
 auto-tracking levou a lente no meio do homing — o homing só é confiável
 com o canteiro vazio, que é quando ele roda (fora de 07:00–18:00).
+Ferramenta da calibração: [`ptzcal.py`](ptzcal.py) (copiar para `/tmp`
+do container; `tilt`/`pan` vão ao fim de curso e voltam medindo passo a
+passo; uso no cabeçalho). Se a câmera mudar de lugar de novo, refazer as
+duas varreduras e ajustar `HOME_*`/`TRAVEL_*` — conferindo os quadros a
+olho, porque longe da guarda a medição pode concordar num falso.
 
 **Artefato do OSD — medição "válida" com a câmera perdida (achado de
 10/11/2026).** Olhando a parede do barraco (sem textura), as cinco refs
