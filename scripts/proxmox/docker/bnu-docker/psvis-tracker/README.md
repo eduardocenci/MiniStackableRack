@@ -28,7 +28,12 @@ Fontes: mapa = os tiles OSM que o `maptile` já cacheia em `/data/tiles`,
 90 m via Open-Meteo (`/v1/elevation`, sem chave, 100 pontos/chamada), cache em
 `/data/terrain/<id>_*.json`, best-effort; METAR = aviationweather.gov, **do
 horário descrito** (`date=`/`hours=`) quando ele já passou — reenvios e
-simulações mostram o tempo daquele dia. **Ícones de tempo** desenhados em
+simulações mostram o tempo daquele dia; a estação mais próxima de um
+aeródromo sem METAR (`metar.nearest()`) sai por `bbox=` com **4 casas
+decimais** — desde 2026-11-03 a API responde 400 a um canto com mais de 6
+(`-45.743767999999996`, aritmética de float), o que derrubava o painel do METAR
+da decolagem e o bloco "Meteo agora" do update em voo (corrigido 2026-11-09).
+**Ícones de tempo** desenhados em
 vetor (`_wx_icon`: sol, sol entre nuvens, nuvem, chuva, trovoada, neblina,
 névoa) a partir de `metar.condition()` — a mesma chave que escolhe o emoji da
 legenda (☀️ ⛅ ☁️ 🌧️ ⛈️ 🌫️), então imagem e texto sempre concordam.
