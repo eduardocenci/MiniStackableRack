@@ -2,7 +2,10 @@
 
 Small Brazilian aerodromes (e.g. SSBL Blumenau) publish no METAR; `nearest()`
 falls back to the closest reporting station via a bbox query (SBNF Navegantes,
-~40 km, in Blumenau's case).
+~40 km, in Blumenau's case). The bbox corners go out with 4 fixed decimals:
+since 2026-11-03 the API answers 400 ("Must specify station IDs or bounding
+box, zoom, and density") to any corner with more than 6 decimals, and plain
+float arithmetic (`lat - 1.2`) yields -45.743767999999996.
 """
 import math
 import time
@@ -54,12 +57,15 @@ def by_ids(icaos, at_ts=None):
     return _latest(_get({"ids": ",".join(icaos), **_when(at_ts)}))
 
 
+def _bbox(lat, lon, box_deg):
+    """minLat,minLon,maxLat,maxLon with 4 fixed decimals (~10 m) — the API
+    rejects more than 6, and float arithmetic easily produces 15."""
+    return ",".join(f"{v:.4f}" for v in (lat - box_deg, lon - box_deg, lat + box_deg, lon + box_deg))
+
+
 def nearest(lat, lon, box_deg=1.5, at_ts=None):
     """Closest reporting station to a point, or None. Returns (obs, dist_km)."""
-    obs = _latest(_get({
-        "bbox": f"{lat - box_deg},{lon - box_deg},{lat + box_deg},{lon + box_deg}",
-        **_when(at_ts),
-    })).values()
+    obs = _latest(_get({"bbox": _bbox(lat, lon, box_deg), **_when(at_ts)})).values()
     best, best_d = None, None
     for m in obs:
         mlat, mlon = m.get("lat"), m.get("lon")
