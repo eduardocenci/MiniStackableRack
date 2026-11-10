@@ -5,14 +5,20 @@ speeds and altitudes, so future flights can be compared against history
 (slower flight? lower cruise? significant route deviation?).
 
 Layout:
-  flights       one row per flight (endpoints, times, cruise/max stats)
+  flights       one row per flight (endpoints + where each came from, times,
+                cruise/max stats, FR24's own status for the flight)
   track_points  the exact path, one row per playback point
+  claims        one row per message stage already taken for a flight
+                (takeoff:/enroute:/report:<id>) — the dedupe, atomic across
+                threads and restarts
+  messages      every WhatsApp message sent (audit log: what, when, where)
   /data/playbacks/<id>.json.gz  raw playback flight dict — schema insurance
 """
 import gzip
 import json
 import os
 import sqlite3
+import threading
 import time
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
@@ -44,13 +50,48 @@ CREATE TABLE IF NOT EXISTS track_points (
   PRIMARY KEY (fr24_id, seq)
 );
 CREATE INDEX IF NOT EXISTS idx_flights_route ON flights (o_icao, d_icao, dep_ts);
+CREATE TABLE IF NOT EXISTS claims (
+  key        TEXT PRIMARY KEY,
+  claimed_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS messages (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  sent_at     INTEGER,
+  fr24_id     TEXT,
+  kind        TEXT,
+  jid         TEXT,
+  http_status INTEGER,
+  image       TEXT,
+  caption     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_messages_flight ON messages (fr24_id, kind);
 """
+
+# Columns added after the first release — ALTERed into older databases.
+# o_src/d_src: where each airport side came from — 'fr24' (playback), 'list'
+# (flight list), 'touchdown'/'liftoff' (the aerodrome the track was seen on
+# the ground at); NULL = stored before 2026-10-17, unknown.
+# fr24_status: the list's status text ('Landed 12:35', 'Unknown' when FR24
+# never closed the flight).
+_ADDED = {"o_src": "TEXT", "d_src": "TEXT", "fr24_status": "TEXT"}
+_migrated = False
+_migrate_lock = threading.Lock()
 
 
 def _conn():
+    global _migrated
     os.makedirs(DATA_DIR, exist_ok=True)
-    c = sqlite3.connect(DB_PATH)
-    c.executescript(SCHEMA)
+    c = sqlite3.connect(DB_PATH, timeout=30)
+    if not _migrated:
+        with _migrate_lock:
+            if not _migrated:
+                c.executescript(SCHEMA)
+                have = {r[1] for r in c.execute("PRAGMA table_info(flights)")}
+                for col, typ in _ADDED.items():
+                    if col not in have:
+                        c.execute(f"ALTER TABLE flights ADD COLUMN {col} {typ}")
+                c.commit()
+                _migrated = True
     return c
 
 
@@ -65,11 +106,13 @@ def count_flights():
 
 
 def store_flight(flight, stats, list_entry=None):
-    """Persist one completed flight (idempotent by fr24_id).
+    """Persist one completed flight (idempotent by fr24_id — an upsert that
+    keeps the scheduled times and FR24 status a later call cannot supply).
 
-    `flight` is the playback flight dict, `stats` comes from
-    report.compute_stats, `list_entry` (optional) is the flight-list entry —
-    the only source of the *scheduled* times.
+    `flight` is the playback flight dict (airport sides may carry `_src`, see
+    app._fill_airports), `stats` comes from report.compute_stats,
+    `list_entry` (optional) is the flight-list entry — the only source of the
+    *scheduled* times and of FR24's status text.
     """
     ident = flight.get("identification") or {}
     fid = ident.get("id") or stats.get("fr24_id")
@@ -88,8 +131,22 @@ def store_flight(flight, stats, list_entry=None):
             pos.get("latitude"), pos.get("longitude"),
         )
 
-    sched = ((list_entry or {}).get("time") or {}).get("scheduled") or {}
+    def src(name):
+        a = ap.get(name)
+        return (a.get("_src") or "fr24") if a else None
 
+    sched = ((list_entry or {}).get("time") or {}).get("scheduled") or {}
+    status = (((list_entry or {}).get("status") or {}).get("text")) or None
+
+    cols = (
+        "fr24_id", "reg", "callsign", "model",
+        "o_iata", "o_icao", "o_name", "o_city", "o_lat", "o_lon",
+        "d_iata", "d_icao", "d_name", "d_city", "d_lat", "d_lon",
+        "sched_dep", "sched_arr", "dep_ts", "arr_ts", "duration_s",
+        "cruise_alt_ft", "cruise_kt", "cruise_kmh", "max_alt_ft", "max_kt",
+        "dist_km", "route_km", "n_points", "stored_at",
+        "o_src", "d_src", "fr24_status",
+    )
     row = (
         fid, stats["reg"], ident.get("callsign"), stats["model"],
         *side("origin"), *side("destination"),
@@ -99,6 +156,12 @@ def store_flight(flight, stats, list_entry=None):
         stats["max_alt_ft"], stats["max_kt"],
         round(stats["dist_km"], 1), round(stats["route_km"], 1),
         len(stats["track"]), int(time.time()),
+        src("origin"), src("destination"), status,
+    )
+    keep = ("sched_dep", "sched_arr", "fr24_status")  # only the list knows these
+    sets = ", ".join(
+        f"{c}=COALESCE(excluded.{c}, flights.{c})" if c in keep else f"{c}=excluded.{c}"
+        for c in cols[1:]
     )
     points = [
         (
@@ -114,13 +177,66 @@ def store_flight(flight, stats, list_entry=None):
     with _conn() as c:
         c.execute("DELETE FROM track_points WHERE fr24_id=?", (fid,))
         c.execute(
-            f"INSERT OR REPLACE INTO flights VALUES ({','.join('?' * len(row))})", row
+            f"INSERT INTO flights ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})"
+            f" ON CONFLICT(fr24_id) DO UPDATE SET {sets}", row
         )
         c.executemany("INSERT INTO track_points VALUES (?,?,?,?,?,?,?,?,?)", points)
 
     os.makedirs(RAW_DIR, exist_ok=True)
     with gzip.open(os.path.join(RAW_DIR, f"{fid}.json.gz"), "wt", encoding="utf-8") as fh:
         json.dump(flight, fh)
+
+
+# ── dedupe claims + message log ──────────────────────────────────────────────
+
+def claim(key):
+    """Take `key` (e.g. 'enroute:<id>'): True for exactly one caller, ever —
+    the primary key makes the check-and-mark a single atomic statement, so
+    threads waking in the same second cannot both pass (they did with the old
+    read-then-append text file: every T+10 card went out twice 12–16/10)."""
+    with _conn() as c:
+        cur = c.execute("INSERT OR IGNORE INTO claims (key, claimed_at) VALUES (?, ?)",
+                        (key, int(time.time())))
+        return cur.rowcount == 1
+
+
+def is_claimed(key):
+    with _conn() as c:
+        return c.execute("SELECT 1 FROM claims WHERE key=?", (key,)).fetchone() is not None
+
+
+def release(key):
+    """Give a claim back (the send failed before anything reached the group)."""
+    with _conn() as c:
+        c.execute("DELETE FROM claims WHERE key=?", (key,))
+
+
+def import_claims(keys):
+    """Seed claims from the pre-2026-10-17 /data/last_reported file."""
+    now = int(time.time())
+    with _conn() as c:
+        c.executemany("INSERT OR IGNORE INTO claims (key, claimed_at) VALUES (?, ?)",
+                      [(k, now) for k in keys])
+
+
+def log_message(fr24_id, kind, jid, http_status, image, caption):
+    with _conn() as c:
+        c.execute(
+            "INSERT INTO messages (sent_at, fr24_id, kind, jid, http_status, image, caption)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (int(time.time()), fr24_id, kind, jid, http_status, image, caption),
+        )
+
+
+def messages(fr24_id=None, limit=50):
+    with _conn() as c:
+        c.row_factory = sqlite3.Row
+        if fr24_id:
+            rows = c.execute("SELECT * FROM messages WHERE fr24_id=? ORDER BY id DESC LIMIT ?",
+                             (fr24_id, limit)).fetchall()
+        else:
+            rows = c.execute("SELECT * FROM messages ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
 
 
 def known_airports(exclude_icao=None):
@@ -167,9 +283,9 @@ def list_flights(limit=20):
     with _conn() as c:
         c.row_factory = sqlite3.Row
         rows = c.execute(
-            "SELECT fr24_id, reg, model, o_iata, o_icao, d_iata, d_icao,"
+            "SELECT fr24_id, reg, model, o_iata, o_icao, d_iata, d_icao, o_src, d_src,"
             " dep_ts, arr_ts, duration_s, cruise_alt_ft, cruise_kt,"
-            " max_alt_ft, max_kt, dist_km, route_km, n_points"
+            " max_alt_ft, max_kt, dist_km, route_km, n_points, fr24_status"
             " FROM flights ORDER BY dep_ts DESC LIMIT ?",
             (limit,),
         ).fetchall()

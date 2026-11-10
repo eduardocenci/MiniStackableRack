@@ -19,6 +19,7 @@ from datetime import datetime
 
 from flask import Flask, jsonify, request, send_from_directory
 
+import airports
 import cards
 import db
 import enroute
@@ -57,36 +58,59 @@ HOME_BACKUP_S = int(os.environ.get("HOME_BACKUP_S", "150"))
 FAST_POLL_S = int(os.environ.get("FAST_POLL_S", "30"))
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 CHARTS_DIR = os.path.join(DATA_DIR, "charts")
+# Pre-2026-10-17 dedupe file — imported into the claims table at startup.
 LAST_FILE = os.path.join(DATA_DIR, "last_reported")
+# A flight FR24 never closes (no real arrival) is swept once it is this old
+# and not live, if its playback shows it on the ground after flying.
+UNCLOSED_MIN_S = 20 * 60
+UNCLOSED_MAX_S = 24 * 3600
 
 os.makedirs(CHARTS_DIR, exist_ok=True)
 app = Flask(__name__)
 
 
-def _already_reported(fid):
-    try:
-        with open(LAST_FILE, encoding="utf-8") as fh:
-            return fid in fh.read().splitlines()[-20:]
-    except FileNotFoundError:
-        return False
-
-
-def _mark_reported(fid):
-    with open(LAST_FILE, "a", encoding="utf-8") as fh:
-        fh.write(fid + "\n")
-
-
-_claim_lock = threading.Lock()
-
+# ── dedupe: one message per stage per flight ─────────────────────────────────
+# Keys: takeoff:<id>, enroute:<id>, report:<id> (landing). HA's announce, the
+# live watch, the list watch and the sweep all race for them; db.claim() is a
+# single atomic INSERT, so exactly one path wins — across threads AND
+# restarts. (The old text file was check-then-append: two T+10 sleepers
+# waking in the same second both passed, so every en-route card 12–16/10
+# went out twice.)
 
 def _claim(key):
-    """Atomically mark `key` reported; False when another path already has it
-    (HA's announce, the live watch and the list watch race for take-offs)."""
-    with _claim_lock:
-        if _already_reported(key):
-            return False
-        _mark_reported(key)
-        return True
+    """Take `key`; False when another path already has it."""
+    return db.claim(key)
+
+
+def _claimed(key):
+    return db.is_claimed(key)
+
+
+def _import_last_reported():
+    """The old dedupe file → claims (its bare ids were landing reports)."""
+    try:
+        with open(LAST_FILE, encoding="utf-8") as fh:
+            keys = {k if ":" in k else f"report:{k}" for k in fh.read().split()}
+    except FileNotFoundError:
+        return
+    db.import_claims(sorted(keys))
+    os.replace(LAST_FILE, LAST_FILE + ".imported")
+    log.info("imported %d dedupe markers from %s", len(keys), LAST_FILE)
+
+
+def _send(kind, fid, jid, caption, png=None, name=None):
+    """Every WhatsApp message goes out here — and into the messages log
+    (kind: takeoff, takeoff-text, enroute, landing-1, landing-2,
+    landing-legacy, landing-text)."""
+    if png is not None:
+        status = waha.send_image(jid, _write_chart(name, png), caption)
+    else:
+        status = waha.send_text(jid, caption)
+    try:
+        db.log_message(fid, kind, jid, status, name, caption)
+    except Exception:  # noqa: BLE001 — the log never blocks a message
+        log.warning("message log failed for %s %s", kind, fid, exc_info=True)
+    return status
 
 
 def _resolve_flight_id(flight_id):
@@ -98,15 +122,38 @@ def _resolve_flight_id(flight_id):
 
 
 def _fill_airports(flight, entry):
-    """FR24 playback often lacks the destination (or origin) that the flight
-    list already has — e.g. 41f01799 SOD→BNU came back with destination=null,
-    so the landing message had no arrival airport. Merge the list's sides in."""
+    """Complete the airport sides the playback lacks, never overwriting one:
+    1. from the flight list — 41f01799 SOD→BNU came back from the playback
+       with destination=null that the list had;
+    2. from the ground track — the aerodrome where the aircraft was SEEN on
+       the ground: landing roll/taxi after the last airborne point, take-off
+       roll before the first (42226758 NVT→? on 15/10: FR24 never closed the
+       flight, the roll-out was 1.2 km from SBPA). A track ending in the air
+       leaves the side unknown — no guess from the last position.
+    Each filled side carries `_src` ('list'/'touchdown'/'liftoff') for the
+    flight log."""
     ap = flight.setdefault("airport", {}) or {}
     flight["airport"] = ap
     eap = (entry or {}).get("airport") or {}
     for side in ("origin", "destination"):
         if not ap.get(side) and eap.get(side):
-            ap[side] = eap[side]
+            ap[side] = dict(eap[side], _src="list")
+    track = flight.get("track") or []
+    fid = (flight.get("identification") or {}).get("id")
+    for side, ground, src in (("origin", report.liftoff_points, "liftoff"),
+                              ("destination", report.touchdown_points, "touchdown")):
+        if ap.get(side):
+            continue
+        try:
+            hit = airports.at_ground(ground(track))
+        except Exception:  # noqa: BLE001 — naming the airport only enriches
+            log.warning("%s: %s lookup failed for %s", src, side, fid, exc_info=True)
+            continue
+        if hit:
+            a, km, how = hit
+            ap[side] = dict(a, _src=src)
+            log.info("%s %s = %s (%s) — %s %.1f km away [%s]", fid, side,
+                     a["code"]["icao"], a["position"]["region"]["city"], src, km, how)
     return flight
 
 
@@ -140,26 +187,37 @@ def _write_chart(name, png):
     return f"{SELF_URL}/charts/{name}"
 
 
-def _send_report(fid, flight, stats, jid):
+def _send_report(fid, flight, stats, jid, claim=True):
     """Landing: card 1/2 (route) carrying the full caption, then card 2/2
     (profile, speed, previous flights). If the cards cannot be rendered the
-    legacy chart+map image goes out instead — the message is never lost."""
-    _attach_expectation(flight, stats)
-    caption = report.build_caption(stats)
+    legacy chart+map image goes out instead — the message is never lost.
+    `report:<id>` is claimed right before sending (the live watch and the
+    sweep raced to it on 12/10, 2 s apart) and given back if the send fails
+    before anything went out; tests (`claim=False`) skip it."""
+    key = f"report:{fid}"
+    if claim and not _claim(key):
+        log.info("landing report for %s already sent — skipping", fid)
+        return
     try:
-        p1, p2 = cards.landing_cards(flight, stats)
-    except Exception:  # noqa: BLE001
-        log.warning("landing cards failed for %s — legacy chart", fid, exc_info=True)
-        p1 = p2 = None
-    if p1:
-        waha.send_image(jid, _write_chart(f"{fid}-1.png", p1), caption)
+        _attach_expectation(flight, stats)
+        caption = report.build_caption(stats)
         try:
-            waha.send_image(jid, _write_chart(f"{fid}-2.png", p2), "")
-        except Exception:  # noqa: BLE001 — 1/2 (with the caption) already went out
-            log.warning("landing card 2/2 failed for %s", fid, exc_info=True)
-    else:
-        waha.send_image(jid, _write_chart(f"{fid}.png", report.build_report_image(stats)), caption)
-    _mark_reported(fid)
+            p1, p2 = cards.landing_cards(flight, stats)
+        except Exception:  # noqa: BLE001
+            log.warning("landing cards failed for %s — legacy chart", fid, exc_info=True)
+            p1 = p2 = None
+        if p1:
+            _send("landing-1", fid, jid, caption, p1, f"{fid}-1.png")
+            try:
+                _send("landing-2", fid, jid, "", p2, f"{fid}-2.png")
+            except Exception:  # noqa: BLE001 — 1/2 (with the caption) already went out
+                log.warning("landing card 2/2 failed for %s", fid, exc_info=True)
+        else:
+            _send("landing-legacy", fid, jid, caption, report.build_report_image(stats), f"{fid}.png")
+    except Exception:
+        if claim:
+            db.release(key)
+        raise
     log.info("report for %s sent to %s", fid, jid)
 
 
@@ -171,7 +229,7 @@ def _run_report(flight_id, jid, force, fallback_text=""):
             fid = _resolve_flight_id(flight_id)
             if not fid:
                 raise LookupError("no landed flight found on FR24 yet")
-            if not force and _already_reported(fid):
+            if not force and _claimed(f"report:{fid}"):
                 log.info("flight %s already reported — skipping", fid)
                 return
             flight = fr24.playback(fid)
@@ -181,12 +239,17 @@ def _run_report(flight_id, jid, force, fallback_text=""):
             except Exception:  # noqa: BLE001 — the list only enriches
                 pass
             _fill_airports(flight, entry)
+            if (attempt < 4 and not flight["airport"].get("destination")
+                    and not report.touchdown_points(flight.get("track") or [])):
+                # no destination anywhere and the playback does not show the
+                # landing roll yet — give FR24 a few minutes to finalize it
+                raise LookupError("no destination and no touchdown in the playback yet")
             stats = report.compute_stats(flight)  # raises while track is short
             try:  # flight log first — a WAHA hiccup must not lose the record
                 db.store_flight(flight, stats, list_entry=entry)
             except Exception:
                 log.warning("flight log store failed for %s", fid, exc_info=True)
-            _send_report(fid, flight, stats, jid)
+            _send_report(fid, flight, stats, jid, claim=not force)
             return
         except Exception as exc:  # noqa: BLE001 — retry on anything, FR24 lags
             log.warning("attempt %d/%d failed: %s", attempt, MAX_TRIES, exc)
@@ -196,16 +259,16 @@ def _run_report(flight_id, jid, force, fallback_text=""):
     # The landing alert must never be lost: HA delegated the whole message to
     # us, so on total FR24 failure send its pre-rendered text (no chart/cruise).
     if fallback_text:
-        waha.send_text(jid, fallback_text)
+        _send("landing-text", flight_id, jid, fallback_text)
         log.info("fallback text sent to %s", jid)
 
 
 def _run_enroute(flight_id, jid, force, sim, delay_s=None):
     """T+10 after take-off (T+19 from the São Paulo region — enroute.delay_s):
     cardinal heading, route-so-far map and arrival estimates for
-    previously-seen destinations along the heading. May be
-    triggered by the HA event AND by the airborne watch — the claim marker
-    below makes whichever wakes first the only sender."""
+    previously-seen destinations along the heading. HA's
+    took_off thread and the watches' job (_schedule_enroute) may both sleep
+    toward the same T+10 — the atomic claim below lets exactly one send."""
     delay = enroute.ENROUTE_DELAY_S if delay_s is None else delay_s
     if not force and delay > 0:
         time.sleep(delay)
@@ -219,11 +282,9 @@ def _run_enroute(flight_id, jid, force, sim, delay_s=None):
     if not fid:
         log.warning("en-route: no airborne flight found on FR24")
         return
-    key = f"enroute:{fid}"
-    if not force:
-        if _already_reported(key):
-            return
-        _mark_reported(key)  # claim it before the slow build
+    if not force and not _claim(f"enroute:{fid}"):  # claimed before the slow build
+        log.info("en-route update for %s already taken — skipping", fid)
+        return
     waited = False
     attempt = 0
     while attempt < 3:
@@ -260,7 +321,7 @@ def _run_enroute(flight_id, jid, force, sim, delay_s=None):
             except Exception:  # noqa: BLE001
                 log.warning("en-route card failed for %s — legacy map", fid, exc_info=True)
                 png = enroute.legacy_map(st)
-            waha.send_image(jid, _write_chart(f"{fid}-enroute.png", png), caption)
+            _send("enroute", fid, jid, caption, png, f"{fid}-enroute.png")
             log.info("en-route update for %s sent to %s", fid, jid)
             return
         except Exception as exc:  # noqa: BLE001
@@ -307,12 +368,12 @@ def _run_takeoff(fid, jid, fallback_text="", sim=False, entry=None):
             if attempt < 3 and not sim:
                 time.sleep(20)  # FR24 may not serve the trail yet right after wheels-up
             continue
-        waha.send_image(jid, _write_chart(f"{fid}-takeoff.png", png), caption)
+        _send("takeoff", fid, jid, caption, png, f"{fid}-takeoff.png")
         log.info("take-off card for %s sent to %s", fid, jid)
         return
     text = fallback_text or (_takeoff_text(entry) if entry else "")
     if text:
-        waha.send_text(jid, text)
+        _send("takeoff-text", fid, jid, text)
         log.info("take-off text (fallback) for %s sent to %s", fid, jid)
 
 
@@ -377,11 +438,7 @@ def _airborne_check():
         threading.Thread(target=_run_takeoff, args=(fid, GROUP_JID, _takeoff_text(entry)),
                          kwargs={"entry": entry}, daemon=True).start()
         log.info("remote take-off of %s — card scheduled", fid)
-    if GROUP_JID and not _already_reported(f"enroute:{fid}"):
-        delay = max(0, dep + enroute.delay_s(_entry_origin(entry)) - now)
-        threading.Thread(
-            target=_run_enroute, args=(fid, GROUP_JID, False, False, delay), daemon=True
-        ).start()
+    _schedule_enroute(fid, dep + enroute.delay_s(_entry_origin(entry)) - now)
 
 
 def _airborne_loop():
@@ -421,6 +478,19 @@ def _spawn_once(key, fn):
     return True
 
 
+def _job_active(key):
+    with _active_lock:
+        return key in _active_reports
+
+
+def _schedule_enroute(fid, delay):
+    """The watches' T+10 job — at most one sleeping per flight (every 5-min
+    list poll used to start another sleeper; up to four woke together)."""
+    if GROUP_JID and not _claimed(f"enroute:{fid}"):
+        _spawn_once(f"enroute:{fid}",
+                    lambda: _run_enroute(fid, GROUP_JID, False, False, max(0, delay)))
+
+
 def _on_airborne_first_seen(fid, row, just_took_off=False):
     o_iata = row[11] or ""
     entry = None
@@ -448,7 +518,7 @@ def _on_airborne_first_seen(fid, row, just_took_off=False):
     if o_icao == HOME_ICAO or o_iata == HOME_IATA:
         # HA announces it (and claims the key via /report announce=true);
         # the backup only fires if nobody did.
-        if not _already_reported(key) and now - dep <= 15 * 60:
+        if not _claimed(key) and now - dep <= 15 * 60:
             log.info("take-off %s at home — HA announces it (backup in %ds)", fid, HOME_BACKUP_S)
             threading.Thread(target=_home_takeoff_backup, args=(fid, entry, dep),
                              daemon=True).start()
@@ -468,16 +538,12 @@ def _on_airborne_first_seen(fid, row, just_took_off=False):
             threading.Thread(target=_run_takeoff, args=(fid, GROUP_JID, text),
                              kwargs={"entry": entry}, daemon=True).start()
             log.info("live watch: take-off of %s — card scheduled", fid)
-    if GROUP_JID and not _already_reported(f"enroute:{fid}"):
-        origin = _entry_origin(entry) or db.airport_by_iata(o_iata)
-        delay = max(0, dep + enroute.delay_s(origin) - now)
-        threading.Thread(
-            target=_run_enroute, args=(fid, GROUP_JID, False, False, delay), daemon=True
-        ).start()
+    origin = _entry_origin(entry) or db.airport_by_iata(o_iata)
+    _schedule_enroute(fid, dep + enroute.delay_s(origin) - now)
 
 
 def _on_landing_detected(fid, wait_arrival=False):
-    if _already_reported(fid) or not GROUP_JID:
+    if _claimed(f"report:{fid}") or not GROUP_JID:
         return
 
     def run():
@@ -486,6 +552,10 @@ def _on_landing_detected(fid, wait_arrival=False):
                 try:
                     e = fr24.list_entry(fid, REG)
                     if e and ((e.get("time") or {}).get("real") or {}).get("arrival"):
+                        break
+                    # FR24 may never stamp an arrival (42226758): the landing
+                    # roll in the playback is proof enough
+                    if report.touchdown_points(fr24.playback(fid).get("track") or []):
                         break
                 except Exception:  # noqa: BLE001
                     pass
@@ -573,21 +643,34 @@ def _sync_history(limit=15):
     flight not yet seen. This is the universal capture path: it covers
     landings at ANY airport (HA events only exist near Blumenau or while the
     aircraft is in the in-memory tracked list) and self-heals missed flights.
-    Only flights new to the DB are reported — restarts/backfills never spam."""
-    stored = 0
+    Only flights new to the DB are reported — restarts/backfills never spam.
+
+    FR24 does not always close a flight: 42226758 (NVT→POA 15/10) is still
+    "Unknown" with no real arrival, so only the live watch caught it. Such a
+    flight is taken too, once it is not live, between UNCLOSED_MIN_S and
+    UNCLOSED_MAX_S after departure, and its playback shows the landing roll.
+    A flight a live job is already reporting is left to that job."""
+    stored, now = 0, time.time()
     for entry in fr24.list_flights(REG, limit=limit):
         fid = (entry.get("identification") or {}).get("id")
-        arr = ((entry.get("time") or {}).get("real") or {}).get("arrival")
-        if not fid or not arr or db.has_flight(fid):
+        real = (entry.get("time") or {}).get("real") or {}
+        arr, dep = real.get("arrival"), real.get("departure")
+        if not fid or db.has_flight(fid) or _job_active(f"report:{fid}"):
+            continue
+        if not arr and (not dep or (entry.get("status") or {}).get("live")
+                        or not UNCLOSED_MIN_S < now - dep < UNCLOSED_MAX_S):
             continue
         try:
-            flight = _fill_airports(fr24.playback(fid), entry)
+            flight = fr24.playback(fid)
+            if not arr and not report.touchdown_points(flight.get("track") or []):
+                continue  # ended in the air: not known to have landed
+            flight = _fill_airports(flight, entry)
             stats = report.compute_stats(flight)
             db.store_flight(flight, stats, list_entry=entry)
             stored += 1
-            log.info("history sync: stored flight %s", fid)
-            if GROUP_JID and not _already_reported(fid):
-                _send_report(fid, flight, stats, GROUP_JID)
+            log.info("history sync: stored flight %s%s", fid, "" if arr else " (no FR24 arrival)")
+            if GROUP_JID:
+                _send_report(fid, flight, stats, GROUP_JID)  # skips if report:<id> is taken
         except Exception as exc:  # noqa: BLE001 — one bad flight must not stop the sweep
             log.warning("history sync: %s failed: %s", fid, exc)
     return stored
@@ -614,6 +697,12 @@ def flights_endpoint():
     return jsonify(db.list_flights(int(request.args.get("limit", 20))))
 
 
+@app.get("/messages")
+def messages_endpoint():
+    """The WhatsApp message log, newest first (`?flight=<id>`, `?limit=`)."""
+    return jsonify(db.messages(request.args.get("flight"), int(request.args.get("limit", 50))))
+
+
 @app.get("/charts/<path:name>")
 def charts(name):
     return send_from_directory(CHARTS_DIR, name)
@@ -630,6 +719,8 @@ def health():
 
 
 if __name__ == "__main__":
+    _import_last_reported()
+    threading.Thread(target=airports.warm, daemon=True).start()
     threading.Thread(target=_sync_loop, daemon=True).start()
     threading.Thread(target=_airborne_loop, daemon=True).start()
     threading.Thread(target=_live_watch_loop, daemon=True).start()
