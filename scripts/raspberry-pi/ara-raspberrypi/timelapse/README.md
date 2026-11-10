@@ -294,14 +294,16 @@ seguidas — cada restauração com seu quantum de erro — e deixou a câmera
 num lugar absurdo, a ponto de Eduardo precisar resetar a câmera. Nunca
 mais automática.
 
-**Homing por fim de curso** (ideia Eduardo, calibrado 04/09/2026): a
-câmera não dá 360° — os limites de pan (esquerdo = parede do barraco) e de
-tilt (inferior = chão) são paredes firmes e **repetíveis** (+0,+4 px após
-um empurrão extra de 10 s). Da quina, uma receita **quantizada** leva
-perto da guarda: `pan −1.0 × 25 s` → `7 × (0.4, 0.5 s)` → `tilt −1.0 ×
-12 s` → `10 × (0.4, 0.3 s)`; pouso medido em (−146,+78) e (−200,+104) px
-em idas repetidas (~79 s cada) — dentro do envelope, e a re-âncora
-termina. A receita tem de ser executada com os MESMOS bursts com que foi
+**Homing por fim de curso** (ideia Eduardo, calibrado 04/09/2026,
+**recalibrado 10/11/2026** — ver abaixo): a câmera não dá 360° — os
+limites de pan (nas duas pontas a lente olha a parede do barraco) e de
+tilt são paredes firmes e **repetíveis**. Da quina, uma receita
+**quantizada** leva perto da guarda: desde 10/11/2026 `pan +1.0 × 25 s`
+(limite DIREITO) → `5 × (−0.4, 0.5 s)` → `tilt +1.0 × 12 s` (limite
+SUPERIOR) → `3 × (−0.4, 0.3 s)`, ~60–65 s; pouso (+176…+240, −168…+44)
+px e a re-âncora termina. (Até 10/11: `pan −1.0 × 25 s` → `7 × (0.4,
+0.5 s)` → `tilt −1.0 × 12 s` → `10 × (0.4, 0.3 s)`, pouso (−146,+78) e
+(−200,+104), ~79 s.) A receita tem de ser executada com os MESMOS bursts com que foi
 aprendida: um burst único de 3.45 s pousou ~1500 px aquém (cada burst
 carrega seu quantum de latência). Política: só quando a medição está
 inválida **fora do expediente** (07:00–18:00 nunca — de dia o tracking é
@@ -315,6 +317,51 @@ guarda para `trabalho/` e para a noite); falha de importação/confiança
 nunca bloqueia as fotos (prossegue sem corrigir e loga). Logs em tempo
 real (`PYTHONUNBUFFERED=1` no compose — antes só apareciam no fim do
 processo).
+
+**Recalibração dos fins de curso (10/11/2026).** Eduardo mudou a câmera
+de posição no suporte e os fins de curso andaram em relação à cena: a
+sequência do pôr do sol de 10/11 terminou com `homing não reencontrou o
+pilar` (19:01). Medido à noite, passo a passo, contra as refs (que
+continuam válidas — guarda a (+32,−92), as 5 concordando):
+
+| Quina | Distância até a guarda | Pouso (idas) |
+|---|---|---|
+| tilt superior (`+1.0 × 12 s`) | **+520…+536 px** acima — 3 passos de 0.3 s | −28, −80, +28 (3 idas) |
+| tilt inferior (chão, antiga) | ~10 passos de 0.3 s | — |
+| pan esquerdo (antiga) | 8 passos → +224…+516; 9 → −192…−500 (passos de 0.5 s andam 420–750 px) | dispersão ~300 px |
+| pan direito | 5 passos de 0.5 s | +156, +196, +248, +320 (4 idas) |
+
+Escolhidas as quinas **mais perto** (pedido Eduardo: subir em vez de
+descer, movimento mais curto; o mesmo vale para o pan): direita + cima.
+Validado de ponta a ponta com o código novo partindo de três posições
+"perdidas" (parede esquerda; quina esquerda+chão; direita+chão): homing →
+pouso (+208,−168), (+176,+44), (+220,+28) → re-âncora final (−96,−60),
+(+180,+44), (−76,+64), rc=0. Uma quarta ida falhou porque **havia uma
+pessoa no canteiro** (eventos `person` 19:53–19:55 nas duas lentes) e o
+auto-tracking levou a lente no meio do homing — o homing só é confiável
+com o canteiro vazio, que é quando ele roda (fora de 07:00–18:00).
+
+**Artefato do OSD — medição "válida" com a câmera perdida (achado de
+10/11/2026).** Olhando a parede do barraco (sem textura), as cinco refs
+concordam em **(−392…−456, −292…−352) px** com PSR 6–9: o logo
+"intelbras" do OSD (fixo no quadro, x 28–328 / y 30–92) casa com a placa
+escura do pilar na ROI da referência. A malha mandava um burst de 0.4, a
+"medição" não mudava, o eixo virava *stall* e era **aceito** — rc=0, sem
+alerta, câmera olhando a parede. Correção (cirúrgica): *stall* só é
+aceito após burst lento (v < 0.4, `STALL_IMPLAUSIBLE_V`); a 0.4 o motor
+sempre anda (quantum ~400 px pan / ~180 px tilt), então medição parada =
+artefato → homing (fora do expediente, uma vez) ou `fail` com alerta.
+Medidos contra a guarda, 26 de 64 quadros de `posicao2/3` de 06–09/11
+saem "válidos" (esse atrator ou alias com os outros pilares em Y do
+galpão, ~1100 px de passo) — nunca são medidos na operação, mas mostram
+o tamanho do buraco quando a câmera está longe da guarda. Investigado e **não** aplicado (margem fina demais
+para mudar a medição sem mais dados): mascarar o OSD (logo + carimbo)
+mata o atrator e não muda os 34 quadros de guarda do corpus, mas sozinho
+deixa passar acordos aleatórios fracos (PSR 5, 2 refs); somado a uma NCC
+mínima do pilar no deslocamento medido separa o corpus em 0,14 (falsos ≤
+0,13; verdadeiros a +200…+500 px têm 0,15–0,20). Próximo passo se o
+artefato voltar a aparecer: máscara do OSD + NCC ≥ 0,14 por ref, validado
+também com quadros de dia.
 
 Calibração noturna de 01/09/2026 (10 ciclos completos 1→2→1→3→1 sem
 re-âncora, medidos ciclo a ciclo): **6 voltaram com erro (0,0)** — a

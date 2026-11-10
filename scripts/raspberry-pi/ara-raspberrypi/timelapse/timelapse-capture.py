@@ -237,22 +237,29 @@ PAN_LONG_PX = 600                # a partir daqui a correcao e um burst longo pr
 SWEEP_WAIT_S = 60                # medicao invalida: espera o guard-return do firmware (~1 min) e re-mede
 SWEEP_NETS = (0.3, -0.3, 0.6, -0.6, 0.9, -0.9, 1.2, -1.2)   # deslocamento liquido (s a vel 0.4) de cada passo da varredura
 # Homing por fim de curso (ideia Eduardo 04/09/2026): a camera nao da 360;
-# os limites de pan (esquerdo = parede do barraco) e de tilt (inferior =
-# chao) sao paredes firmes e repetiveis (+0,+4 px apos empurrao extra). Da
-# quina se chega perto da guarda com uma receita QUANTIZADA (mesmos bursts
-# com que foi aprendida — 7x0.5 s de pan, 10x0.3 s de tilt; um burst unico
-# de 3.45 s pousou ~1500 px aquem: cada burst carrega seu quantum de
+# os limites de pan (nas duas pontas a lente olha a parede do barraco) e de
+# tilt sao paredes firmes e repetiveis. Da quina se chega perto da guarda
+# com uma receita QUANTIZADA (mesmos bursts com que foi aprendida; um burst
+# unico de 3.45 s pousou ~1500 px aquem: cada burst carrega seu quantum de
 # latencia), e a reancora termina o servico. Usado so quando a medicao esta
 # invalida fora do expediente (de dia o tracking e o dono da camera) ou por
 # comando manual (reanchor --home).
-HOME_PAN = (-1.0, 0.0, 25.0)      # ate o limite esquerdo
-HOME_TILT = (0.0, -1.0, 12.0)     # ate o limite inferior
-TRAVEL_PAN = [(0.4, 0.0, 0.5)] * 7   # limite esquerdo -> guarda (pouso ~-150 px)
-TRAVEL_TILT = [(0.0, 0.4, 0.3)] * 10  # limite inferior -> guarda (pouso ~+70 px)
+# Recalibrado em 10/11/2026 depois que Eduardo mudou a camera de posicao no
+# suporte (os fins de curso andaram em relacao a cena): agora usa as quinas
+# MAIS PERTO da guarda — pan DIREITO (5x0.5 s; o esquerdo ficou a 8-9 passos,
+# pouso +224..+516 / -192..-500 px) e tilt SUPERIOR (fim de curso a so
+# +520..+536 px acima da guarda; 3x0.3 s). Ate 10/11/2026: pan esquerdo
+# 7x0.5 s + tilt inferior (chao) 10x0.3 s, pouso (-146,+78)/(-200,+104).
+HOME_PAN = (1.0, 0.0, 25.0)       # ate o limite direito
+HOME_TILT = (0.0, 1.0, 12.0)      # ate o limite superior
+TRAVEL_PAN = [(-0.4, 0.0, 0.5)] * 5   # limite direito -> guarda (pouso +156..+320 px, 4 idas)
+TRAVEL_TILT = [(0.0, -0.4, 0.3)] * 3  # limite superior -> guarda (pouso -80..+28 px, 3 idas)
 HOME_HOURS_BLOCKED = (7, 18)      # entre 07:00 e 18:00 nunca faz homing automatico
 TILT_PLAUSIBLE_PX = 400           # |tilt| acima disso so com PSR forte (falsos acordos perto da parede)
 TILT_PLAUSIBLE_PSR = 15
 STALL_PX = 20                    # eixo que se moveu menos que isso apos um burst = stall; aceita e nao insiste
+STALL_IMPLAUSIBLE_V = 0.4        # ...mas so para bursts lentos: a 0.4 o motor sempre anda (quantum ~400/180 px),
+                                 # entao "parado" a 0.4 = medicao-artefato (10/11/2026) -> homing / falha
 SECONDARY_DELAY_S = 30   # wait after the main shots before moving
 SETTLE_S = 2             # settle after arriving, before shooting
 
@@ -510,7 +517,7 @@ def _recover_sweep(tag):
 
 
 def _home_and_recover(tag):
-    """Perdido: vai aos fins de curso (pan esquerdo, tilt inferior) e volta a
+    """Perdido: vai aos fins de curso (pan direito, tilt superior) e volta a
     guarda com a receita quantizada; devolve a medicao no pouso (ou None)."""
     print(f"reanchor{tag}: HOMING — fins de curso + receita quantizada (~1 min)")
     ptz_move(*HOME_PAN)
@@ -541,7 +548,9 @@ def cmd_reanchor(dry=False, tag="", sweep=False, home=False):
     """Mede o offset da guarda vs referências (com concordância entre refs)
     e corrige com bursts; pilar perdido -> varredura de recuperacao.
     Avalia POR EIXO: eixo que piorou tem a correcao desfeita; eixo que nao
-    se moveu (stall) e aceito; dois eixos piorando = aborta."""
+    se moveu (stall) e aceito — salvo apos burst de 0.4, que sempre move o
+    motor: ai a medicao e artefato e vira homing (ou falha); dois eixos
+    piorando = aborta."""
     prev, last_moves, stalled, homed = None, {}, set(), False
     for it in range(1, REANCHOR_MAX_ITER + 1):
         meas = _snap_measure()
@@ -574,11 +583,14 @@ def cmd_reanchor(dry=False, tag="", sweep=False, home=False):
             print("reanchor: dry-run, sem correcao")
             return 0
         if prev is not None:
-            worse = []
+            worse, artefato = [], []
             for ax, cur, old in (("pan", sx, prev[0]), ("tilt", sy, prev[1])):
                 if ax not in last_moves:
                     continue
                 if abs(cur - old) < STALL_PX:       # burst nao moveu o motor
+                    if max(abs(v) for v in last_moves[ax][:2]) >= STALL_IMPLAUSIBLE_V:
+                        artefato.append(ax)         # a 0.4 o motor sempre anda: a medicao e que nao acompanha
+                        continue
                     stalled.add(ax)
                     print(f"reanchor: {ax} nao se moveu (stall), aceito como esta", file=sys.stderr)
                 elif abs(cur) > abs(old) + 40:      # piorou: desfaz so este eixo
@@ -587,6 +599,23 @@ def cmd_reanchor(dry=False, tag="", sweep=False, home=False):
                     ptz_move(-vx, -vy, dur)
                     time.sleep(1)
                     print(f"reanchor: {ax} piorou, correcao desfeita", file=sys.stderr)
+            if artefato:
+                # 10/11/2026: camera olhando a parede do barraco media (-392,-312)
+                # contra todas as refs (o logo do OSD casa com a placa do pilar),
+                # a correcao a 0.4 "nao movia" nada e o stall era aceito — rc=0
+                # com a camera perdida. Medicao parada apos burst de 0.4 = artefato.
+                print(f"reanchor{tag}: {'+'.join(artefato)} 'parado' apos burst de v>={STALL_IMPLAUSIBLE_V}"
+                      " — a medicao nao acompanha a camera (artefato: parede/OSD?)", file=sys.stderr)
+                if (home or _homing_allowed()) and not homed:
+                    homed = True
+                    if _home_and_recover(tag) in (None, "fail"):
+                        fail(f"reanchor{tag}: medicao-artefato e homing nao reencontrou o pilar — NAO mexo")
+                        return 1
+                    prev, last_moves, stalled = None, {}, set()
+                    continue   # re-mede no topo do laco
+                fail(f"reanchor{tag}: medicao nao acompanha a correcao (artefato?) — NAO mexo"
+                     " (manual: reanchor --home)")
+                return 1
             if len(worse) == 2 or (worse and len(last_moves) == 1):
                 fail(f"reanchor{tag}: nao converge — abortando")
                 return 1
