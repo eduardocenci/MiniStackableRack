@@ -52,6 +52,30 @@ def _fmt_int_br(n):
     return f"{int(round(n)):,}".replace(",", ".")
 
 
+def _ground_after_flight(track, last):
+    """Points FR24 saw on the ground after the flight's first/last airborne
+    point — only when there was a flight at all."""
+    alt = [(p.get("altitude") or {}).get("feet") or 0 for p in track]
+    airborne = [i for i, a in enumerate(alt) if a > 0]
+    if not airborne:
+        return []
+    if last:
+        return [p for p in track[airborne[-1] + 1:] if p.get("latitude") is not None]
+    return [p for p in track[:airborne[0]] if p.get("latitude") is not None][::-1]
+
+
+def touchdown_points(track):
+    """Ground points after the last airborne one — the landing roll and taxi,
+    nearest-to-touchdown first. Empty when the track ends in the air (FR24
+    lost the aircraft): then nothing is known about where it landed."""
+    return _ground_after_flight(track, last=True)
+
+
+def liftoff_points(track):
+    """Ground points before the first airborne one — take-off roll first."""
+    return _ground_after_flight(track, last=False)
+
+
 def compute_stats(flight):
     """Stats dict from a playback flight dict (needs a non-trivial track)."""
     track = flight.get("track") or []

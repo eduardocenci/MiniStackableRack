@@ -78,8 +78,22 @@ marca `takeoff:<id>` com `_claim()` atômico — nunca dois anúncios.
    (41f01799 SOD→BNU saiu sem aeroporto de chegada). `_fill_airports` copia o
    lado inteiro da lista **só quando o playback não o tem** — nunca
    sobrescreve. Vale para o relatório e para a varredura; consulta à lista que
-   falha não bloqueia o envio. Sem destino em nenhuma das fontes → fica
-   desconhecido (sem inferência pelo último ponto — decisão Eduardo 2026-10-02).
+   falha não bloqueia o envio.
+   **Aeródromo pelo solo** (pedido Eduardo 2026-10-16): ainda sem o lado →
+   `airports.at_ground` nomeia o aeródromo onde o avião foi **visto no
+   chão** — corrida de pouso/táxi depois do último ponto em voo (destino) ou
+   corrida de decolagem antes do primeiro (origem) — a ≤ 4 km
+   (`AIRPORT_MATCH_KM`). 42226758 (15/10) NVT→?: o FR24 nunca fechou o voo
+   (status "Unknown", sem destino) e o grupo recebeu "pousou em ?"; o
+   rollout foi a 1,2 km da pista de SBPA. Track que termina **no ar** (FR24
+   perdeu o avião) continua "destino desconhecido" — a regra de 2026-10-02
+   (sem palpite pelo último ponto) vale para esse caso. Fonte: OurAirports
+   (`airports.csv`, domínio público, inclui pistas privadas da ANAC), baixado
+   para `/data/airports.csv` (só aeródromos, ~4 MB) na partida e renovado a
+   cada 30 dias; aeroporto já presente no flight log usa o nome/cidade do
+   FR24 de lá; sem o arquivo, o próprio flight log é o gazetteer. Sem
+   destino e sem a corrida de pouso no playback ainda → o relatório espera
+   (até 3 tentativas) o FR24 finalizar o track.
 3. Calcula: altitude de cruzeiro e velocidade de cruzeiro (**média no trecho
    contíguo estabilizado** a ≥95 % da altitude máxima), velocidade máxima,
    duração e distância da rota, e monta a legenda inteira a partir do playback.
@@ -110,7 +124,26 @@ Endpoints: `POST /report` (`{"flight_id", "direction", "test", "force",
 antes o cartão de decolagem — na mesma thread, em ordem; `sim:true` reconstrói
 um voo já concluído: decolagem no instante do wheels-up, em voo truncado em
 T+10, sem o destino do FR24 em retrospecto), `POST /backfill`, `GET /flights`,
-`GET /health`, `GET /charts/<nome>.png`.
+`GET /messages` (log de envios, `?flight=<id>`), `GET /health`,
+`GET /charts/<nome>.png`.
+
+## Dedupe — uma mensagem por etapa por voo (2026-10-17)
+
+Chaves `takeoff:<id>`, `enroute:<id>` e `report:<id>` (pouso) na tabela
+`claims` do `flights.db`: `db.claim()` é um único `INSERT OR IGNORE` na chave
+primária — exatamente um caminho vence (HA, live watch, watch da lista,
+varredura), entre threads **e** restarts. O pouso é reivindicado logo antes do
+envio e devolvido se o envio falhar antes de sair algo; `test`/`force` não
+reivindicam. Os watches agendam **um** job de T+10 por voo
+(`_schedule_enroute`).
+
+**Por quê**: de 12 a 16/10 todo cartão "em voo" saiu **duas vezes**. O
+`/data/last_reported` antigo era ler-depois-gravar sem trava em
+`_run_enroute`, e até quatro threads dormiam até o mesmo T+10 (thread do HA,
+live watch e uma a cada poll de 5 min do watch da lista) — duas acordavam no
+mesmo segundo e passavam. Em 12/10 a varredura e o live watch mandaram o
+pouso com 2 s de folga. (O arquivo também só olhava as últimas 20 linhas.) Na
+partida o arquivo é importado para `claims` e renomeado `.imported`.
 
 ## Update em voo (T+10 da decolagem; T+19 saindo da região de SP)
 
@@ -131,7 +164,7 @@ agora (METAR)` traz, por destino, a condição no destino (via
 aviationweather.gov, sem chave; aeroporto sem METAR usa a estação mais
 próxima, anotada — SSBL→SBNF) e, resumida, a condição *em rota* (estação mais
 próxima do ponto médio restante). Meteo é best-effort: falha derruba só o
-bloco, nunca o update. Dedupe por `enroute:<id>`; teste com voo já concluído: `sim:true`
+bloco, nunca o update. Dedupe por `enroute:<id>` (ver Dedupe); teste com voo já concluído: `sim:true`
 trunca o trail nos primeiros `delay_s` (10 ou 19 min).
 
 **T+10 medido no trail, não na lista** (2026-10-02): o "real departure" de
@@ -170,14 +203,15 @@ do HA consome a cada 10 s para a área) a cada `FAST_POLL_S` (30 s), reagindo
 às transições de `on_ground` como o HA faz: decolagem → texto na hora (origem
 ≠ `HOME_ICAO`/`HOME_IATA`; em BNU o HA anuncia) + update em voo agendado para
 T+10 da decolagem real; pouso (flip para solo, ou sumiço em voo confirmado
-pela chegada real na lista) → relatório completo imediato. Primeira visão em
+pela chegada real na lista **ou pela corrida de pouso no playback**) →
+relatório completo imediato. Primeira visão em
 pleno voo (restart no meio) não gera texto de decolagem falso (>15 min de
 partida) mas ainda agenda/manda o update em voo. A hora de decolagem usada
 aqui: transição solo→ar vista no feed → o próprio instante; primeira visão já
 em voo com a lista dizendo >15 min → confere o trail ao vivo antes de
 suprimir o texto (a lista pode trazer o horário do transponder no solo). Backups em camadas: watch
 via lista (`AIRBORNE_POLL_S`, 5 min) e a varredura (15 min). Claims
-(`takeoff:`/`enroute:<id>`) + um set de jobs em execução mantêm HA e watches
+(ver Dedupe) + um set de jobs em execução mantêm HA, watches e varredura
 mutuamente exclusivos por voo.
 
 ## Flight log (base histórica para comparações)
@@ -185,16 +219,28 @@ mutuamente exclusivos por voo.
 Todo voo completado do PS-VIS — **nas duas direções** — é gravado em
 `/data/flights.db` (SQLite): tabela `flights` (prefixo, rota com códigos e
 coordenadas dos aeroportos, horários programados/reais, duração, cruzeiro
-médio, máximos, distâncias) + `track_points` (o path exato: ts/lat/lon/
-altitude/velocidade/vspeed/heading ponto a ponto) + playback bruto gzipado em
-`/data/playbacks/<id>.json.gz`. Alimentação em duas vias: o próprio relatório
+médio, máximos, distâncias; `o_src`/`d_src` = de onde veio cada aeroporto —
+`fr24` playback, `list`, `touchdown`/`liftoff` pelo solo, NULL = gravado antes
+de 2026-10-17; `fr24_status` = status da lista, "Unknown" quando o FR24 nunca
+fechou o voo) + `track_points` (o path exato: ts/lat/lon/
+altitude/velocidade/vspeed/heading ponto a ponto) + `claims` (dedupe) +
+`messages` (**cada mensagem enviada**: hora, voo, tipo — `takeoff`,
+`takeoff-text`, `enroute`, `landing-1`/`-2`, `landing-legacy`,
+`landing-text` —, grupo, HTTP do WAHA, imagem, legenda) + playback bruto
+gzipado em `/data/playbacks/<id>.json.gz`. A linha do voo é um upsert que
+preserva horários programados e status que só a lista tinha.
+Alimentação em duas vias: o próprio relatório
 de pouso grava antes de enviar, e um **sync periódico** (`SYNC_INTERVAL_S`,
 **15 min**) varre a lista FR24 e grava **e reporta** qualquer voo concluído
 ainda não visto — é a captura universal: pouso do PS-VIS em **qualquer
 aeroporto** chega ao grupo em ≤15 min mesmo sem evento do HA (eventos só
 existem perto de Blumenau, ou onde for enquanto a aeronave estiver na lista
 tracked em memória do FR24). Só voos novos no banco são reportados — restart e
-backfill nunca geram spam. Todas as durações gravadas são wheels-up →
+backfill nunca geram spam. **Voos que o FR24 não fecha** (2026-10-17): sem
+chegada real na lista (42226758, status "Unknown" até hoje — só o live watch
+o pegou), a varredura também os pega quando não estão `live`, saíram há
+20 min–24 h e o playback mostra a corrida de pouso; voo que um job ao vivo já
+está reportando fica com o job. Todas as durações gravadas são wheels-up →
 wheels-down (ver Fluxo §3) — são a base das ETAs do update em voo e da linha
 `⏱️` do pouso. Recalcular o banco após mudar a regra: recomputar
 `report.compute_stats` sobre cada `/data/playbacks/<id>.json.gz` e dar
@@ -203,6 +249,23 @@ programados que só a lista tinha). Já comparado: duração vs média da rota.
 Objetivo futuro: cruzeiro mais baixo? desvio de rota significativo?
 
 APIs FR24 não-oficiais (as mesmas da integração HA) — sujeitas a mudança.
+
+## Diagnóstico (duplicata, pouso sem aeroporto, voo que não apareceu)
+
+- **O que foi enviado**: `GET /messages?flight=<id>` (log do tracker) — dois
+  `enroute` (ou `landing-1`) no mesmo voo = duplicata. O que o grupo de fato
+  tem: `GET /api/default/chats/<GROUP_JID>/messages?limit=200` no WAHA, de
+  dentro do container (que tem `WAHA_API_KEY`, `GROUP_JID` e a rede
+  `waha_default`).
+- **Quem disparou**: `docker logs psvis-tracker` — `live watch: …`,
+  `history sync: …`, `POST /report` (HA), `… already taken — skipping`.
+- **O voo existiu?** O FR24 (`flight/list.json`, ~7 dias) pode não fechar ou
+  nem registrar um voo. Contraprova independente: o histórico ADS-B dos
+  agregadores, sem chave — `https://globe.airplanes.live/globe_history/AAAA/MM/DD/traces/68/trace_full_e49768.json`
+  (também `globe.adsb.lol`, `globe.adsbexchange.com`, `globe.adsb.fi`;
+  `e49768` = hex Mode-S do PS-VIS; cabeçalho `Referer` do próprio site;
+  `alt` `"ground"` = no solo). Em 2026-10-17 confirmou os 4 trechos da semana
+  e que não houve pouso em Caxias do Sul (passou a 17 km de SBCX a 17.000 ft).
 
 ## Deploy
 
