@@ -37,6 +37,20 @@ Pedido Eduardo 27/08/2026. Roda em bnu (e não no ara Pi) porque o WAHA
 - A foto de hoje pode ainda estar subindo às 20:10 (Starlink lenta): o
   script tenta de novo a cada 3 min por até ~25 min; se faltar foto,
   manda aviso de falha no mesmo chat em vez de silêncio.
+- **Linha de cima sem as 3 fotos → recua até 7 dias** (desde 29/10/2026):
+  em 27/10 o barracão ficou sem energia no meio da sequência do pôr do sol
+  (só T−20 saiu, sem `Luminancia125`), e em 28/10 a grade não saiu porque
+  27/10 era a linha de base. Agora `make_grid_cells` recua dia a dia até
+  `BASELINE_BACK_DAYS` por um dia completo, a legenda ganha
+  `_linha de cima: 26/10 — 27/10 sem fotos no Drive_`, as etiquetas DD/MM
+  seguem o dia usado, e o SmokeTests recebe um ℹ️. Sem `Luminancia125`
+  num dia (seleção não rodou), cada célula tenta as janelas do pôr do sol
+  na ordem `FALLBACK_WINS` (T, T−10, T+10, T−20, T+20) — antes só `por-do-sol`.
+  Só "fotos de hoje faltando" continua a derrubar o produto (⚠️ no chat).
+- `--test … --as-of AAAA-MM-DD` finge que "hoje" é outro dia (só com
+  `--test`): serve para refazer uma grade perdida — a cópia no Drive
+  (`DiaDeTrabalho/<dia>.jpg`) é gravada mesmo em teste, o envio vai ao
+  `TEST_JID`. Usado em 29/10/2026 para refazer 27/10 e 28/10.
 - Última montagem enviada fica em `/tmp/ultima-comparacao.jpg` **dentro do
   container** (inspeção: `docker exec canteiro-sunset-compare ls -la /tmp`;
   some quando o container é recriado).

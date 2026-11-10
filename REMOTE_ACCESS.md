@@ -69,8 +69,9 @@ those names do not exist.
 |---|---|---|
 | `bnu_docker` | `10.1.1.126` | **LXC 101** — hosts waha, waha-listener, condfy-bridge, netoverview-agent, psvis-tracker, weather-fusion (`:8791`) |
 | `bnu_waha` / `bnu_listener` / `bnu_nta` | `10.1.1.126:3000/:8788/:5005` | the containers inside LXC 101 |
+| `mia_docker` | `192.168.2.23` | **LXC 102 on mia-proxmox** (2026-10-29). Hosts the `senior-*` stack: `senior-waha` (`:3000`), `senior-n8n` (`:5678`), `senior-painel` (`:8080`); `senior-postgres`, `senior-whisper`, `senior-mcp`, `senior-agente`, `senior-sync` have no published port. Shell: `devtool.py guest mia 102 "…"`. HTTP: `devtool.py lan mia 192.168.2.23 "curl …"`, or directly from the mia LAN (mia-desktop). See *MIA site specifics* |
 | `bnu_ollama` | `10.1.1.50:11434` | Ollama LXC 106 |
-| `bnu_frigate` | `10.1.1.160` | Frigate LXC 105 — *also* a tailnet node (`bnu-frigate`), so either route works. **REST API without auth at `http://bnu-frigate:5000/api`** (Frigate 0.17.1, used 2026-09-08 to find who held a tablet at the ARA canteiro): `/api/events?camera=canteiro&after=<epoch>&before=<epoch>&label=person` → `/api/events/<id>/snapshot.jpg?bbox=1&crop=0` (640×480, the *detect* substream); `/api/canteiro/recordings/<epoch, fractional ok>/snapshot.jpg` → **full-res 2304×1296** frame from the *record* stream (404 where nothing was recorded — recordings only exist around motion/alerts; `/api/canteiro/recordings?after&before` lists the 10 s segments); `/api/review?cameras=canteiro&after&before` (GenAI `metadata` was null). Fetch frames every 2–15 s in a 4-thread loop, tile them with PIL and read the sheet — the 15-min Drive timelapse almost never catches the moment |
+| `bnu_frigate` | `10.1.1.160` | Frigate LXC 105 — *also* a tailnet node (`bnu-frigate`), so either route works. **REST API without auth at `http://bnu-frigate:5000/api`** (Frigate 0.17.1, used 2026-09-08 to find who held a tablet at the ARA canteiro): `/api/events?camera=canteiro&after=<epoch>&before=<epoch>&label=person` → `/api/events/<id>/snapshot.jpg?bbox=1&crop=0` (640×480, the *detect* substream); `/api/canteiro/recordings/<epoch, fractional ok>/snapshot.jpg` → **full-res 2304×1296** frame from the *record* stream (404 where nothing was recorded — recordings only exist around motion/alerts; `/api/canteiro/recordings?after&before` lists the 10 s segments); `/api/review?cameras=canteiro&after&before` (GenAI `metadata` was null). Fetch frames every 2–15 s in a 4-thread loop, tile them with PIL and read the sheet — the 15-min Drive timelapse almost never catches the moment **Consumers of the canteiro events (2026-10-29)** — who to read before concluding from Frigate alone: `canteiro-alertas` on bnu-raspberrypi decides the truck TYPE (caçamba · munck · poliguindaste com caçamba (para retirar entulho) · carroceria · prancha · betoneira · bomba — V3 on recording frames since 29/10/2026 18:56) with the OpenAI Decisions API and posts one WhatsApp alert per truck — verdicts: `python scripts/devtool.py run bnu-raspberrypi "tail -5 /var/lib/canteiro-alertas/alertas.jsonl"`, runbook globalnet `docs/runbooks/canteiro-alertas.md` (globalnet#57, open); `canteiro-diario`, `canteiro-vigia` and HA `frigate_whatsapp.py` also read these events |
 | `bnu_zb` | `10.1.1.132` | SLZB-06 Zigbee gateway (same pattern at other sites) |
 | `bnu_nvr` | `192.168.0.22` | Hikvision NVR + 8 cameras |
 | `bnu_doorbell` | `10.1.1.65` | Hikvision doorbell (ISAPI) |
@@ -123,6 +124,28 @@ messages + 18 media pulled, group send path reachable). Note: paramiko key auth 
 `root@bnu-proxmox` is refused from this machine (`Authentication failed`) — the script
 falls back to `PROXMOX_PW` automatically; plain `ssh` in Git Bash is unaffected.
 
+**A standing consumer on mia-desktop (2026-10-30): the Claudinho runner**
+(`python -m canteiro.claudinho loop`, home-ara decision 0016, started at logon)
+polls the listener's `GET /pending?rule=caminhao` every 30 s through this same
+forwarder and starts it itself (`gitignore/claudinho/forwarder.log`) when
+neither the `.env` URL nor `127.0.0.1:18788` answers. That is the pattern for any
+listener rule whose consumer is off the bnu LAN: **poll, don't `notify_url`** —
+LXC 101 is not a tailnet node and cannot reach mia-desktop. Its answers go out
+through `127.0.0.1:13000` (WAHA `sendText` with `reply_to` = the listener's
+message id `true_<chat>_<key-id>`, verified 2026-10-30 in Casa SmokeTests).
+It runs as the Windows scheduled task **`Claudinho`** (at logon, registered
+2026-11-01 with Eduardo's OK): `pythonw.exe C:\Users\eduar\wt\claudinho-loop.pyw`,
+a local launcher that pins the code clone (`C:\Users\eduar\wt\ara-claudinho`) and
+`MSR_PARENT_REPO`. Is it alive? `gitignore/claudinho/heartbeat.json` (`ts` within
+30 s, `ok: true`, `pid`) and `Get-ScheduledTask Claudinho` (state `Running`). Restart
+with `Stop-ScheduledTask Claudinho; Start-ScheduledTask Claudinho`. Only one instance
+can run (it binds `127.0.0.1:18790`; a second one exits silently). The launcher
+sets `CLAUDINHO_MODO=live`: answers go straight to the obra group as a quoted
+reply from the first truck (Eduardo, 2026-11-01; the code default `sombra` sends
+to Casa SmokeTests). After changing the launcher or the clone, restart the task
+and check that the heartbeat `pid` changed: a Start right after a Stop can still
+find the lock held and exit, leaving the task `Ready` with nothing running.
+
 ### ARA (home build — dashboard site `home: true`, still not in devtool.py)
 
 `ara-raspberrypi2` is a tailnet node (the "computadorzinho" in the canteiro
@@ -133,10 +156,65 @@ shed): reach it with plain `ssh eduardocenci@ara-raspberrypi2`.
 node still sits offline in the tailnet. The successor joined as its own
 node, **`ara-raspberrypi2` (`100.65.218.33`)**, and every consumer was
 repointed the same day:
-- bnu go2rtc;
+- bnu go2rtc (since 2026-10-29 only `canteiro-sub`, plus `canteiro-alt-sub`
+  since 2026-11-04; the main stream is pulled by bnu `canteiro-hls`, see below);
 - the bnu canteiro-jobs env: `ARA_NTO_URL` and the watchdog's `ARA_HOST`;
 - globalnet `ARA_STARLINK_GRPC`, `architecture.yaml` and `app.py`;
 - HA `frigate_whatsapp.py`.
+
+**Shed power cuts (seen 2026-10-27 ~18:27 and 2026-10-28 ~07:21).** The
+Pi's journal is **volatile** (`/var/log/journal` exists but is empty,
+`journalctl --list-boots` lists only the current boot), so a reboot leaves
+no trace on the Pi beyond `uptime -s`. Signature in the container logs: an
+rclone `NOTICE: Time may be set wrong - time from "oauth2.googleapis.com"
+is -Nm… different` right after the restart (fake-hwclock restores the last
+hourly save, so the clock is minutes behind until NTP corrects it — the
+`canteiro-timelapse-clock-resync` unit then restarts the container). To tell
+a power cut from a Pi crash, read the Starlink dish and router uptimes
+through the relays, from the bnu vigia container (it has `grpcurl`):
+`docker exec canteiro-vigia grpcurl -plaintext -max-time 15 -d
+'{"get_status":{}}' ara-raspberrypi2:9200 SpaceX.API.Device.Device/Handle |
+grep uptimeS` (dish; `:9000` = router) — Pi, dish and router with the same
+uptime = the whole shed lost power (both dates above). A cut inside a
+sunrise/sunset sequence used to kill the day's photos and the next day's
+Dia de Trabalho grid; since 2026-10-29 the `canteiro-timelapse` container
+resumes the sequence on restart and the bnu grid falls back to an earlier
+baseline (see `scripts/raspberry-pi/ara-raspberrypi/timelapse/README.md`).
+
+**The camera drops its RTSP stream at the start of most PTZ excursions**
+(timelapse sequences 05:00–06:00 and 16:40–19:00 BRT). The relay logs
+`[path canteiro] [RTSP source] EOF` and reopens the camera 5 s later with
+a new RTP timestamp base (history: grep the raw relay json log as above;
+29/10 08:27:06Z, 08:37:06Z, 08:47:05Z; 28/10 21:09:42Z, 21:19:41Z). The
+timelapse grabs are unaffected (6 attempts). Until 2026-10-29 the bnu
+go2rtc pulled the main stream and swapped its producer under its
+consumers' sessions. That timestamp jump crash-looped the `/live` HLS
+muxer until the watchdog's auto-heal, 1–3 `🔧 Auto-heal do /live` pairs
+per sequence in Casa SmokeTests. Since then the main stream's single
+puller at bnu is `canteiro-hls` (mediamtx, `alwaysAvailable` with a
+"sem sinal" card), and go2rtc reads it from `127.0.0.1:8555`. Expect an
+EOF → `stream is online` pair in its log, 5–10 s apart, per excursion;
+the heal should stay silent. Do **not** add a second reader of the main
+stream from bnu: 1.4 Mbps per copy, and two copies stalled the Starlink
+upload on 2026-08-26. Details:
+`scripts/raspberry-pi/bnu-raspberrypi/docker/canteiro-hls/README.md`.
+**A NUL line in a json-file log blinds every forward read of it**, on any
+Pi that loses power or is hard-reset: `docker logs`, `docker logs --since …`
+and the Engine API `GET /containers/<name>/logs?since=…` stop at the first
+NUL-filled line (often silently returning nothing), while a small
+`--tail N` reads backwards from the end and works. Checked 2026-10-29 on
+the ara relay: 3 NUL lines (lines 7444, 12140, 74277 — the shed power
+cuts), forward reads stop at 2026-10-09 14:46, `--since 10m` → 0 lines,
+`--tail 50` → 50. On bnu, `docker logs canteiro-hls` had the same symptom
+from 2026-09-03 to 2026-10-29 (86 MB file still growing; the recreate of
+that day deleted it, so the NULs could not be confirmed). The
+canteiro-watchdog's crash counter reads that API with `since=`, so it was
+blind all that time; its heals came from the playlist test only. For
+history, `sudo grep -a` the file `/var/lib/docker/containers/<id>/<id>-json.log`
+(`<id>` from `docker inspect -f '{{.Id}}' <name>`); test a log with
+`sudo grep -a -c -P '\x00' <file>`. Recreating the container
+(`docker compose up -d --force-recreate`) starts a clean file.
+`docker logs go2rtc` on bnu reads normally.
 
 It was staged on the mia LAN (`ara-raspberrypi2.local` over mDNS there).
 - **SSH is key only.** Imager's public-key mode writes
@@ -171,7 +249,7 @@ on bnu-raspberrypi). `/api/presence?from=<ISO UTC>&to=<ISO UTC>` accepts **short
 
 | ARA LAN-only device | Address | What it is |
 |---|---|---|
-| Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by the `canteiro-relay` container on the Pi (`rtsp://ara-raspberrypi2:8554/canteiro`). Each lens also has a 640×480 H264 substream (`subtype=1`; channel 1's is relayed as `canteiro-sub` — the bnu Frigate detect feed since 2026-08-26). ONVIF **events work** (PullPoint, probed 2026-08-26): topics are motion/tamper/scene-change only — **no person/vehicle classification locally** (that stays in the Imou cloud/Mibo app; CGI remains 401) |
+| Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by the `canteiro-relay` container on the Pi (`rtsp://ara-raspberrypi2:8554/canteiro`). Each lens also has a 640×480 H264 substream (`subtype=1`; channel 1's is relayed as `canteiro-sub` — the bnu Frigate detect feed since 2026-08-26; channel 2's as `canteiro-alt-sub` → bnu go2rtc `canteiro_fixa_sub` → **Frigate camera `canteiro_fixa`** (detect 5 fps, since 2026-11-04 — the FIXED lens, aimed at the path vehicles take in; its HEVC main, relayed as `canteiro-alt` → bnu go2rtc `canteiro_fixa`, is that camera's **record** feed since 2026-11-05 — the second 24/7 main stream over the uplink, see "Canteiro uplink" below). No third stream (`subtype=2` → 404, probed 2026-11-04); ONVIF `GetVideoEncoderConfigurationOptions` caps the substreams at 640×480 and lists 1280×720/1920×1080/2304×1296 for the mains (`BitrateLimit` 1280 kbps), so a higher-res fixed feed means the main stream, not a bigger substream. ONVIF **events work** (PullPoint, probed 2026-08-26): topics are motion/tamper/scene-change only — **no person/vehicle classification locally** (that stays in the Imou cloud/Mibo app; CGI remains 401) |
 | Starlink router | `192.168.1.1` | house LAN gateway (DHCP for the whole `192.168.1.0/24`). **Local gRPC API works** (`192.168.1.1:9000`, reflection on): `grpcurl -plaintext -d '{"wifi_get_clients":{}}' 192.168.1.1:9000 SpaceX.API.Device.Device/Handle` → associated clients with **name+MAC+IP** (what the app shows; `wifi_set_client_given_name` also exists). No local roster of DISCONNECTED clients (that list lives in the Starlink cloud — probed 2026-08-26). `grpcurl` v1.9.1 installed at `/usr/local/bin` on the Pi; the `starlink-names` container syncs these names into netoverview nicknames every 5 min. **Relayed onto the tailnet as `ara-raspberrypi2:9000`** by the `router-proxy` socat container (since 2026-10-22, twin of `starlink-proxy`): every `CLIENT` entry carries **`associatedTimeS`** (seconds since it joined the Wi-Fi, firmware apiVersion 132), so `now − associatedTimeS` pins the second a phone connected — the signal `canteiro-vigia` on bnu-raspberrypi uses to arm itself (Wi-Fi empty of people) and to judge each detection; the 5-min netoverview ARP scan is only its fallback |
 | Starlink dish | `192.168.100.1` | behind the router (any LAN client reaches it). **Local gRPC API works** (`192.168.100.1:9200`, plaintext, no auth, reflection on — probed 2026-08-30): `get_status` = instantaneous down/uplink throughput, pop latency, obstruction, alerts; `get_history` = 900 s of 1 Hz ring buffers (throughput, latency, drop rate, **`powerIn` watts**) + outage event log. **Relayed onto the tailnet as `ara-raspberrypi2:9200`** by the `starlink-proxy` socat container (since 2026-08-30) — globalnet reads the ARA live WAN ▼▲ + dish ⚡ from it. Same `Device/Handle` service as the router, different RPCs |
 
@@ -191,6 +269,36 @@ on bnu-raspberrypi). `/api/presence?from=<ISO UTC>&to=<ISO UTC>` accepts **short
 > wiped from the bnu DB (29/08 canteiro-jobs build blip); bg/fln were
 > clean; mia was offline 31/08 — if its dashboard ever shows `172.17.0.x`,
 > delete the rows the same way.
+
+#### Canteiro uplink — what it really carries and how to measure it (2026-11-05)
+
+Everything the obra sends to bnu rides **Tailscale via DERP São Paulo**: `tailscale
+ping bnu-raspberrypi` from ara (and the reverse) ends in "direct connection not
+established" although both `tailscale netcheck`s say UDP ok, `MappingVariesByDestIP:
+false`, no PortMapping (no UPnP on either router). So the camera streams are TCP
+(RTSP) inside WireGuard inside the DERP TCP/TLS connection, over Starlink — stalls
+of a few seconds are normal (~2 EOF/online pairs per hour in `docker logs
+canteiro-hls` on bnu, 0.8–2.2 % TCP retransmits on the relay's reader sockets) and
+the relay used to discard frames on them ("reader is too slow" — 224 lines on
+2026-11-04 with ONE main stream, peaks at 05h and 12h UTC; `writeQueueSize: 2048`
+since 2026-11-05 rides out ~13 s). Measured 2026-11-05 ~00:00 BRT, streams running:
+
+| What | How | Result |
+|---|---|---|
+| Dish raw upload | on ara: `head -c 60000000 /dev/urandom > /tmp/up.bin; curl -s -o /dev/null --max-time 12 -w '%{speed_upload}' -T /tmp/up.bin https://speed.cloudflare.com/__up` | 0.99 MB/s ≈ **8 Mbps** on top of the streams |
+| Path to bnu (DERP) | sink on bnu `python3 /tmp/listener.py` (accept + count bytes on :5299), 10 s `socket.send` loop from ara | **3.4–3.7 Mbps** spare on top of the 1.9 Mbps the streams used |
+| Per-reader TCP health | on ara: `ss -tin state established '( sport = :8554 )'` (rtt, `retrans:x/total`, `unacked`, `cwnd`, `delivery_rate`) | rtt 50–55 ms, retrans 0.8–2.2 % |
+| Dish telemetry | `grpcurl -plaintext -d '{"get_status":{}}' localhost:9200 SpaceX.API.Device.Device/Handle` (`uplinkThroughputBps`, `popPingLatencyMs`, `popPingDropRate`, `alerts` — `lowerSignalThanPredicted` has been on); `get_history` = 900 s of 1 Hz ring buffers | uplink 1–6 Mbps samples, ping 20–37 ms, drop 0 |
+| Stream bitrates | bnu: `curl -s http://127.0.0.1:1984/api/streams` twice, Δ`bytes_recv` per producer | PT main 1.28, fixed main 1.40, subs 0.16–0.17 Mbps |
+| Continuous sampler | ara `~/uplink-monitor/uplink_monitor.py` (nohup, 10 s rows → `uplink.csv`: dish up/down/ping/drop/alerts, `tailscale0`/`wlan0` Mbps, load, relay discards since last row, per-reader rtt/retrans/unacked); `uplink_report.py <csv> <split ISO UTC>` = before/after stats | tunnel 1.9 → 3.2 Mbps mean (p95 3.8) in the first hour after the second main (03:03 UTC), 0 relay discards; 13 unstable min after the restarts, then clean |
+
+Levers, in order, if two mains prove too much for the DERP path: a direct tailnet path
+(fixed `tailscaled --port` on bnu-raspberrypi + UDP port-forward on the bnu router —
+the dish has ~2× the headroom the DERP path shows); lower the fixed lens' main
+bitrate via ONVIF (`SetVideoEncoderConfiguration`, both channels sit at the 1280 kbps
+cap); a Starlink plan with more **upload** (download is irrelevant: 0.3 Mbps used).
+`speed.cloudflare.com` and the TCP sink test saturate the uplink for ~10 s — run
+them at night.
 
 ### BG site specifics (learned 2026-10-29)
 
@@ -275,6 +383,28 @@ on bnu-raspberrypi). `/api/presence?from=<ISO UTC>&to=<ISO UTC>` accepts **short
   fixed (`tailscale set --accept-dns=false` + a real nameserver, or a global
   nameserver in the tailnet DNS settings), download on **mia-raspberrypi**
   (same LAN, DNS fine) and push from there.
+- **mia-docker = LXC 102, `192.168.2.23`, LAN-only (created 2026-10-29).**
+  It is the Docker host for the `senior-*` containers (compose project
+  `/opt/senior`, folder `scripts/proxmox/docker/mia-docker/`). It is **not** a
+  tailnet node. Verified ways in, 2026-10-29:
+  - shell: `python scripts/devtool.py guest mia 102 "docker ps"` (`pct exec`
+    through mia-proxmox; detach anything slower than about 1 min);
+  - HTTP from anywhere on the tailnet: `python scripts/devtool.py lan mia 192.168.2.23
+    "curl -sS http://192.168.2.23:3000/ping"` → `200`;
+  - HTTP from the mia LAN: mia-desktop reaches `http://192.168.2.23:3000/`
+    directly. The WAHA dashboard is at `/dashboard` (Basic auth `admin` /
+    `MIA_SENIOR_WAHA_DASHBOARD_PASSWORD`; `/api/*` needs `X-Api-Key:
+    MIA_SENIOR_WAHA_API_KEY`).
+  - Files in or out: stage through mia-proxmox (`devtool.py push
+    mia-proxmox …`, then `pct push 102 …`).
+
+  **bnu-raspberrypi, and therefore the central globalnet, cannot reach
+  it:** `ip route get 192.168.2.23` goes via the bnu EdgeRouter to the WAN,
+  and ping and HTTP time out. The dashboard monitors the LXC through
+  netoverview on mia-raspberrypi (MAC `bc:24:11:47:8c:ff`) and the PVE API
+  (vmid 102). The static `.23` is set in the LXC config and sits outside the
+  UCG pool, but has **no UCG reservation yet** (to do). Inside the LXC,
+  tailnet names do not resolve, the same as on bnu LXC 101.
 - **mia HA cannot originate connections to the tailnet** (Tailscale add-on is
   inbound-only): `curl http://100.x…` from inside HA times out. When mia HA
   must consume a tailnet service, forward it onto the rack LAN from
@@ -1123,14 +1253,16 @@ python scripts/devtool.py guest bnu 103 "Get-Process"    # VM   -> QEMU guest ag
   push` + `pct push`). Used for the bnu Frigate config — see
   `scripts/proxmox/frigate/bnu-frigate/README.md`.
 - Docker containers live inside LXC 101 on bnu (`waha`, `waha-listener`,
-  `condfy-bridge`, `netoverview-agent`) and on each Raspberry Pi.
+  `condfy-bridge`, `netoverview-agent`), inside LXC 102 on mia (the `senior-*` stack,
+  since 2026-10-29: `devtool.py guest mia 102 "docker ps"`)
+  and on each Raspberry Pi.
 
 Current guest inventory (2026-07-30):
 
 | Rack | VMs | LXCs |
 |---|---|---|
 | bnu | 100 homeassistant, 102 ubuntu (stopped), 103 Win11 | 101 docker, 104 watchyourlan (stopped), 105 frigate, 106 ollama (stopped) |
-| mia | 100 mia-homeassistant, 101 Win11 | — |
+| mia | 100 mia-homeassistant, 101 Win11 | 102 mia-docker (added 2026-10-29) |
 | bg | 100 haos, 101 ubuntu, 103 Win11 | 102 plex |
 | fln | 100 haos, 103 Win11 | — |
 
@@ -1152,6 +1284,9 @@ these hold live copies): `bnu-raspberrypi:~/globalnet/.env`, HA `secrets.yaml`,
 the NAS compose `.env` + `copyparty.local.conf`, on LXC 101
 `/opt/waha/docker-compose.yml` (hardcoded), `/opt/waha-listener/.env`,
 `/opt/condfy-bridge/.env`, `/opt/psvis-tracker/.env`, `/opt/weather-fusion/.env`,
+on mia LXC 102 `/opt/senior/.env` (the same `MIA_SENIOR_*` names as the
+root `.env`; the WAHA and Postgres values were generated on the LXC, so on
+drift the LXC wins — `scripts/proxmox/docker/mia-docker/senior/README.md`),
 `bnu-raspberrypi:~/canteiro-jobs/env/canteiro-{watchdog,presenca,sunset-compare}.env`
 (WAHA creds + group JIDs for the canteiro job containers — moved from
 `/etc/canteiro-*.env` on 2026-08-29; the `/etc` copies linger only as
@@ -1255,6 +1390,7 @@ Closed on 2026-07-30: `FLN_HA_URL`/`FLN_HA_TOKEN` added (fleet test is now
 | Fleet dashboard, per-node runbooks, `architecture.yaml` | `globalnet/` |
 | Synology/DSM specifics, Copyparty | `scripts/synology/README.md` |
 | WhatsApp gateway, listener, condfy bridge | `scripts/proxmox/docker/bnu-docker/*/README.md` |
+| mia Docker LXC 102 (senior-* stack) | `scripts/proxmox/docker/mia-docker/README.md`, `…/senior/README.md` |
 
 ## Paper printers (recorded 2026-09-09 — Diário de Obra print leg)
 

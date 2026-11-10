@@ -138,6 +138,35 @@ ficam deslocados pelo salto. Proteção no host:
 espera `time-sync.target` real (`systemd-time-wait-sync` habilitado) e
 reinicia o container, que recalcula a agenda.
 
+## Retomada da sequência após reinício do container (desde 29/10/2026)
+
+Lição de 27/10/2026: o barracão ficou sem energia ~18:27 (Pi, antena e
+roteador Starlink reiniciaram juntos — `uptimeS` do dish e do roteador
+iguais ao do Pi), a sequência do pôr do sol morreu depois da primeira janela
+(T−20) e **nada a retomou**: sem as outras janelas não houve `luminancia`
+→ sem `Luminancia125` de 27/10 → a grade Dia de Trabalho não saiu em 27/10
+(fotos de hoje faltando) **nem em 28/10** (27/10 é a linha de base). Nova
+queda em 28/10 ~07:21, mesma assinatura. O journal do ara é volátil (só o
+boot atual) — a causa se lê no uptime dos equipamentos do barracão, não no
+Pi.
+
+Correção no [`entrypoint.sh`](../docker/canteiro-timelapse/entrypoint.sh):
+na partida, `timelapse-capture inprogress` diz se uma sequência estaria
+rodando agora (05:00 → nascer+20+15 min; 16:40 → pôr+20+15 min). Se sim, o
+upload-on-start **deixa os quadros solares de hoje no outbox**
+(`--exclude /posicao*/*/<hoje>_*.jpg`, idem `lentefixa`) e relança
+`timelapse-capture <seq> --resume` em segundo plano (`( … & )`, duplo fork
+para o tini colher o processo). A retomada pula as janelas cuja `posicao1`
+de hoje já está no outbox ("já capturada antes do reinício"), registra como
+falha (alerta) as que a queda realmente perdeu (>5 min de atraso) e termina
+com a `luminancia` vendo o dia inteiro. Um `flock` em
+`/var/lib/timelapse/state/<seq>.lock` impede o cron e uma retomada de
+rodarem juntos (o lock morre com o processo — nada fica preso após
+restart). O reinício do `clock-resync` após o NTP passa pelo mesmo caminho:
+a primeira partida (relógio atrasado) é morta pelo restart e a segunda
+retoma com o relógio certo. Teste rápido: `docker exec canteiro-timelapse
+timelapse-capture inprogress` (vazio fora dos spans).
+
 ## Operação
 
 ```bash
@@ -309,6 +338,25 @@ REPOSICIONADA, gravar novos dourados (frames bons de posicao1 nas três
 iluminações) em `/var/lib/timelapse/ref/posicao1-<tag>.jpg` +
 `rclone sync` para `ceuazul:Timelapse/ref/` — e conferir se a `ROI` do
 pilar ainda vale.
+
+**A obra também envelhece as referências** (lição 29/10/2026): com as
+refs de 31/08–03/09 (fundação, lona preta, formas) e a cena de outubro
+(pilares de aço, formas da laje, cobertura sobre a câmera), "medição
+inválida (refs discordam / PSR baixo)" virou rotina — ~50 ocorrências em
+14 dias, `homing não reencontrou o pilar` quase toda sequência, `rc=1`
+com alerta em 27, 28 e 29/10 mesmo com todas as fotos tiradas, e a
+`por-do-sol-mais-10min` de 28/10 (a escolhida pela luminância!) saiu com
+a câmera inclinada para cima, sem âncora. Renovado em 29/10/2026 com
+frames recentes medidos **dentro da tolerância contra as refs antigas**
+(pan +12, tilt +4…+48 px — mutuamente consistentes): `dawn` = nascer
+29/10 05:26, `dawn2` = nascer 27/10 05:28, `dusk` = pôr 28/10 18:29,
+`dusk2` = T−10 28/10 18:19 (ainda de dia), `night` = T+20 26/10 18:48;
+as antigas em `ref/archive/` (local) e `ceuazul:Timelapse/ref/archive/`
+(renomeadas `2026-09-…` para não casarem o `posicao1-*.jpg` que o
+`pilar_align` do bnu baixa). Regra prática: quando "medição inválida"
+voltar a aparecer em mais de uma janela por sequência, renovar as cinco
+com frames da semana medidos ≈0 — a ROI do pilar em Y do galpão segue
+válida enquanto o poste estiver em quadro.
 
 Premissas a vigiar nas primeiras semanas: (1) enquadramento estável entre
 dias em `posicao1/` — se variar, o guard-return não está confiável e o

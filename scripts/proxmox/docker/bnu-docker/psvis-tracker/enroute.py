@@ -1,4 +1,4 @@
-"""T+10 en-route update after a take-off.
+"""En-route update after a take-off — T+10, or T+19 from the São Paulo region.
 
 FR24 rarely knows the destination at departure, so this publishes what CAN be
 known ten minutes in: the cardinal heading, the route flown so far (map), and
@@ -7,12 +7,13 @@ arrival estimates for previously-seen destinations that lie along the heading
 """
 import logging
 import math
+import os
 from datetime import datetime
 
 import db
 import maptile
 import metar
-from report import TZ_LOCAL, _fmt_int_br
+from report import TZ_LOCAL, _fmt_int_br, _haversine_km
 
 log = logging.getLogger("psvis.enroute")
 
@@ -21,6 +22,33 @@ CARDINALS = [
     "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
 ]
 HEADING_TOLERANCE_DEG = 45
+
+# ── when the update goes out, in seconds after wheels-up ─────────────────────
+# FR24 rarely knows the destination at departure, so the update waits until
+# the aircraft is likely ON COURSE — the history-based estimate only sees
+# airports within HEADING_TOLERANCE_DEG of the current heading. 10 min is
+# enough almost everywhere. Departures from the São Paulo terminal area are
+# the exception: dense traffic and mandatory corridors keep the aircraft off
+# its track for longer. SBJD→SSBL on 2026-11-09 (428053a5) was still heading
+# WEST at T+10 (284°, 81° off Blumenau → "rota nova", no ETA) and only held a
+# course towards it from T+15.6 min; earlier SP departures turned by T+7
+# (SBMT 13/10) and T+0 (SDCO 02/10). 15.6 min + 20 % margin → 19 min for any
+# origin within SP_REGION_RADIUS_KM of São Paulo (decisão Eduardo 2026-11-09).
+ENROUTE_DELAY_S = int(os.environ.get("ENROUTE_DELAY_S", "600"))
+ENROUTE_DELAY_SP_S = int(os.environ.get("ENROUTE_DELAY_SP_S", "1140"))
+SP_REGION_LAT, SP_REGION_LON = -23.55, -46.63  # São Paulo: SBMT, SBSP, SBJD, SBKP, SDCO, SBSJ…
+SP_REGION_RADIUS_KM = float(os.environ.get("SP_REGION_RADIUS_KM", "100"))
+
+
+def delay_s(origin=None):
+    """Seconds after wheels-up to send the update for a flight leaving
+    `origin` (an airport side dict with lat/lon; unknown → the default)."""
+    lat, lon = (origin or {}).get("lat"), (origin or {}).get("lon")
+    if lat is None or lon is None:
+        return ENROUTE_DELAY_S
+    if _haversine_km(lat, lon, SP_REGION_LAT, SP_REGION_LON) <= SP_REGION_RADIUS_KM:
+        return ENROUTE_DELAY_SP_S
+    return ENROUTE_DELAY_S
 
 
 def _bearing(lat1, lon1, lat2, lon2):

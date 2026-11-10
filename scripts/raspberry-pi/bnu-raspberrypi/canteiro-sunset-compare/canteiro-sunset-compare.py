@@ -72,7 +72,15 @@ TEST_JID     = os.environ.get("TEST_JID", GROUP_JID)
 REMOTE       = os.environ.get("RCLONE_REMOTE", "ceuazul:Timelapse")
 POSITIONS    = ["posicao3", "posicao1", "posicao2"]   # ordem das colunas
 LUM_FOLDER   = "Luminancia125"   # janela escolhida por luminancia (ara: timelapse-capture luminancia)
-FALLBACK_WIN = "por-do-sol"      # quando a selecao nao rodou naquele dia
+# Sem Luminancia125 naquele dia (a selecao nao rodou — sequencia morta por
+# queda de energia, 27/10/2026): tenta as janelas do por do sol nesta ordem.
+FALLBACK_WINS = ["por-do-sol", "por-do-sol-menos-10min", "por-do-sol-mais-10min",
+                 "por-do-sol-menos-20min", "por-do-sol-mais-20min"]
+FALLBACK_WIN = FALLBACK_WINS[0]
+# Linha de cima (baseline) sem as 3 fotos: recua dia a dia ate este limite por
+# um dia completo, em vez de nao emitir a grade (28/10/2026 nao saiu porque
+# 27/10 nao tinha fotos; a legenda diz qual dia foi usado).
+BASELINE_BACK_DAYS = 7
 CELL_W       = 800
 RETRIES      = 8      # fotos de hoje: espera o upload das 20:00 até ~20:35
 RETRY_WAIT_S = 180
@@ -256,26 +264,55 @@ def month_caption_range(today):
     return f"26/{prev_last:%m} - 25/{today:%m}"
 
 
+def fetch_day(day, tmp, retries):
+    """3 celulas (p3,p1,p2) de um dia: Luminancia125, senao a primeira janela
+    do por do sol que existir. Devolve (cells, faltam, fallback)."""
+    cells, faltam, fallback = [], [], []
+    for pos in POSITIONS:
+        f = rclone_fetch(pos, day, tmp, retries)
+        if not f:
+            for w in FALLBACK_WINS:
+                f = rclone_fetch(pos, day, tmp, 1, window=w)
+                if f:
+                    fallback.append(f"{pos} {day:%d/%m} ({w})")
+                    break
+        if f:
+            cells.append(f)
+        else:
+            faltam.append(f"{pos} {day:%d/%m}")
+    return cells, faltam, fallback
+
+
 def make_grid_cells(day_top, day_bottom, tmp, retries_bottom):
     """6 celulas na ordem linha1(p3,p1,p2)+linha2(idem). Fonte Luminancia125;
-    sem ela naquele dia, cai para por-do-sol (listado em `fallback`)."""
-    cells, faltam, fallback = [], [], []
-    for day, retries in ((day_top, 1), (day_bottom, retries_bottom)):
-        for pos in POSITIONS:
-            f = rclone_fetch(pos, day, tmp, retries)
-            if not f:
-                f = rclone_fetch(pos, day, tmp, 1, window=FALLBACK_WIN)
-                if f:
-                    fallback.append(f"{pos} {day:%d/%m}")
-            if f:
-                cells.append(f)
-            else:
-                faltam.append(f"{pos} {day:%d/%m}")
-    return cells, faltam, fallback
+    sem ela naquele dia, cai para a primeira janela do por do sol que existir
+    (listado em `fallback`). Linha de cima incompleta: recua ate
+    BASELINE_BACK_DAYS por um dia com as 3 fotos. Devolve
+    (cells, faltam, fallback, dia_de_cima_usado)."""
+    top_used, top_cells, top_fb, first_faltam = None, [], [], []
+    d = day_top
+    for _ in range(BASELINE_BACK_DAYS + 1):
+        cells, faltam, fb = fetch_day(d, tmp, 1)
+        if not faltam:
+            top_used, top_cells, top_fb = d, cells, fb
+            break
+        if d == day_top:
+            first_faltam = faltam
+        print(f"linha de cima: {d:%d/%m} incompleta ({', '.join(faltam)}), recuando um dia")
+        d -= timedelta(days=1)
+    if top_used is None:
+        return [], first_faltam, [], day_top
+    bot_cells, bot_faltam, bot_fb = fetch_day(day_bottom, tmp, retries_bottom)
+    return top_cells + bot_cells, bot_faltam, top_fb + bot_fb, top_used
 
 
 def main():
     argv = sys.argv[1:]
+    as_of = None   # --as-of YYYY-MM-DD: "hoje" para testes/backfill (so com --test)
+    if "--as-of" in argv:
+        i = argv.index("--as-of")
+        as_of = date.fromisoformat(argv[i + 1])
+        argv = argv[:i] + argv[i + 2:]
     test = bool(argv) and argv[0] == "--test"
     rest = argv[1:] if test else []
     which = rest[0] if rest and rest[0] in ("all", "daily", "semana", "mes") else None
@@ -283,8 +320,8 @@ def main():
     chat = (chat_arg or TEST_JID) if test else GROUP_JID
     prefix = "[TESTE] " if test else ""
     now = datetime.now(TZ)
-    today = now.date()
-    wd = now.weekday()
+    today = as_of if (as_of and test) else now.date()
+    wd = today.weekday()
 
     # (nome, dia_de_cima, legenda, pasta de arquivo no Drive)
     products = []
@@ -311,11 +348,19 @@ def main():
             print("align: refs indisponiveis, grades sairao sem alinhamento", file=sys.stderr)
         for nome, day_top, caption, pasta in products:
             titulo = caption.split("*")[1]
-            cells, faltam, fallback = make_grid_cells(day_top, today, tmp, 1 if test else RETRIES)
+            cells, faltam, fallback, top_used = make_grid_cells(
+                day_top, today, tmp, 1 if test else RETRIES)
+            if top_used != day_top:
+                caption += (f"\n_linha de cima: {top_used:%d/%m} — "
+                            f"{day_top:%d/%m} sem fotos no Drive_")
+                st = send_text(TEST_JID, prefix + f"ℹ️ {titulo}: {day_top:%d/%m} sem as 3 fotos "
+                               f"no Drive — linha de cima = {top_used:%d/%m}.")
+                print(f"{nome}: baseline {day_top:%d/%m} -> {top_used:%d/%m}, aviso HTTP {st}")
+                day_top = top_used
             if fallback:
                 st = send_text(TEST_JID, prefix + f"ℹ️ {titulo}: sem {LUM_FOLDER} para "
-                               f"{', '.join(fallback)} — usei {FALLBACK_WIN}.")
-                print(f"{nome}: fallback {FALLBACK_WIN} em {', '.join(fallback)}, aviso HTTP {st}")
+                               f"{', '.join(fallback)} — usei a janela entre parenteses.")
+                print(f"{nome}: fallback de janela em {', '.join(fallback)}, aviso HTTP {st}")
             if faltam:
                 st = send_text(chat, prefix + f"⚠️ {titulo} não saiu — "
                                f"faltando no Drive: {', '.join(faltam)}.")

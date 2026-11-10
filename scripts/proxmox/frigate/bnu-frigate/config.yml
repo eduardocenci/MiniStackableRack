@@ -39,6 +39,11 @@ go2rtc: #
       - ffmpeg:rtsp://admin:<BNU_DOORBELL_PW>@10.1.1.65:554/Streaming/Channels/101#video=copy#audio=copy   # Before: rtsp://admin:<BNU_DOORBELL_PW>@10.1.1.65:554/Streaming/Channels/101
     canteiro: rtsp://10.1.1.123:8554/canteiro
     canteiro_sub: rtsp://10.1.1.123:8554/canteiro_sub
+    # fixed lens (channel 2): 640x480 H264 substream = detect of `canteiro_fixa` (2026-11-04);
+    # HEVC main = its record since 2026-11-05 (second 24/7 main stream over the Starlink uplink —
+    # measured attempt, see scripts/proxmox/frigate/bnu-frigate/README.md)
+    canteiro_fixa_sub: rtsp://10.1.1.123:8554/canteiro_fixa_sub
+    canteiro_fixa: rtsp://10.1.1.123:8554/canteiro_fixa
   # http://10.1.1.160:1984/stream.html?src=frente_campainha&src=frente_garagem&src=frente_overview&src=frente_pedestres&src=frente_principal&src=fundos_overview&src=lateral_direita&src=lateral_esquerda&mode=webrtc,mse,hls,mjpeg
 
 ffmpeg:
@@ -511,6 +516,60 @@ cameras:
           mencione isso (pode ser um falso positivo).
     motion:
       mask: 0.351,0.948,0,0.952,0.007,0.995,0.35,0.987
+      threshold: 30
+      contour_area: 7
+      improve_contrast: true
+  canteiro_fixa:
+    enabled: true
+    friendly_name: Canteiro ARA — lente fixa
+    # Second lens of the SAME iM9 (channel 2, FIXED — no auto-tracking), aimed since
+    # 2026-11-04 at the path vehicles take in: many only pass the PT lens and park out of
+    # its angle. Detect on its 640x480 H264 substream (relay `canteiro-alt-sub` on ara →
+    # go2rtc `canteiro_fixa_sub` on bnu); record on its HEVC main (relay `canteiro-alt` →
+    # go2rtc `canteiro_fixa`) since 2026-11-05 — the second 24/7 main stream over the
+    # Starlink uplink (~1.4 Mbps each; two mains stalled it on 2026-08-26, retried with
+    # measurements on 2026-11-05). If the uplink stalls again (relay logs "reader is too
+    # slow", camera_fps drops here), point `record` back at canteiro_fixa_sub.
+    # Consumers: canteiro-alertas (one truck episode across both lenses — home-ara 0010,
+    # adendo 04/11/2026); HA frigate_whatsapp.py treats it as an obra camera.
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/canteiro_fixa
+          input_args: preset-rtsp-restream
+          roles:
+            - record
+        - path: rtsp://127.0.0.1:8554/canteiro_fixa_sub
+          input_args: preset-rtsp-restream
+          roles:
+            - detect
+    detect:
+      width: 640
+      height: 480
+      # Passing vehicles: 5 fps (the PT lens runs the global 2) so a 2–3 s crossing still
+      # yields 10+ frames; 2 frames confirm an object. ~3 extra inferences/s on the CPU detector.
+      fps: 5
+      min_initialized: 2
+    objects:
+      track:
+        - person
+        - car
+        - bus
+        - motorcycle
+        # no `bicycle`: the workers' bike parks in this lens' foreground all day — a stationary
+        # bicycle object would keep one endless detection event (and its recording) open
+      filters:
+        car:
+          min_score: 0.5
+          threshold: 0.7
+          min_area: 800      # far-road traffic is tiny at 640x480; a truck on the path is > 20k px
+    live:
+      streams:
+        Lente fixa: canteiro_fixa_sub
+    review:
+      genai:
+        enabled: false       # per-event Ollama descriptions stay on the PT lens (same scene)
+    motion:
+      improve_contrast: true
 objects:
   track:
     - person

@@ -19,14 +19,17 @@ Root
     │   ├── homeassistant/      Home Assistant OS runs as a VM on Proxmox
     │   │   └── <site>-homeassistant/
     │   ├── docker/             Docker host on Proxmox — one folder per deployment, one subfolder per container
-    │   │   └── bnu-docker/     LXC 101: waha, waha-listener, condfy-bridge, netoverview-agent, psvis-tracker
+    │   │   ├── bnu-docker/     LXC 101: waha, waha-listener, condfy-bridge, netoverview-agent, psvis-tracker
+    │   │   └── mia-docker/     LXC 102 (192.168.2.23, LAN-only): senior/ = ONE compose project /opt/senior — senior-waha, -postgres, -n8n, -whisper, -mcp, -agente, -painel, -sync (senior-nocodb planned)
     │   ├── frigate/            Frigate NVR in an LXC (bnu: LXC 105)
     │   ├── ollama/             Ollama LLM host in an LXC (bnu: LXC 106)
     │   ├── plex/               Plex media server in an LXC (bg: LXC 102)
     │   └── win11/              Windows 11 VM (Tailscale node, e.g. bnu-win11) — folder not created yet
     ├── raspberry-pi/           Raspberry Pi — independent rack component (not a VM); runs Docker; serves as network monitoring node (device discovery, traffic analysis via ARP spoofing)
-    │   └── <site>-raspberrypi/
-    │       └── docker/         Docker deployments on that Pi (e.g. globalnet, netoverview)
+    │   ├── <site>-raspberrypi/
+    │   │   └── docker/         Docker deployments on that Pi (e.g. globalnet, netoverview)
+    │   ├── ara-raspberrypi/    Canteiro Pi of the ARA house build: docker/canteiro-relay (camera RTSP → tailnet), docker/canteiro-timelapse, ptz/, site-gate/, starlink-names/
+    │   └── bnu-raspberrypi/    The ARA canteiro JOBS run here (bnu holds the Frigate and the OpenAI-allowlisted IP): docker/canteiro-jobs = one image, services canteiro-alertas (Frigate vehicle events → OpenAI Decisions API → one WhatsApp alert per truck; truck TYPE = caçamba · munck · poliguindaste com caçamba (para retirar entulho) · carroceria · prancha · betoneira · bomba — V3 on recording frames since 29/10/2026 18:56; cars/vans learned as V-NNN — PR #45 merged 29/10; engine in home-ara#210 + gallery/V3 in PR #52), canteiro-diario, canteiro-presenca, canteiro-watchdog, canteiro-sunset-compare; docker/canteiro-vigia (empty-site watch), docker/canteiro-hls, docker/go2rtc. Since 2026-11-04 the iM9's FIXED lens is a second Frigate camera, `canteiro_fixa` (640×480 substream, 5 fps, relay `canteiro-alt-sub` → go2rtc `canteiro_fixa_sub`), aimed at the path vehicles take in; canteiro-alertas reads both lenses and keeps ONE episode per truck across them (`FRIGATE_CAMERAS=canteiro=10,canteiro_fixa=3`)
     └── synology/               Synology NAS — independent rack component (mia only)
         └── mia-synology/
             └── docker/         e.g. copyparty
@@ -59,11 +62,11 @@ Sequence on a code change:
 
 > `deploy_all.ps1` is for **first-time setup only** (installing Docker and dropping the compose file on a new Pi). Do not use it as a routine update mechanism — the cron handles that.
 
-### New Docker container — registration checklist
+### New container, service or automation — registration checklist
 
-Every Docker container is created through Claude, so this checklist **is** the
-gate: creating, renaming, or retiring a container on **any** host is not done
-until, in the same session:
+Every container, scheduled job or automation is created through Claude, so this
+checklist **is** the gate: creating, renaming, or retiring one on **any** host is
+not done until, in the same session:
 
 1. **Folder** — compose file + README under the host's folder per the
    hierarchy rule (e.g. `scripts/proxmox/docker/bnu-docker/<container>/`).
@@ -78,9 +81,28 @@ until, in the same session:
 5. **Ship** — push globalnet `main` (deploys dashboard + docs via DockerHub →
    Pi cron), then bump the globalnet submodule pointer in this repo.
 
+6. **Upstream pointer** — the README of every producer the new thing consumes
+   (Frigate, WAHA, Home Assistant, go2rtc…) names it as a consumer, and so does
+   the producer's row in `REMOTE_ACCESS.md`. A session that starts from the
+   camera must be led to the alert, not stop at the detector.
+7. **Vocabulary** — the runbook/README carries the pt-BR words a question would
+   use (caminhão, munck, caçamba, betoneira…), not only the English category
+   ("truck type"): this repo is searched by grep, and a feature whose docs lack
+   the words of the question does not exist for the next session.
+8. **Map** — the folder tree above names the container; if it touches the ARA
+   build, a row in `homes/ara/CLAUDE.md` → *How to find any fact*, same PR.
+9. **Merge** — code, decision and docs reach `main` in the same session (or the
+   same day): a container running live whose code sits on an unmerged branch is
+   an unfinished deploy. Precedent: `canteiro-alertas` live since 09/10/2026
+   with its code on `feat/canteiro-alertas` (PR #45) + home-ara#210 + globalnet#57, no pointer
+   from the Frigate docs and no row in the ARA find-table — on 29/10/2026 a
+   session answered "which trucks are recognised?" from Frigate alone and
+   never found it (decisão Eduardo 29/10/2026, home-ara decision 0015).
+
 The dashboard renders an unregistered container as a nameless italic row — no
-box, no health LED, no Docs button. Treat that row, or a failing `make fleet`,
-as an unfinished deploy, not cosmetics. (Details: `DOCS_WORKFLOW.md`.)
+box, no health LED, no Docs button. Treat that row, a failing `make fleet`, or a
+feature that `grep` cannot reach from the words of the question, as an
+unfinished deploy, not cosmetics. (Details: `DOCS_WORKFLOW.md`.)
 
 ## Credentials
 
@@ -109,7 +131,7 @@ python scripts/devtool.py guest bnu 101 "docker ps"   # inside an LXC/VM
 
 **Tailscale is the network layer.** Tailnet devices are nodes named exactly after their `<deployment>-<component>` name (e.g. `bnu-proxmox`, `mia-nas-ds918plus`). The machine Claude runs on is itself a tailnet node, so **those devices are directly reachable by their bare name** (MagicDNS) — no VPN setup, no port forwarding. Run `tailscale status` locally to list all nodes and their `100.x` IPs. Services bound to a device's Tailscale IP (e.g. Copyparty on the NAS) are reachable only through the tailnet, by design.
 
-**But not every device is on the tailnet.** The bnu docker LXC (`10.1.1.126` — waha, waha-listener, condfy-bridge, netoverview-agent, psvis-tracker), ollama, the Zigbee gateways, the Hikvision NVR and doorbell, and the routers are **LAN-only**: their bare names do not resolve. Reach them by hopping through the site's Proxmox host — `python scripts/devtool.py lan bnu 10.1.1.132 "curl -sS http://10.1.1.132/"`. Full list in `REMOTE_ACCESS.md` §2. Outside those devices, prefer tailnet names over LAN IPs in new work.
+**But not every device is on the tailnet.** The bnu docker LXC (`10.1.1.126` — waha, waha-listener, condfy-bridge, netoverview-agent, psvis-tracker), the mia docker LXC (`192.168.2.23` — the senior-* stack, LAN ports 3000/5678/8080; shell via `devtool.py guest mia 102`), ollama, the Zigbee gateways, the Hikvision NVR and doorbell, and the routers are **LAN-only**: their bare names do not resolve. Reach them by hopping through the site's Proxmox host — `python scripts/devtool.py lan bnu 10.1.1.132 "curl -sS http://10.1.1.132/"`. Full list in `REMOTE_ACCESS.md` §2. Outside those devices, prefer tailnet names over LAN IPs in new work.
 
 **Sites are `bnu`, `mia`, `bg`, `fln`** — four, not three. `fln` has no folders under `scripts/` yet, but it is a full rack in `.env`, `devtool.py` and `globalnet/architecture.yaml`.
 
