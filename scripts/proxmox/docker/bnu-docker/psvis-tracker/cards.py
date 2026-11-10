@@ -844,7 +844,8 @@ def takeoff_card(origin, dep_ts, track, fid, next_ts=None):
     2026-10-03): where it is going is the T+10 card's job — this one shows
     the departure, the weather there and when that update comes."""
     with _LOCK, matplotlib.rc_context({"font.family": _FAMILY}):
-        return _takeoff(origin, dep_ts, track or [], fid, next_ts or dep_ts + 600)
+        return _takeoff(origin, dep_ts, track or [], fid,
+                        next_ts or dep_ts + enroute.delay_s(origin))
 
 
 def _takeoff(o, dep, track, fid, next_ts):

@@ -3,7 +3,8 @@
 Container no LXC 101 (`10.1.1.126`, porta **8790**) que envia as mensagens do
 PS-VIS ao grupo WhatsApp **"Aeronave PS-VIS"** via WAHA (decisão Eduardo
 2026-08-29 — o grupo da família não recebe mais alertas de voo): **um cartão
-claro por etapa** (decisão Eduardo 2026-10-03) — decolagem, em voo (T+10) e
+claro por etapa** (decisão Eduardo 2026-10-03) — decolagem, em voo (T+10;
+T+19 saindo da região de SP) e
 pouso (2 imagens), cada um com a legenda completa em texto. Ver
 [Cartões](#cartões-decisão-eduardo-2026-10-03).
 
@@ -16,8 +17,8 @@ multi-thread). Opções A–E do redesign, todas adotadas:
 
 | Etapa | Quando | Cartão |
 |---|---|---|
-| Decolagem | wheels-up | chips (hora, origem, meteo com ícone, **próxima atualização ~T+10**) + mapa da região de saída com o avião no rumo inicial + painel do METAR (ícone, estação, hora da observação, temperatura, nuvens, vento, visibilidade, METAR cru). **Sem palpite de destino** — nem no cartão nem na legenda, e sem "destino não informado" (decisão Eduardo 2026-10-03): para onde vai é assunto do cartão de T+10 |
-| Em voo | T+10 | chips (altitude + razão de subida, velocidade, rumo com bússola, chegada estimada com **ícone do tempo no destino**) + mapa com o trecho voado colorido pela altitude, avião, perna tracejada até cada destino candidato com chip de ETA, voo anterior da rota em cinza + faixa "perfil até agora e relevo à frente" + linha do METAR do destino com ícone |
+| Decolagem | wheels-up | chips (hora, origem, meteo com ícone, **próxima atualização ~T+10** — ~T+19 saindo da região de SP) + mapa da região de saída com o avião no rumo inicial + painel do METAR (ícone, estação, hora da observação, temperatura, nuvens, vento, visibilidade, METAR cru). **Sem palpite de destino** — nem no cartão nem na legenda, e sem "destino não informado" (decisão Eduardo 2026-10-03): para onde vai é assunto do cartão de T+10 |
+| Em voo | T+10 (T+19 região de SP) | chips (altitude + razão de subida, velocidade, rumo com bússola, chegada estimada com **ícone do tempo no destino**) + mapa com o trecho voado colorido pela altitude, avião, perna tracejada até cada destino candidato com chip de ETA, voo anterior da rota em cinza + faixa "perfil até agora e relevo à frente" + linha do METAR do destino com ícone |
 | Pouso 1/2 | ~2 min após o toque | chips (tempo de voo, **vs esperado** verde/âmbar, cruzeiro, distância) + mapa-herói com a rota colorida pela altitude, voo anterior em cinza e linha reta — leva a legenda completa |
 | Pouso 2/2 | logo em seguida | chips de fases (subida, cruzeiro, descida, relevo máx.) + altitude sobre o **relevo real** por distância, com fases marcadas + **altitude e velocidade por minutos desde a decolagem, ao lado dos voos anteriores** da rota (mesma direção ou volta) e a linha do esperado |
 
@@ -111,11 +112,12 @@ um voo já concluído: decolagem no instante do wheels-up, em voo truncado em
 T+10, sem o destino do FR24 em retrospecto), `POST /backfill`, `GET /flights`,
 `GET /health`, `GET /charts/<nome>.png`.
 
-## Update em voo (T+10 da decolagem)
+## Update em voo (T+10 da decolagem; T+19 saindo da região de SP)
 
 O FR24 quase nunca conhece o destino na decolagem. Estratégia intermediária
 (decisão Eduardo 2026-08-29): no `took_off` o HA agenda no tracker um update
-`ENROUTE_DELAY_S` (10 min) após a decolagem, com o trail ao vivo
+`ENROUTE_DELAY_S` (10 min; `enroute.delay_s(origin)` — 19 min saindo da
+região de SP, ver abaixo) após a decolagem, com o trail ao vivo
 (`clickhandler`, fallback playback): **rumo cardinal** (média circular dos
 últimos headings), **mapa da rota até o momento** com a aeronave desenhada
 como ícone de avião apontando o rumo, altitude/velocidade atuais e
@@ -130,14 +132,34 @@ aviationweather.gov, sem chave; aeroporto sem METAR usa a estação mais
 próxima, anotada — SSBL→SBNF) e, resumida, a condição *em rota* (estação mais
 próxima do ponto médio restante). Meteo é best-effort: falha derruba só o
 bloco, nunca o update. Dedupe por `enroute:<id>`; teste com voo já concluído: `sim:true`
-trunca o trail nos primeiros 10 min.
+trunca o trail nos primeiros `delay_s` (10 ou 19 min).
 
 **T+10 medido no trail, não na lista** (2026-10-02): o "real departure" de
 `flight/list.json` pode ser o transponder ligado ainda no solo (41f01799:
 10:20 na lista vs wheels-up 11:22), o que disparava o update a "há 0 min".
 Antes de montar, o update lê a decolagem real do trail (1º ponto com
 altitude > 0, `enroute.takeoff_ts`) e, se ainda não passaram
-`ENROUTE_DELAY_S`, espera o restante (uma vez, sem gastar tentativa).
+`enroute.delay_s(origin)`, espera o restante (uma vez, sem gastar tentativa).
+
+**Saídas da região de SP: T+19, não T+10** (decisão Eduardo 2026-11-09). A
+estimativa só enxerga destinos a ±45° do rumo atual — e, com o tráfego
+denso e os corredores obrigatórios da TMA São Paulo, a aeronave demora a
+apontar para o destino. Em 09/11/2026 (428053a5, Jundiaí → Blumenau) o rumo
+a T+10 era 284° (oeste, 81° fora de Blumenau) e o update saiu "rota nova",
+sem chegada estimada, embora a volta SSBL→SBJD da véspera estivesse no
+histórico; a aeronave só manteve rumo para Blumenau a partir de
+**T+15,6 min** (15:03:46). As saídas anteriores da região viraram até T+7
+(Campo de Marte 29/08 e 13/10, Sorocaba 02/10). 15,6 min + 20 % de margem →
+`ENROUTE_DELAY_SP_S` (19 min = 1140 s), para qualquer origem a até
+`SP_REGION_RADIUS_KM` (100 km) de São Paulo — SBMT, SBSP, SBGR, SBJD, SBKP,
+SDCO, SBSJ, SBBP, SBJH. `enroute.delay_s(origin)` decide em todos os
+pontos: agendamento pelos watches (origem da lista FR24, senão do flight
+log pelo IATA do feed), espera pelo trail dentro do update, chip "próxima
+atualização" do cartão de decolagem, `sim:true` e `render_test.py`. Origem
+desconhecida ao agendar → 10 min, e o próprio update corrige pelo trail ao
+vivo (espera o restante uma vez). Com o T+19, o voo de 09/11 teria dito
+`Blumenau (BNU/SSBL): chegada *~15:54*` (rumo 192°, 14° de Blumenau; pouso
+real 16:02).
 
 ## Live watch (decolagem/pouso IMEDIATOS em qualquer aeroporto)
 
