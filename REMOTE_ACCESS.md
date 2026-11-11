@@ -146,6 +146,29 @@ to Casa SmokeTests). After changing the launcher or the clone, restart the task
 and check that the heartbeat `pid` changed: a Start right after a Stop can still
 find the lock held and exit, leaving the task `Ready` with nothing running.
 
+### bnu UPS (nobreak) — read it through ups-monitor on bnu-raspberrypi (found 2026-11-11)
+
+The bnu rack UPS is an **SMS Premium 1500 VA bivolt** (reports `PRM1500BiBiW`, fw
+`1.3`). It is wired to **bnu-raspberrypi** through a Prolific PL2303 USB-serial adapter
+(`/dev/ttyUSB0`, by-id `…Prolific…BHAFb149907…`, since 2026-10-28) and answers the SMS
+protocol at 2400 8N1, the same one NUT's `sms_ser` driver speaks. Since 2026-11-11 the
+**`ups-monitor` container owns that port**. It WhatsApps Casa Blumenau on *falta de
+energia* / *bateria < 20 %* / *energia voltou* and feeds the globalnet nobreak card.
+Read the UPS through its API, not the port:
+
+- `curl -s http://bnu-raspberrypi:8795/api/status`: live reading and state
+- `curl -s http://bnu-raspberrypi:8795/api/stats`: *ativações* and recent episodes and
+  messages
+- `curl -s -X POST http://bnu-raspberrypi:8795/api/test`: one test message to Casa
+  SmokeTests
+
+To read the raw port (`python3 sms_serial.py --raw`, sends only `Q`/`I`/`F`), stop the
+container first. The UPS's SMS "UPS Wi-Fi" module (`10.1.1.159`, LAN-only web UI) still
+answers, but its credentials are unknown (`admin`/`admin` is refused). Don't probe it for
+SNMP/Modbus/NUT: only HTTP is open. Code, protocol and deploy:
+`scripts/raspberry-pi/bnu-raspberrypi/docker/ups-monitor/README.md`. Runbook: globalnet
+`docs/runbooks/ups-monitor.md`.
+
 ### ARA (home build — dashboard site `home: true`, still not in devtool.py)
 
 `ara-raspberrypi2` is a tailnet node (the "computadorzinho" in the canteiro
@@ -1248,7 +1271,8 @@ drift the LXC wins — `scripts/proxmox/docker/mia-docker/senior/README.md`),
 `bnu-raspberrypi:~/canteiro-jobs/env/canteiro-{watchdog,presenca,sunset-compare}.env`
 (WAHA creds + group JIDs for the canteiro job containers — moved from
 `/etc/canteiro-*.env` on 2026-08-29; the `/etc` copies linger only as
-rollback for one wave), `ara-raspberrypi2:~/canteiro-relay/mediamtx.yml`
+rollback for one wave; `ups-monitor` also reads its WAHA creds from
+`canteiro-watchdog.env` via `env_file`, so rotating `BNU_WAHA_API_KEY` there covers it), `ara-raspberrypi2:~/canteiro-relay/mediamtx.yml`
 (camera `ARA_CANTEIRO_CAM_KEY` embedded in the source URLs — moved from
 `/etc/mediamtx/mediamtx.yml` on 2026-08-29, same one-wave lingering), and
 `ara-raspberrypi2:~/canteiro-timelapse/env/canteiro-ptz.env` (same camera

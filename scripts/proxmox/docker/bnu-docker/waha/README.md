@@ -10,6 +10,11 @@ hardcodes the credentials that the repo keeps in `.env` as `BNU_WAHA_*`).
 - Session `default`, account +49 176 7239 2054, dashboard at
   `http://10.1.1.126:3000/dashboard`.
 - Webhook `message.any` events → `waha-listener` (see [../waha-listener/](../waha-listener/README.md)).
+- Senders include `ups-monitor` on bnu-raspberrypi. It posts the rack nobreak
+  alerts (*falta de energia* / *bateria < 20 %* / *energia voltou*) to Casa
+  Blumenau, keeping them in its own outbox and retrying for 24 h while this
+  gateway is unreachable. See
+  [`scripts/raspberry-pi/bnu-raspberrypi/docker/ups-monitor/`](../../../../raspberry-pi/bnu-raspberrypi/docker/ups-monitor/README.md).
 - Media: WAHA keeps each received file for `WHATSAPP_FILES_LIFETIME` = **180 s**
   (default, unset here) under `./files`, and advertises it as
   `http://localhost:3000/api/files/default/<key-id>.<ext>` (no `WAHA_BASE_URL`
