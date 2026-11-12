@@ -11,6 +11,7 @@ removed on 2026-08-29 (decisão Eduardo: camera on the Pi screen not needed).
 | OS | Raspberry Pi OS (Debian 13 trixie), aarch64, desktop image (labwc/LightDM) |
 | Tailnet | `bnu-raspberrypi` (100.91.64.62) |
 | SSH | `ssh eduardocenci@bnu-raspberrypi` — key auth (see `REMOTE_ACCESS.md`) |
+| USB | rack **nobreak/UPS SMS Premium 1500 VA** (`PRM1500BiBiW`) over a Prolific PL2303 USB-serial adapter → `/dev/ttyUSB0` (since 2026-10-28), owned by the [`ups-monitor`](docker/ups-monitor/) container; also a USB mini keyboard/touchpad (Riitek) |
 
 ## Services
 
@@ -24,6 +25,7 @@ removed on 2026-08-29 (decisão Eduardo: camera on the Pi screen not needed).
 | [`canteiro-presenca/`](canteiro-presenca/) | container, daily 20:00 America/Sao_Paulo ([`docker/canteiro-jobs/`](docker/canteiro-jobs/)): WhatsApp report of how many people were at the ARA obra today, from the ara netoverview `/api/presence` |
 | [`canteiro-sunset-compare/`](canteiro-sunset-compare/) | container, Mon–Fri 20:10 America/Sao_Paulo ([`docker/canteiro-jobs/`](docker/canteiro-jobs/)): fetches yesterday's + today's `posicao1/por-do-sol` frames from Drive `CeuAzul/Timelapse/` (rclone), stacks them vertically (ffmpeg) and sends the "Dia de Trabalho" comparison to WhatsApp via WAHA `sendImage` |
 | [`canteiro-vigia/`](canteiro-vigia/) | container, 10 s loop, own image ([`docker/canteiro-vigia/`](docker/canteiro-vigia/)): **empty-obra watch** — armed while no person's device is on the canteiro Wi-Fi (Fri evening → Mon morning in practice, holidays and empty weeknights too): every person/vehicle Frigate tracks on the ARA camera = one WhatsApp message per episode to "Casa Céu Azul" with the snapshot and whether a known device joined the Wi-Fi in the following minute (🟢, also disarms) or none did (🔴 "alguém estranho"); car first + person after = second message with the person's photo. Wi-Fi read from the Starlink router's `associatedTimeS` through the ara `router-proxy`. Decisão Eduardo 22/10/2026 |
+| [`docker/ups-monitor/`](docker/ups-monitor/) | container, 2 s loop, own image: reads the rack **nobreak** over USB-serial → WhatsApp **Casa Blumenau** on *falta de energia* (≥ 10 s on battery), *bateria < 20 %* and *energia voltou*. Counts every transfer to battery (*ativações*) for the globalnet nobreak card (`:8795`, `GET /api/stats`). Decisão Eduardo 11/11/2026 |
 | wayvnc | VNC access to the desktop session |
 
 ## Docker auto-update cron (and disk-space guard)

@@ -1,0 +1,46 @@
+# ups-monitor — the bnu rack nobreak → WhatsApp "Casa BNU" (queda · bateria < 20 % ·
+# volta) + activation stats for globalnet (decisão Eduardo 11/11/2026).
+#
+# Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/docker/ups-monitor/
+# Live copy:          bnu-raspberrypi:~/ups-monitor/   (docker compose up -d --build)
+#
+# Host network: WAHA is on the bnu LAN (10.1.1.126:3000) and globalnet reads
+# http://bnu-raspberrypi:8795. user 1000 = eduardocenci (owns /var/lib/ups-monitor);
+# group 20 = dialout (owns /dev/ttyUSB0).
+services:
+  ups-monitor:
+    build: .
+    image: ups-monitor:local
+    container_name: ups-monitor
+    network_mode: host
+    user: "1000:1000"
+    group_add:
+      - "20"    # dialout
+    restart: unless-stopped
+    init: true
+    # WAHA_URL / WAHA_KEY / WAHA_SESSION — the bnu WAHA credentials already live on
+    # this Pi in the canteiro-watchdog env (mirror of the root .env BNU_WAHA_*). Its
+    # GROUP_JID etc. are ignored here. To decouple, copy those three keys to
+    # ~/ups-monitor/ups-monitor.env and point env_file at it.
+    env_file: /home/eduardocenci/canteiro-jobs/env/canteiro-watchdog.env
+    environment:
+      TZ: America/Sao_Paulo            # message clock; the Pi itself runs Europe/London
+      MODE: live                       # log | shadow (SmokeTests) | live
+      ALERT_JID: "120363428209351902@g.us"   # Casa BNU (= BNU_WHATSAPP_GROUP_JID)
+      TEST_JID: "120363410899542847@g.us"    # Casa SmokeTests (= SMOKETESTS_WHATSAPP_GROUP_JID), POST /api/test
+      UPS_DEV: /dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_BHAFb149907-if00-port0
+      PORT: "8795"
+      STATE_DIR: /var/lib/ups-monitor
+      POLL_S: "2"
+      ALERT_AFTER_S: "10"              # shorter transfers to battery are counted, not messaged
+      RESTORE_CONFIRM_S: "10"
+      LOW_BATTERY_PCT: "20"
+      DASHBOARD_URL: http://bnu-raspberrypi:5001
+    volumes:
+      - /var/lib/ups-monitor:/var/lib/ups-monitor          # ups.db (episodes, outbox, samples)
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      # /dev itself (not `devices:`), so a re-plugged adapter (new ttyUSBn) shows up
+      # live through the by-id symlink; the cgroup rule allows only usb-serial ttys.
+      - /dev:/dev
+    device_cgroup_rules:
+      - "c 188:* rmw"                  # ttyUSB* (usb-serial major 188)
