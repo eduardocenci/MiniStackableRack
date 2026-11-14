@@ -25,6 +25,9 @@
 # exec sources unless GO2RTC_ALLOW_ARBITRARY_EXEC is set (left alone), and a
 # publisher that dies is a clean EOF for mediamtx's readers instead of the
 # timestamp jump go2rtc hands its consumers when it swaps a producer.
+# Second output, path `mosaico-tv`: the same picture at 1920x540 ~2 Mbps for the
+# TV cast — the Neo QLED's Google Cast receiver refuses H.264 2560 px wide
+# (2026-11-14, seen on the physical TV: player `idle`, no request made).
 # Any input EOF/stall (15 s) ends ffmpeg; systemd restarts it 5 s later.
 F=/usr/lib/ffmpeg/7.0/bin/ffmpeg
 IN="-hwaccel vaapi -hwaccel_device va -rtsp_transport tcp -timeout 15000000 -analyzeduration 1000000"
@@ -32,6 +35,8 @@ exec "$F" -hide_banner -loglevel warning -nostdin \
   -init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va \
   $IN -i rtsp://127.0.0.1:8554/canteiro_fixa \
   $IN -i rtsp://127.0.0.1:8554/canteiro \
-  -filter_complex "[0:v]fps=15,scale=1280:720[l];[1:v]fps=15,scale=1280:720[r];[l][r]hstack=inputs=2,format=nv12,hwupload[v]" \
+  -filter_complex "[0:v]fps=15,scale=1280:720[l];[1:v]fps=15,scale=1280:720[r];[l][r]hstack=inputs=2,split=2[a][b];[a]format=nv12,hwupload[v];[b]scale=1920:540,format=nv12,hwupload[t]" \
   -map "[v]" -c:v h264_vaapi -profile:v high -b:v 3M -maxrate 4M -g 30 -an \
-  -rtsp_transport tcp -f rtsp rtsp://10.1.1.123:8555/mosaico
+  -rtsp_transport tcp -f rtsp rtsp://10.1.1.123:8555/mosaico \
+  -map "[t]" -c:v h264_vaapi -profile:v high -b:v 2M -maxrate 3M -g 30 -an \
+  -rtsp_transport tcp -f rtsp rtsp://10.1.1.123:8555/mosaico-tv

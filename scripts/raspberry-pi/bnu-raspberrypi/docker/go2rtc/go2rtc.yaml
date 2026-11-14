@@ -19,7 +19,8 @@
 #   - canteiro-hls: upstream of `canteiro` (above) and HLS packager for the
 #     browser /live page
 #   - TVs via Google Cast (HA script.canteiro_na_tv at bnu and bg) — progressive fMP4 over HTTP:
-#       http://10.1.1.123:1984/api/stream.mp4?src=canteiro_mosaico (H.264 mosaic — THE cast since 2026-11-14)
+#       http://10.1.1.123:1984/api/stream.mp4?src=canteiro_mosaico_tv (H.264 mosaic 1920x540 — THE cast since 2026-11-14;
+#         the 2560x720 `canteiro_mosaico` is refused by the Neo QLED's Cast receiver)
 #       http://10.1.1.123:1984/api/stream.mp4?src=canteiro         (PT lens alone, HEVC, copy)
 #       http://10.1.1.123:1984/api/stream.mp4?src=canteiro_h264    (H.264 transcode,
 #                                         fallback for renderers that reject HEVC)
@@ -61,9 +62,13 @@ streams:
   canteiro_fixa: rtsp://127.0.0.1:8555/canteiro-fixa
   # MOSAICO [lente fixa | lente PT], H.264 2560x720 15 fps (2026-11-14) — composed by
   # canteiro-mosaico.service in the bnu Frigate LXC (VAAPI), published to canteiro-hls. THE stream for people:
-  #   http://10.1.1.123:1984/api/stream.mp4?src=canteiro_mosaico   (TV cast)
   #   /api/frame.jpeg?src=canteiro_mosaico                        (watchdog last frame)
   canteiro_mosaico: rtsp://127.0.0.1:8555/mosaico
+  # The mosaic at 1920x540 (second output of the composer) — THE TV cast since
+  # 2026-11-14 evening: the Neo QLED's Cast receiver refuses H.264 2560 px wide
+  # (player stays `idle`, nothing is even requested) and plays this one.
+  #   http://10.1.1.123:1984/api/stream.mp4?src=canteiro_mosaico_tv
+  canteiro_mosaico_tv: rtsp://127.0.0.1:8555/mosaico-tv
   # H.264 transcode fallback: hardware encode (h264_v4l2m2m) via ffmpeg,
   # downscaled to 1920 wide (the Pi 4 hw encoder cannot take 2304×1296).
   # It consumes the SHARED local canteiro producer (no extra pull from ara),

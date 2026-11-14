@@ -101,16 +101,23 @@ upgrade). The `:1984` HTTP endpoints remain for LAN/IP consumers (the TV
 cast uses `http://10.1.1.123:1984/...` — IPs are not HSTS'd).
 
 Consumed by the **bnu HA script `script.canteiro_na_tv`** ("Canteiro na
-TV"), which casts `http://10.1.1.123:1984/api/stream.mp4?src=canteiro_mosaico`
-— the mosaic, since 2026-11-14 (the HEVC passthrough `src=canteiro` until
+TV"), which casts `http://10.1.1.123:1984/api/stream.mp4?src=canteiro_mosaico_tv`
+— the mosaic at 1920x540, since 2026-11-14 (the HEVC passthrough `src=canteiro` until
 then) — to the 55" Neo QLED (`media_player.qn85f1443`, Samsung's 2026
 native Google Cast receiver). The script lives only in the live HA config
 (`/config/scripts.yaml`, backup `.bak-20261114`). bg has the same cast in
 `/config/packages/canteiro_na_tv.yaml` (through its proxy
 `http://192.168.0.120:1984`; backup `/config/canteiro_na_tv.yaml.bak-20261114`;
-repo copy in the open PR MiniStackableRack#53). **Not yet seen on a physical
-TV** with the mosaic URL — the bnu TV was in standby on 2026-11-14; the
-findings below are from the HEVC stream.
+repo copy in the open PR MiniStackableRack#53). **Seen on the physical bnu TV on 2026-11-14 evening:** the 2560x720
+`src=canteiro_mosaico` leaves the Cast receiver `idle` (it never requests the
+URL) while the HEVC single lens and a 1920x540 H.264 mosaic play — hence
+`canteiro_mosaico_tv`, the second output of the composer in the Frigate LXC
+(`mosaico-tv` on canteiro-hls). Do NOT build it with a go2rtc `ffmpeg:` source
+on the Pi: the software decode took the load to 9 and stalled both camera
+pulls. mediamtx does not pick up a new path by itself — `docker restart
+canteiro-hls` after editing `mediamtx.yml`. Backups of this change:
+`scripts.yaml.bak-20261114b` (bnu), `/config/canteiro_na_tv.yaml.bak-20261114b` (bg).
+The other findings below are from the HEVC stream.
 
 **One-click control (browser bookmarks).** Two HA webhook automations on
 bnu-homeassistant expose start/stop as plain-GET URLs (no login — the long
