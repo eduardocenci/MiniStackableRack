@@ -35,6 +35,8 @@ Drive/outbox layout:
                                           the old guard framing)
   trabalho/YYYY-MM/...                    presence log (PT lens), every
                                           15 min 07:00-18:00
+  trabalho-fixa/YYYY-MM/...               same instants, fixed lens (street/
+                                          entrance) — since 14/11/2026
   <pos>/Luminancia125/YYYY-MM-DD_HHMM.jpg copy of the sunset window whose
                                           posicao1 luminance is closest to
                                           125 (chosen at the end of `sunset`;
@@ -47,7 +49,8 @@ and por-do-sol-menos-20min / -menos-10min / por-do-sol / -mais-10min /
 -mais-20min.
 
 Subcommands
-  trabalho   one PT frame -> outbox/trabalho/YYYY-MM/
+  trabalho   one frame of each lens -> outbox/trabalho/YYYY-MM/ (PT) and
+             outbox/trabalho-fixa/YYYY-MM/ (fixed)
   sunset     today's sunset windows T-20 T-10 T T+10 T+20 (NOAA, coords of
              the Céu Azul aerodrome 26°33'41"S 48°41'46"W, UTC-3 fixed);
              per window: lentefixa + posicao1, shot together. The 16:40
@@ -390,9 +393,13 @@ def cmd_trabalho():
         print("outside 07:00-18:00 window, skipping")
         return 0
     stamp = now.strftime("%Y-%m-%d_%H%M")
-    ok = grab(RELAY_PT, f"trabalho/{now.strftime('%Y-%m')}/{stamp}.jpg")
-    if not ok:
-        fail(f"trabalho {stamp}: grab falhou")
+    # as duas lentes, mesmo carimbo (pedido Eduardo 14/11/2026): a PT em repouso segue em
+    # trabalho/ (consumidores antigos intactos), a fixa (rua/entrada) vai em trabalho-fixa/
+    ok = True
+    for url, pasta in ((RELAY_PT, "trabalho"), (RELAY_FIXA, "trabalho-fixa")):
+        if not grab(url, f"{pasta}/{now.strftime('%Y-%m')}/{stamp}.jpg"):
+            fail(f"{pasta} {stamp}: grab falhou")
+            ok = False
     return 0 if ok else 1
 
 

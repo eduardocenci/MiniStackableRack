@@ -27,7 +27,8 @@ Pack layout (Drive CeuAzul/Diario/<D>/pack/, all files public "anyone with the l
   snaps.zip          every event snapshot (snaps/<id>.jpg, 640×480) in one object — Drive
                      creates files one API call at a time, ~500 loose files took 20 min
   vehicles_sheet.jpg / people_sheet.jpg   quick-scan sheets (car events ≥20 s / person close-ups)
-  frames/<D>_HHMM.jpg (1152×648) + frames_sheet.jpg   timelapse frames of the day
+  frames/<D>_HHMM.jpg (1152×648) + frames_sheet.jpg   timelapse frames of the day (PT lens)
+  frames_fixa/<D>_HHMM.jpg + frames_fixa_sheet.jpg    same instants, fixed lens (street/entrance)
   montage.jpg        Timelapse/DiaDeTrabalho/<D>.jpg (ontem × hoje, mosaico 2×2 das duas lentes) when present
   sunset_fixa.jpg / sunset_pt.jpg     the two halves of the sunset mosaic (fixed lens | PT lens)
 
@@ -427,6 +428,18 @@ def collect_timelapse(d: dt.date, pack: Path, tmp: Path) -> dict:
         items.append((f.name[11:13] + ":" + f.name[13:15], f, False))
     if items:
         contact_sheet(items, pack / "frames_sheet.jpg", cols=5, tw=480, th=270, quality=82)
+    # fixed lens (street/entrance), same instants — trabalho-fixa/ since 14/11/2026
+    srcf = tmp / "tlf"; srcf.mkdir(parents=True, exist_ok=True)
+    run(["rclone", "copy", rc_remote(TIMELAPSE_DIR, "trabalho-fixa", f"{d:%Y-%m}"), str(srcf),
+         "--include", f"{d.isoformat()}_*.jpg", "--transfers", "8"], timeout=900)
+    frames_fixa = sorted(srcf.glob(f"{d.isoformat()}_*.jpg"))
+    if frames_fixa:
+        outf = pack / "frames_fixa"; outf.mkdir(parents=True, exist_ok=True)
+        itemsf = []
+        for f in frames_fixa:
+            Image.open(f).convert("RGB").resize((1152, 648)).save(outf / f.name, quality=80)
+            itemsf.append((f.name[11:13] + ":" + f.name[13:15], f, False))
+        contact_sheet(itemsf, pack / "frames_fixa_sheet.jpg", cols=5, tw=480, th=270, quality=82)
     # montage (posted to the group at ~20:12) and, as its fallback, the two halves of the
     # sunset mosaic: fixed lens (left, street) + PT lens at rest (right) — 14/11/2026;
     # until then the fallback was the PT lens at posicao2/posicao3 (no longer shot)
@@ -440,7 +453,7 @@ def collect_timelapse(d: dt.date, pack: Path, tmp: Path) -> dict:
         fs = sorted(dst.glob("*.jpg"))
         if fs:
             Image.open(fs[0]).convert("RGB").resize((1600, 900)).save(pack / f"sunset_{nome}.jpg", quality=82)
-    return {"frames": len(frames), "montage": got_montage}
+    return {"frames": len(frames), "frames_fixa": len(frames_fixa), "montage": got_montage}
 
 
 def drive_publish_pack(d: dt.date, pack: Path, tmp: Path) -> dict:

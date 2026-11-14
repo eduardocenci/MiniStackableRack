@@ -2,7 +2,7 @@
 
 While the canteiro Wi-Fi has **no person's device** on it (only the fixed gear:
 router, camera, the Pi) the watch is **armed**: every **person or vehicle** the
-bnu Frigate (LXC 105) tracks on the `canteiro` camera becomes **one short
+bnu Frigate (LXC 105) tracks on the `canteiro` (PT lens, parked looking at the works) **or `canteiro_fixa`** (fixed lens, looking at the street/entrance — added 2026-11-14, `FRIGATE_CAMERAS=canteiro,canteiro_fixa`; both lenses fold into the same episode by time, so one person seen by both is still one message; the recording/latest fallback photo comes from the lens that saw the event) camera becomes **one short
 message** in the WhatsApp group **"Casa Céu Azul"** — the snapshot of the moment
 plus one line saying whether a known device joined the Wi-Fi in the minute after
 the detection (a friendly sign: whoever has the Wi-Fi password may be there) or
