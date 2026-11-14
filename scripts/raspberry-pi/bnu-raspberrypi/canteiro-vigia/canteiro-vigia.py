@@ -34,6 +34,14 @@ Fluxo (loop de POLL_S segundos):
      desliga o vigia (alguém da equipe chegou).
   4. Tetos MAX_HORA / MAX_DIA (além deles só registra; uma nota de pausa vai ao
      TEST_JID).
+  5. VÍDEO (pedido Eduardo 14/11/2026): depois da foto de um episódio 🔴, cada
+     TRECHO de detecção vira um vídeo no layout do mosaico [lente fixa | lente PT],
+     pedido ao canteiro-clipe (LXC do Frigate, buffer do mosaico ao vivo). Pausas
+     de até VIDEO_GAP_S entre detecções ficam no mesmo vídeo; passou disso, o
+     trecho fecha e o vídeo sai. Um trecho que não para é cortado a cada
+     VIDEO_MAX_S ("continua") e cada evento do Frigate conta no máximo
+     VIDEO_EV_MAX_S — bicicleta encostada fica horas como UM evento aberto.
+     Episódio 🟢 (alguém da equipe) não gera vídeo. Teto MAX_VIDEOS_HORA.
 
 MODE (env): log = decide e registra, não envia · shadow = envia ao TEST_JID
 (Casa SmokeTests) com a marca SOMBRA · live = envia ao GROUP_JID (Casa Céu Azul).
@@ -47,6 +55,8 @@ CLI:
   canteiro-vigia.py --veredito [t0] imprime o veredito do WiFi para t0 (epoch; padrão agora)
   canteiro-vigia.py --test-alert [JID]  último evento qualificável pelo fluxo completo,
                                     "[TESTE]", ao JID (padrão TEST_JID), ignorando o estado
+  canteiro-vigia.py --test-video [JID] [s]  vídeo-mosaico dos últimos s segundos (padrão 30),
+                                    "[TESTE]", ao JID (padrão TEST_JID)
 
 Roda no bnu-raspberrypi, container `canteiro-vigia` (docker/canteiro-vigia/).
 Estado em STATE_DIR: state.json (eventos vistos, episódio aberto, ligado/
@@ -109,6 +119,17 @@ EPISODIO_MIN = int(E("EPISODIO_MIN", "15"))     # detecções a menos de X min d
 MAX_HORA = int(E("MAX_HORA", "6"))
 MAX_DIA = int(E("MAX_DIA", "24"))
 POLL_S = int(E("POLL_S", "10"))
+
+# Vídeo do trecho de detecção, no layout do mosaico (pedido Eduardo 14/11/2026)
+VIDEO = E("VIDEO", "1") == "1"
+CLIPE_URL = E("CLIPE_URL", "http://10.1.1.160:8556").rstrip("/")   # canteiro-clipe no LXC do Frigate
+VIDEO_GAP_S = int(E("VIDEO_GAP_S", "60"))        # pausa maior que isso fecha o trecho → o vídeo sai
+VIDEO_MAX_S = int(E("VIDEO_MAX_S", "120"))       # trecho que não para: um vídeo a cada X s ("continua")
+VIDEO_EV_MAX_S = int(E("VIDEO_EV_MAX_S", "360")) # um evento do Frigate sustenta o trecho no máximo X s
+VIDEO_PRE_S = int(E("VIDEO_PRE_S", "6"))         # contexto antes da 1ª detecção
+VIDEO_POS_S = int(E("VIDEO_POS_S", "8"))         # e depois da última
+VIDEO_ATRASO_S = int(E("VIDEO_ATRASO_S", "1"))   # o mosaico corre ~1 s atrás do evento (medido 14/11)
+MAX_VIDEOS_HORA = int(E("MAX_VIDEOS_HORA", "6"))
 LOOKBACK_S = int(E("LOOKBACK_S", "900"))        # janela do /api/events a cada rodada
 
 STATE_DIR = Path(E("STATE_DIR", "/var/lib/canteiro-vigia"))
@@ -170,8 +191,13 @@ def waha_session_status():
         return (json.load(r) or {}).get("status", "")
 
 
-def send(chat, text, jpg):
-    """sendImage com legenda (ou sendText sem foto) — sempre a UM chat vindo do env."""
+def send(chat, text, jpg, mp4=None):
+    """sendImage / sendVideo com legenda (ou sendText sem mídia) — sempre a UM chat vindo do env."""
+    if mp4:
+        return waha_post("sendVideo", {
+            "session": WAHA_SESSION, "chatId": chat, "caption": text,
+            "file": {"mimetype": "video/mp4", "filename": "canteiro.mp4",
+                     "data": base64.b64encode(mp4).decode()}}, timeout=180)
     if jpg:
         return waha_post("sendImage", {
             "session": WAHA_SESSION, "chatId": chat, "caption": text,
@@ -339,7 +365,7 @@ def mensagem(t_ev, label, n, v, apos=None, prefixo=""):
 
 # ── Estado ────────────────────────────────────────────────────────────────────
 def load_state():
-    base = {"seen": {}, "episodio": None, "envios": [], "pausa_avisada": None,
+    base = {"seen": {}, "episodio": None, "envios": [], "videos": [], "pausa_avisada": None,
             "armado": None, "armado_desde": None, "rede_vazia_desde": None,
             "rede": {"ts": 0, "fonte": None, "pessoas": []}}
     try:
@@ -440,18 +466,18 @@ def teto_atingido(st, agora):
     return None
 
 
-def entregar(texto, jpg):
+def entregar(texto, jpg, mp4=None):
     """Envia conforme o MODE; devolve o destino usado ('log' = nada enviado)."""
     if MODE == "log":
         return "log"
     if MODE == "shadow":
         if not TEST_JID:
             raise RuntimeError("TEST_JID vazio em MODE=shadow")
-        send(TEST_JID, f"👁️ *SOMBRA* (iria ao Casa Céu Azul)\n{texto}", jpg)
+        send(TEST_JID, f"👁️ *SOMBRA* (iria ao Casa Céu Azul)\n{texto}", jpg, mp4)
         return "teste"
     if not GROUP_JID:
         raise RuntimeError("GROUP_JID vazio em MODE=live")
-    send(GROUP_JID, texto, jpg)
+    send(GROUP_JID, texto, jpg, mp4)
     return "grupo"
 
 
@@ -485,6 +511,7 @@ def decidir(st, ep, agora, seguimento=False):
     else:
         ep["decidido"] = agora
         ep["sev"] = sev
+        ep["enviado"] = destino != "nao-enviado"
     if sev == "🟢" and armado(st):
         mudar_estado(st, False, agora, f"{v['pessoas'][0][0]} no WiFi (detecção {hhmm(t_ev)})")
     jsonl({"tipo": "seguimento" if seguimento else "episodio", "ts": agora, "t0": ep["t0"], "t": t_ev,
@@ -494,6 +521,78 @@ def decidir(st, ep, agora, seguimento=False):
            "motivo": motivo, "mode": MODE, "texto": texto})
     log(f"{'pessoa após ' + ROTULO.get(ep['label'], ep['label']) if seguimento else 'episódio'} {hhmm(t_ev)} "
         f"{label} ×{ep['n']} → {sev} fonte={v['fonte']} destino={destino}{' (' + motivo + ')' if motivo else ''}")
+
+
+def duracao(s):
+    s = int(round(s))
+    return f"{s} s" if s < 60 else (f"{s // 60} min" + (f" {s % 60:02d} s" if s % 60 else ""))
+
+
+def trecho_video(ep, agora):
+    """Próximo vídeo devido do episódio: (ini, fim, final) ou None.
+
+    Cada evento vale [início, min(fim | agora, início + VIDEO_EV_MAX_S)], só a parte depois de
+    `video_ate` (o que já virou vídeo). Intervalos a menos de VIDEO_GAP_S um do outro são UM
+    trecho. Trecho quieto há VIDEO_GAP_S → vídeo final; trecho que passou de VIDEO_MAX_S sem
+    parar → os primeiros VIDEO_MAX_S agora, o resto continua.
+    """
+    ate = ep.get("video_ate") or 0
+    ivs = []
+    for s, e in (ep.get("ev") or {}).values():
+        a, b = max(s, ate), min(e if e else agora, s + VIDEO_EV_MAX_S)
+        if b > a and b > ate:
+            ivs.append((a, b))
+    if not ivs:
+        return None
+    ivs.sort()
+    ini, fim = ivs[0]
+    for a, b in ivs[1:]:
+        if a > fim + VIDEO_GAP_S:
+            break
+        fim = max(fim, b)
+    quieto = agora >= fim + VIDEO_GAP_S
+    parado = fim < agora - 15          # nada em curso: um resto curto espera o fecho, não vira "parte"
+    if fim - ini > VIDEO_MAX_S * (1.25 if quieto or parado else 1):
+        # o buffer do clipe grava em segmentos de 10 s: espera o fim da parte estar em disco
+        return (ini, ini + VIDEO_MAX_S, False) if agora >= ini + VIDEO_MAX_S + VIDEO_ATRASO_S + 12 else None
+    return (ini, fim, True) if quieto else None
+
+
+def video(st, ep, agora):
+    """Vídeo-mosaico do trecho de detecção que acabou de fechar (ou da parte que estourou o teto)."""
+    tr = trecho_video(ep, agora)
+    if not tr:
+        return
+    ini, fim, final = tr
+    parte = ep.get("video_parte", 0) + 1
+    pre = VIDEO_PRE_S if parte == 1 else 0
+    j0 = ini - pre + VIDEO_ATRASO_S
+    j1 = fim + (VIDEO_POS_S if final else 0) + VIDEO_ATRASO_S
+    ep["video_ate"] = fim            # antes do envio: uma falha não repete o mesmo trecho para sempre
+    ep["video_parte"] = 0 if final else parte
+    nota = duracao(j1 - j0)
+    if not final:
+        nota += f" · parte {parte}, a detecção continua"
+    elif parte > 1:
+        nota += f" · parte {parte}, fim"
+    texto = f"🎥 *Canteiro · {quando(ini)}* — vídeo da detecção ({nota})"
+    st["videos"] = [x for x in st.get("videos", []) if x > agora - 3600]
+    destino, motivo, tam = "nao-enviado", None, 0
+    if len(st["videos"]) >= MAX_VIDEOS_HORA:
+        motivo = f"teto {MAX_VIDEOS_HORA} vídeos/hora"
+    else:
+        try:
+            mp4 = http_bytes(f"{CLIPE_URL}/clip.mp4?start={j0:.1f}&end={j1:.1f}", timeout=240)
+            tam = len(mp4)
+            destino = entregar(texto, None, mp4)
+            if destino != "log":
+                st["videos"].append(agora)
+        except Exception as ex:  # noqa: BLE001 — o vídeo é complemento: a foto já saiu
+            motivo = f"{type(ex).__name__}: {str(ex)[:160]}"
+    jsonl({"tipo": "video", "ts": agora, "t0": ep["t0"], "ini": ini, "fim": fim, "final": final,
+           "parte": parte, "bytes": tam, "destino": destino, "motivo": motivo, "mode": MODE, "texto": texto})
+    log(f"vídeo {hhmm(ini)} {duracao(j1 - j0)} parte {parte}{' final' if final else ''} "
+        f"{tam / 1e6:.1f} MB → {destino}{' (' + motivo + ')' if motivo else ''}")
 
 
 def one_round(st, agora=None, first=False):
@@ -509,6 +608,7 @@ def one_round(st, agora=None, first=False):
         if eid in st["seen"]:
             if ep and eid in ep["eids"]:
                 ep["fim"] = max(ep["fim"], t_fim)
+                ep.setdefault("ev", {})[eid] = [t_ini, e.get("end_time")]
             continue
         st["seen"][eid] = t_ini
         if first:
@@ -517,6 +617,7 @@ def one_round(st, agora=None, first=False):
             ep["n"] += 1
             ep["eids"].append(eid)
             ep["fim"] = max(ep["fim"], t_fim)
+            ep.setdefault("ev", {})[eid] = [t_ini, e.get("end_time")]
             if e["label"] == "person" and ep["label"] != "person" and not ep.get("seguimento"):
                 # carro primeiro, pessoa depois: segunda mensagem com a foto da pessoa
                 ep["seguimento"] = {"eid": eid, "t": t_ini, "decidido": None}
@@ -530,7 +631,8 @@ def one_round(st, agora=None, first=False):
                 f"(WiFi: {', '.join(st['rede'].get('pessoas') or []) or '?'})")
             continue
         st["episodio"] = {"t0": t_ini, "eid": eid, "label": e["label"], "n": 1, "eids": [eid],
-                          "fim": t_fim, "decidido": None, "sev": None, "seguimento": None}
+                          "fim": t_fim, "decidido": None, "sev": None, "seguimento": None,
+                          "ev": {eid: [t_ini, e.get("end_time")]}, "video_ate": 0, "video_parte": 0}
         log(f"episódio aberto {hhmm(t_ini)} {e['label']} ({eid}) — veredito em {JANELA_S}s")
     ep = st.get("episodio")
     if ep and not ep["decidido"] and agora >= ep["t0"] + JANELA_S:
@@ -538,6 +640,8 @@ def one_round(st, agora=None, first=False):
     seg = ep and ep.get("seguimento")
     if seg and not seg["decidido"] and agora >= seg["t"] + JANELA_S:
         decidir(st, ep, agora, seguimento=True)
+    if VIDEO and ep and ep["decidido"] and ep.get("sev") == "🔴" and ep.get("enviado"):
+        video(st, ep, agora)
     if ep and ep["decidido"] and (not seg or seg["decidido"]) and agora > ep["fim"] + EPISODIO_MIN * 60:
         log(f"episódio das {hhmm(ep['t0'])} encerrado (×{ep['n']})")
         st["episodio"] = None
@@ -574,6 +678,19 @@ def selftest():
     except Exception as ex:  # noqa: BLE001
         ok = False
         print(f"waha      FALHA  {ex}")
+    if VIDEO:
+        try:
+            h = http_json(f"{CLIPE_URL}/health", timeout=10)
+            idade = h["agora"] - (h.get("mais_novo") or 0)
+            bom = h.get("recorder_vivo") and idade < 40
+            ok = ok and bool(bom)
+            print(f"clipe     {'OK ' if bom else 'FALHA'} {CLIPE_URL}: {h.get('segmentos')} segmentos, "
+                  f"último há {idade} s, buffer de {(h['agora'] - (h.get('mais_antigo') or h['agora'])) // 60} min")
+        except Exception as ex:  # noqa: BLE001
+            ok = False
+            print(f"clipe     FALHA  {ex}")
+    print(f"vídeo={int(VIDEO)} pausa={VIDEO_GAP_S}s parte={VIDEO_MAX_S}s evento≤{VIDEO_EV_MAX_S}s "
+          f"teto={MAX_VIDEOS_HORA}/h")
     print(f"mode={MODE} group={'ok' if GROUP_JID else 'VAZIO'} test={'ok' if TEST_JID else 'VAZIO'} "
           f"estado→{AVISAR_ESTADO} armar_apos={ARMAR_APOS_MIN}min janela={JANELA_S}s pre={PRE_S}s "
           f"episodio={EPISODIO_MIN}min tetos={MAX_HORA}/h {MAX_DIA}/dia forcar={int(FORCAR_ARMADO)}")
@@ -631,6 +748,17 @@ def test_alert(chat):
     return 0
 
 
+def test_video(chat, segundos):
+    agora = time.time()
+    j1 = agora - 15                      # o segmento corrente do buffer ainda está sendo escrito
+    j0 = j1 - segundos
+    mp4 = http_bytes(f"{CLIPE_URL}/clip.mp4?start={j0:.1f}&end={j1:.1f}", timeout=240)
+    texto = f"[TESTE] 🎥 *Canteiro · {quando(j0)}* — vídeo da detecção ({duracao(segundos)})"
+    print(f"clipe {len(mp4) / 1e6:.1f} MB → {chat}\n{texto}")
+    print(f"WAHA HTTP {send(chat, texto, None, mp4)}")
+    return 0
+
+
 def main():
     args = sys.argv[1:]
     if args[:1] == ["--selftest"]:
@@ -644,6 +772,15 @@ def main():
         if not chat:
             sys.exit("--test-alert: informe o JID ou configure TEST_JID")
         return test_alert(chat)
+    if args[:1] == ["--test-video"]:
+        rest = args[1:]
+        segundos = int(rest.pop()) if rest and rest[-1].isdigit() else 30
+        chat = rest[0] if rest else TEST_JID
+        if not chat:
+            sys.exit("--test-video: informe o JID ou configure TEST_JID")
+        return test_video(chat, segundos)
+    if args:
+        sys.exit(f"argumento desconhecido: {args[0]}")   # nunca cair no laço por engano (2º vigia)
     if MODE not in ("log", "shadow", "live"):
         sys.exit(f"MODE inválido: {MODE}")
     if AVISAR_ESTADO not in ("teste", "grupo", "nao"):
