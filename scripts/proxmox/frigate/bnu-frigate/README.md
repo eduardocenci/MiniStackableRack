@@ -206,3 +206,28 @@ saturates the canteiro uplink (incident 2026-08-26, see
 descriptions as the house cameras. Recordings are HEVC — Frigate handles
 them fine; some browsers without HEVC decode may not play them back in the
 web UI (use Edge/Safari or export).
+
+## canteiro-clipe — mosaic rolling buffer + clips on demand (added 2026-11-14)
+
+[`canteiro-clipe.py`](canteiro-clipe.py) + [`canteiro-clipe.service`](canteiro-clipe.service)
+(live: `/usr/local/bin/canteiro-clipe.py`, `/etc/systemd/system/canteiro-clipe.service`,
+enabled). One Python process:
+
+- **recorder** — `ffmpeg -c copy` of `rtsp://10.1.1.123:8555/mosaico` (what `canteiro-mosaico`
+  publishes) into 10 s MPEG-TS segments `/var/lib/canteiro-clipe/<epoch>.ts`; the last 60 min
+  are kept (~1,4 GB). No decode — negligible CPU.
+- **HTTP `:8556`** (clients `127.0.0.1` and `10.1.1.123` only) —
+  `GET /clip.mp4?start=<epoch>&end=<epoch>` trims and re-encodes on the GPU to H.264 1920×540,
+  bitrate chosen to stay ≤ 14 MB (30 s → 4,5 MB in 3,6 s, measured); `GET /health`.
+
+**Consumer:** `canteiro-vigia` on bnu-raspberrypi (video of each detection stretch —
+[`../../../raspberry-pi/bnu-raspberrypi/canteiro-vigia/README.md`](../../../raspberry-pi/bnu-raspberrypi/canteiro-vigia/README.md)).
+
+```bash
+python scripts/devtool.py run bnu-proxmox "pct exec 105 -- systemctl status canteiro-clipe"
+python scripts/devtool.py run bnu-proxmox "pct exec 105 -- curl -s 127.0.0.1:8556/health"
+python scripts/devtool.py run bnu-proxmox "pct exec 105 -- journalctl -u canteiro-clipe -n 30 --no-pager"
+```
+
+**Rollback** = `systemctl disable --now canteiro-clipe` (+ `rm -r /var/lib/canteiro-clipe`);
+the vigia then skips the videos and keeps sending the photos.
