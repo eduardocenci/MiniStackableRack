@@ -4,39 +4,37 @@
 Todo dia às 20:10 America/Sao_Paulo (container canteiro-sunset-compare no
 bnu-raspberrypi, supercronic com TZ=America/Sao_Paulo — ver
 docker/canteiro-jobs/; o "dia" é calculado aqui com ZoneInfo, nunca com a
-hora local) o script decide o que emitir — cada produto é uma grade 2×3
-(linha 1 = baseline, linha 2 = hoje; colunas posicao3 | posicao1 |
-posicao2 = esquerda→centro→direita da obra; 800 px/célula → 2400×900):
+hora local) o script decide o que emitir — cada produto é uma grade 2×2,
+o MOSAICO das duas lentes antes e depois (decisão Eduardo 14/11/2026: a
+câmera PT não se move mais; lente fixa à esquerda, olhando a rua, lente PT
+à direita, parada na posição de repouso — juntas, "quase 180°"):
+
+    linha 1 = baseline   [ lentefixa | posicao1 ]
+    linha 2 = hoje       [ lentefixa | posicao1 ]      1200 px/célula → 2400×1350
 
   🌇 Dia de Trabalho (seg–sex)    baseline = ontem; segunda usa SEXTA
-                                  (exceção 31/08/2026: domingo 30/08)
   🏗️ Semana de Trabalho (sexta)   baseline = sexta anterior; legenda mostra
-                                  seg–sex da semana (exceção 04/09/2026:
-                                  domingo 30/08)
+                                  seg–sex da semana
   📆 Mês de Trabalho (dia 25,     baseline = dia 26 do mês anterior —
      qualquer dia da semana)      janela de medição da empreiteira 26→25
-                                  (exceção 25/09/2026: 31/08, decisão
-                                  Eduardo — não há imagens de 26/08)
+
+Até 13/11/2026 a grade era 2×3 (posicao3 | posicao1 | posicao2 — a lente PT
+em três enquadramentos, alinhados por software pelo pilar do galpão,
+pilar_align.py). Sem excursões não há tremor a corrigir: o alinhamento saiu.
+Uma baseline anterior a 14/11 mostra o enquadramento antigo das lentes — a
+legenda avisa.
 
 Fotos vêm do timelapse do ara Pi (upload às 20:00 — daí a folga de 10 min
 + retries; cache local reusa downloads entre produtos da mesma execução).
-Desde 11/09/2026 a fonte é `<pos>/Luminancia125/` — a janela do pôr do sol
-cujo frame de pos1 tem luminância mais perto de 125, escolhida no ara ao fim
-da sequência (decisão Eduardo: a luz em T varia com o clima, 100 a 128;
-com a seleção fica entre 123 e 126). Se um dia não tiver a pasta (seleção
-não rodou), cai para `por-do-sol` e avisa no SmokeTests.
+A fonte é `<pos>/Luminancia125/` — a janela do pôr do sol cujo frame de
+pos1 tem luminância mais perto de 125, escolhida no ara ao fim da sequência
+(decisão Eduardo 11/09/2026: a luz em T varia com o clima, 100 a 128; com a
+seleção fica entre 123 e 126). Se um dia não tiver a pasta (seleção não
+rodou), cai para `por-do-sol` e avisa no SmokeTests.
 Cada grade é arquivada no topo do Timelapse em
 `<DiaDeTrabalho|SemanaDeTrabalho|MesDeTrabalho>/YYYY-MM-DD.jpg` e enviada
 no WhatsApp via WAHA `sendImage` (base64 — funciona neste Core build,
-mesmo padrão do canteiro-watchdog).
-
-Desde 07/09/2026 a grade é ALINHADA por software: mede-se o deslocamento
-do pilar do galpão na pos1 de cada dia (pilar_align, mesma medição da
-re-âncora do ara) e desloca+recorta as 3 colunas daquele dia por esse
-offset, zerando o tremor entre dias (pos2/pos3 herdam o offset da guarda).
-Sem numpy/pillow ou sem as referências do Drive, cai no modo antigo
-(ffmpeg, sem alinhar). Como o recorte come a faixa inferior onde a câmera
-grava o carimbo, cada célula recebe uma etiqueta DD/MM desenhada.
+mesmo padrão do canteiro-watchdog). Cada célula leva uma etiqueta DD/MM.
 
 Config: ~/canteiro-jobs/env/canteiro-sunset-compare.env (env_file do
 compose) — WAHA_URL, WAHA_KEY, WAHA_SESSION, GROUP_JID, TEST_JID,
@@ -46,10 +44,10 @@ do ara Pi).
 
 Teste manual (vai ao TEST_JID — grupo Casa SmokeTests):
   docker exec canteiro-sunset-compare python3 /app/canteiro-sunset-compare.py --test [all|daily|semana|mes] [chatId]
+  (+ --as-of AAAA-MM-DD refaz a grade daquele dia e a ARQUIVA no Drive; + --no-archive só envia)
   (sem filtro: testa os produtos que valeriam hoje; com filtro, força-os)
 """
 import base64
-import glob
 import json
 import os
 import subprocess
@@ -60,8 +58,6 @@ import urllib.request
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-import pilar_align   # alinhamento por software (mede o pilar, desloca+recorta)
-
 TZ = ZoneInfo("America/Sao_Paulo")
 
 WAHA_URL     = os.environ.get("WAHA_URL", "http://10.1.1.126:3000")
@@ -70,18 +66,19 @@ WAHA_SESSION = os.environ.get("WAHA_SESSION", "default")
 GROUP_JID    = os.environ["GROUP_JID"]
 TEST_JID     = os.environ.get("TEST_JID", GROUP_JID)
 REMOTE       = os.environ.get("RCLONE_REMOTE", "ceuazul:Timelapse")
-POSITIONS    = ["posicao3", "posicao1", "posicao2"]   # ordem das colunas
+POSITIONS    = ["lentefixa", "posicao1"]   # colunas do mosaico: lente fixa (esq., rua) | lente PT (dir.)
+MOSAIC_SINCE = date(2026, 11, 14)          # lentes reposicionadas; antes disso o enquadramento era outro
 LUM_FOLDER   = "Luminancia125"   # janela escolhida por luminancia (ara: timelapse-capture luminancia)
 # Sem Luminancia125 naquele dia (a selecao nao rodou — sequencia morta por
 # queda de energia, 27/10/2026): tenta as janelas do por do sol nesta ordem.
 FALLBACK_WINS = ["por-do-sol", "por-do-sol-menos-10min", "por-do-sol-mais-10min",
                  "por-do-sol-menos-20min", "por-do-sol-mais-20min"]
 FALLBACK_WIN = FALLBACK_WINS[0]
-# Linha de cima (baseline) sem as 3 fotos: recua dia a dia ate este limite por
+# Linha de cima (baseline) sem as fotos das duas lentes: recua dia a dia ate este limite por
 # um dia completo, em vez de nao emitir a grade (28/10/2026 nao saiu porque
 # 27/10 nao tinha fotos; a legenda diz qual dia foi usado).
 BASELINE_BACK_DAYS = 7
-CELL_W       = 800
+CELL_W       = 1200
 RETRIES      = 8      # fotos de hoje: espera o upload das 20:00 até ~20:35
 RETRY_WAIT_S = 180
 
@@ -118,99 +115,30 @@ def rclone_fetch(pos, day, dest_dir, retries=1, window=LUM_FOLDER):
     return None
 
 
-def montage_grid(cells, out):
-    """Grade 2x3: `cells` = 6 caminhos na ordem linha1(p3,p1,p2)+linha2(idem)."""
-    args = ["ffmpeg", "-nostdin", "-loglevel", "error"]
-    for c in cells:
-        args += ["-i", c]
-    scaled = "".join(f"[{i}]scale={CELL_W}:-2[s{i}];" for i in range(6))
-    filt = (scaled
-            + "[s0][s1][s2]hstack=inputs=3[r1];"
-            + "[s3][s4][s5]hstack=inputs=3[r2];"
-            + "[r1][r2]vstack=inputs=2")
-    args += ["-filter_complex", filt, "-frames:v", "1", "-q:v", "3", "-y", out]
-    r = subprocess.run(args, timeout=120)
-    return r.returncode == 0 and os.path.exists(out) and os.path.getsize(out) > 100_000
-
-
-PAD_PX       = 28     # folga alem do maior offset, ao recortar
-MAX_MARGIN   = 320    # recorte maximo por lado (protege o enquadramento)
-
-
-def _montage_aligned(cells, row_offs, days, out):
-    """Monta a grade 2x3 em PIL alinhando cada linha pelo offset do pilar.
-    `row_offs` = [(sx,sy)|None, (sx,sy)|None] (linha de cima, linha de baixo);
-    o offset da linha vale para as 3 colunas (p3,p1,p2). Recorta a janela de
-    referencia deslocada de (sx,sy) e etiqueta DD/MM. Retorna True/False."""
+def montage_grid(cells, days, out):
+    """Grade 2x2 em PIL: `cells` = linha1(lentefixa, posicao1) + linha2(idem);
+    `days` = (dia de cima, dia de baixo) para a etiqueta DD/MM de cada célula."""
     from PIL import Image, ImageDraw, ImageFont
+    n = len(POSITIONS)
     ims = [Image.open(c).convert("RGB") for c in cells]
     W, H = ims[0].size
-    shifts = []
-    for ri in range(2):
-        shifts += [row_offs[ri] if row_offs[ri] else (0, 0)] * 3
-    mags = [max(abs(o[0]), abs(o[1])) for o in row_offs if o]
-    M = min(MAX_MARGIN, (max(mags) + PAD_PX) if mags else PAD_PX)
-    cw, ch = W - 2 * M, H - 2 * M
     tw = CELL_W
-    th = round(CELL_W * ch / cw)
-    canvas = Image.new("RGB", (tw * 3, th * 2), (18, 18, 18))
+    th = round(CELL_W * H / W)
+    canvas = Image.new("RGB", (tw * n, th * 2), (18, 18, 18))
     dr = ImageDraw.Draw(canvas)
     try:
-        font = ImageFont.load_default(size=30)
+        font = ImageFont.load_default(size=34)
     except Exception:
         font = ImageFont.load_default()
-    for idx, (im, (sx, sy)) in enumerate(zip(ims, shifts)):
-        left = max(0, min(M + sx, W - cw))
-        top = max(0, min(M + sy, H - ch))
-        tile = im.crop((left, top, left + cw, top + ch)).resize((tw, th))
-        r, c = divmod(idx, 3)
-        canvas.paste(tile, (c * tw, r * th))
-        tag = days[0 if idx < 3 else 1].strftime("%d/%m")
-        tx, ty = c * tw + 10, r * th + th - 40
-        dr.rectangle([tx - 5, ty - 4, tx + 82, ty + 32], fill=(0, 0, 0))
+    for idx, im in enumerate(ims):
+        r, c = divmod(idx, n)
+        canvas.paste(im.resize((tw, th)), (c * tw, r * th))
+        tag = days[r].strftime("%d/%m")
+        tx, ty = c * tw + tw - 104, r * th + 12     # canto superior direito: o carimbo
+        dr.rectangle([tx - 6, ty - 4, tx + 92, ty + 38], fill=(0, 0, 0))   # da câmera fica embaixo
         dr.text((tx, ty), tag, fill=(255, 220, 0), font=font)
     canvas.save(out, quality=88)
-    return os.path.exists(out) and os.path.getsize(out) > 50_000
-
-
-def build_montage(cells, day_top, day_bottom, ref_dir, out):
-    """Grade alinhada quando da (numpy/pillow + refs + medicao valida da
-    pos1); senao a grade ffmpeg de sempre. Retorna (ok, alinhada)."""
-    if ref_dir and pilar_align.available():
-        offs = []
-        for idx, day in ((1, day_top), (4, day_bottom)):   # cells[1]/[4] = pos1
-            r = None
-            try:
-                r = pilar_align.measure_valid(cells[idx], ref_dir)
-            except Exception as e:
-                print(f"align: erro medindo pos1 {day:%d/%m}: {e}", file=sys.stderr)
-            o = pilar_align.sane_offset(r)
-            offs.append(o)
-            if o:
-                print(f"align {day:%d/%m}: offset=({o[0]:+d},{o[1]:+d}) "
-                      f"psr={r[2]:.0f} ref={r[3]}")
-            else:
-                print(f"align {day:%d/%m}: sem shift (medicao invalida/implausivel)")
-        if any(offs):
-            if _montage_aligned(cells, offs, (day_top, day_bottom), out):
-                return True, True
-            print("align: montagem alinhada falhou, caindo no ffmpeg", file=sys.stderr)
-    return montage_grid(cells, out), False
-
-
-def fetch_refs(dest):
-    """Baixa as referencias posicao1-*.jpg do Drive (ceuazul:Timelapse/ref)
-    para `dest`; retorna `dest` ou None."""
-    os.makedirs(dest, exist_ok=True)
-    r = subprocess.run(["rclone", "copy", f"{REMOTE}/ref", dest,
-                        "--include", "posicao1-*.jpg"],
-                       capture_output=True, timeout=180)
-    if r.returncode != 0:
-        print("align: rclone das refs falhou: "
-              + r.stderr.decode(errors="replace")[-200:], file=sys.stderr)
-    if glob.glob(os.path.join(dest, "posicao1-*.jpg")):
-        return dest
-    return None
+    return os.path.exists(out) and os.path.getsize(out) > 100_000
 
 
 def waha_post(endpoint, payload):
@@ -238,23 +166,15 @@ def send_image(chat, path, caption):
 
 
 def previous_workday(today):
-    if today == date(2026, 8, 31):   # exceção única: sexta 28/08 não tem pos2/pos3
-        return date(2026, 8, 30)
     return today - timedelta(days=3 if today.weekday() == 0 else 1)
 
 
 def week_baseline(today):
-    if today == date(2026, 9, 4):    # 1ª semana: sexta 28/08 não tem pos2/pos3
-        return date(2026, 8, 30)
     return today - timedelta(days=7)  # sexta anterior
 
 
 def month_baseline(today):
     # Mês de medição da empreiteira: 26 do mês anterior → 25 do atual.
-    if today == date(2026, 9, 25):   # 1º mês: sem imagens de 26/08. Eduardo
-        # avaliou 30 e 31/08 (ambas com pos1 deslocada — era pré-reâncora) e
-        # escolheu 31/08 como a melhor. Não trocar para 30/08.
-        return date(2026, 8, 31)
     prev_last = today.replace(day=1) - timedelta(days=1)
     return prev_last.replace(day=26)
 
@@ -265,7 +185,7 @@ def month_caption_range(today):
 
 
 def fetch_day(day, tmp, retries):
-    """3 celulas (p3,p1,p2) de um dia: Luminancia125, senao a primeira janela
+    """2 celulas (lentefixa, posicao1) de um dia: Luminancia125, senao a primeira janela
     do por do sol que existir. Devolve (cells, faltam, fallback)."""
     cells, faltam, fallback = [], [], []
     for pos in POSITIONS:
@@ -284,10 +204,10 @@ def fetch_day(day, tmp, retries):
 
 
 def make_grid_cells(day_top, day_bottom, tmp, retries_bottom):
-    """6 celulas na ordem linha1(p3,p1,p2)+linha2(idem). Fonte Luminancia125;
+    """4 celulas na ordem linha1(lentefixa,posicao1)+linha2(idem). Fonte Luminancia125;
     sem ela naquele dia, cai para a primeira janela do por do sol que existir
     (listado em `fallback`). Linha de cima incompleta: recua ate
-    BASELINE_BACK_DAYS por um dia com as 3 fotos. Devolve
+    BASELINE_BACK_DAYS por um dia com as duas fotos. Devolve
     (cells, faltam, fallback, dia_de_cima_usado)."""
     top_used, top_cells, top_fb, first_faltam = None, [], [], []
     d = day_top
@@ -308,6 +228,8 @@ def make_grid_cells(day_top, day_bottom, tmp, retries_bottom):
 
 def main():
     argv = sys.argv[1:]
+    no_archive = "--no-archive" in argv   # teste que nao sobrescreve a grade arquivada no Drive
+    argv = [a for a in argv if a != "--no-archive"]
     as_of = None   # --as-of YYYY-MM-DD: "hoje" para testes/backfill (so com --test)
     if "--as-of" in argv:
         i = argv.index("--as-of")
@@ -343,9 +265,6 @@ def main():
 
     rc = 0
     with tempfile.TemporaryDirectory(prefix="sunset-compare-") as tmp:
-        ref_dir = fetch_refs(os.path.join(tmp, "ref")) if pilar_align.available() else None
-        if pilar_align.available() and not ref_dir:
-            print("align: refs indisponiveis, grades sairao sem alinhamento", file=sys.stderr)
         for nome, day_top, caption, pasta in products:
             titulo = caption.split("*")[1]
             cells, faltam, fallback, top_used = make_grid_cells(
@@ -353,7 +272,7 @@ def main():
             if top_used != day_top:
                 caption += (f"\n_linha de cima: {top_used:%d/%m} — "
                             f"{day_top:%d/%m} sem fotos no Drive_")
-                st = send_text(TEST_JID, prefix + f"ℹ️ {titulo}: {day_top:%d/%m} sem as 3 fotos "
+                st = send_text(TEST_JID, prefix + f"ℹ️ {titulo}: {day_top:%d/%m} sem as fotos "
                                f"no Drive — linha de cima = {top_used:%d/%m}.")
                 print(f"{nome}: baseline {day_top:%d/%m} -> {top_used:%d/%m}, aviso HTTP {st}")
                 day_top = top_used
@@ -367,8 +286,15 @@ def main():
                 print(f"{nome}: fotos faltando ({', '.join(faltam)}), aviso enviado, HTTP {st}")
                 rc = 1
                 continue
+            if day_top < MOSAIC_SINCE <= today:
+                caption += (f"\n_linha de cima ({day_top:%d/%m}): enquadramento antigo — "
+                            f"as lentes foram reposicionadas em {MOSAIC_SINCE:%d/%m}_")
             out = os.path.join(tmp, f"{nome}.jpg")
-            ok, aligned = build_montage(cells, day_top, today, ref_dir, out)
+            try:
+                ok = montage_grid(cells, (day_top, today), out)
+            except Exception as e:
+                print(f"{nome}: erro na montagem: {e}", file=sys.stderr)
+                ok = False
             if not ok:
                 st = send_text(chat, prefix + f"⚠️ {titulo} falhou na montagem.")
                 print(f"{nome}: montagem falhou, aviso enviado, HTTP {st}")
@@ -379,15 +305,15 @@ def main():
                 shutil.copyfile(out, f"/tmp/ultima-{nome}.jpg")
             except OSError:
                 pass
-            r = subprocess.run(["rclone", "copyto", out,
-                                f"{REMOTE}/{pasta}/{today:%Y-%m-%d}.jpg"],
-                               capture_output=True, timeout=180)
-            if r.returncode != 0:
+            r = None if no_archive else subprocess.run(
+                ["rclone", "copyto", out, f"{REMOTE}/{pasta}/{today:%Y-%m-%d}.jpg"],
+                capture_output=True, timeout=180)
+            if r is not None and r.returncode != 0:
                 print(f"rclone copyto {pasta} falhou: "
                       + r.stderr.decode(errors="replace")[-200:], file=sys.stderr)
             st = send_image(chat, out, prefix + caption)
             print(f"{nome}: {day_top:%d/%m} vs {today:%d/%m} "
-                  f"({'alinhada' if aligned else 'sem alinhamento'}) enviada, HTTP {st} -> {chat}")
+                  f"(mosaico 2x2) enviada, HTTP {st} -> {chat}")
     return rc
 
 

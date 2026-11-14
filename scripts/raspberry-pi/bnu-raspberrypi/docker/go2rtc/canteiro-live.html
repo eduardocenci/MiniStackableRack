@@ -4,7 +4,10 @@
      Live copy: bnu-raspberrypi:/usr/local/share/canteiro-live/index.html,
      served at https://bnu-raspberrypi.woodpecker-shark.ts.net/live via
      `tailscale serve` (path /live).
-     Video: same-origin /hls/canteiro/index.m3u8 — mediamtx (canteiro-hls
+     Video: same-origin /hls/mosaico/index.m3u8 — the MOSAIC [fixed lens |
+     PT lens] since 2026-11-14 (H.264 2560x720, composed by canteiro-mosaico
+     in the bnu Frigate LXC); ?src=canteiro or ?src=canteiro-fixa plays one
+     lens alone (HEVC 2304x1296). mediamtx (canteiro-hls
      service, ../canteiro-hls/) packaging the shared go2rtc producer into
      honest 4 s segments with a ~35 s live window. (Until 2026-08-29 this
      pointed at go2rtc's own HLS, whose ~1 s window collapsed on any Starlink
@@ -56,7 +59,11 @@
 <video id="v" muted autoplay playsinline controls></video>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
-  const SRC = '/hls/canteiro/index.m3u8?cookieCheck=1';
+  // MOSAICO [lente fixa (rua) | lente PT] desde 14/11/2026 — H.264 2560x720.
+  // As lentes sozinhas seguem em /hls/canteiro (PT) e /hls/canteiro-fixa: ?src=canteiro|canteiro-fixa
+  const ONLY = new URLSearchParams(location.search).get('src');
+  const PATH = ['canteiro', 'canteiro-fixa'].includes(ONLY) ? ONLY : 'mosaico';
+  const SRC = '/hls/' + PATH + '/index.m3u8?cookieCheck=1';
   const OFFLINE_AFTER_MS = 15000;   // tolera rebuffer curto antes de declarar queda
   const RETRY_MS = 5000;
   const v = document.getElementById('v');

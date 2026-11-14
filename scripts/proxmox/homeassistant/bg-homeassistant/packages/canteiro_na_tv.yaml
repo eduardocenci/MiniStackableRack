@@ -5,8 +5,10 @@
 #     ─tailnet─▶ bg-proxmox canteiro-tv-proxy (192.168.0.120:1984, socket-activated; see scripts/proxmox/bg-proxmox/)
 #     ─bg LAN─▶ TV Sala 50" QLED (QN50Q7FA, 2025) native Google Cast receiver — media_player.50_qled, 192.168.0.111
 #
-# HEVC passthrough progressive MP4, never the canteiro_h264 transcode and never HLS (the Samsung
-# Cast receiver rejects go2rtc's HLS). The URL is an IP because Cast receivers cannot resolve names.
+# Progressive MP4 of go2rtc's canteiro_mosaico since 2026-11-14 — the two-lens mosaic, H.264
+# 2560x720 15 fps, composed on the bnu Frigate LXC's GPU (src=canteiro, the PT lens alone in HEVC
+# passthrough, until then). Never the canteiro_h264 transcode and never HLS (the Samsung Cast
+# receiver rejects go2rtc's HLS). The URL is an IP because Cast receivers cannot resolve names.
 #
 # Start/stop bookmarks: two webhook automations created through the HA UI/config API (they live in
 # automations.yaml, not here, so the ids stay out of git) — "Webhook — Canteiro na TV (ligar)" →
@@ -31,5 +33,5 @@ script:
         target:
           entity_id: media_player.50_qled
         data:
-          media_content_id: "http://192.168.0.120:1984/api/stream.mp4?src=canteiro"
+          media_content_id: "http://192.168.0.120:1984/api/stream.mp4?src=canteiro_mosaico"
           media_content_type: "video/mp4"

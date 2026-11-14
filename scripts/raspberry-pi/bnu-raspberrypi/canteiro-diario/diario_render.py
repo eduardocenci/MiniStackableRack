@@ -261,7 +261,7 @@ def build_html(diario: dict, pack: Path, full: bool, body_class: str = "") -> st
     if montage.exists():
         antes = f'<figure class="wide">{img_tag(montage, "montagem ontem × hoje", 1500, 72)}<figcaption>{rich(d.get("antes_depois_caption"))}</figcaption></figure>'
     else:
-        p2, p3 = pack / "sunset_pos2.jpg", pack / "sunset_pos3.jpg"
+        p2, p3 = pack / "sunset_fixa.jpg", pack / "sunset_pt.jpg"   # mosaico: lente fixa | lente PT
         antes = ('<div class="two">' + "".join(f'<figure>{img_tag(p, "pôr do sol", 1100)}</figure>' for p in (p2, p3) if p.exists()) + "</div>"
                  + f'<figcaption>{rich(d.get("antes_depois_caption"))}</figcaption>')
     week = d.get("week")
@@ -324,7 +324,7 @@ def build_html(diario: dict, pack: Path, full: bool, body_class: str = "") -> st
     <div><table style="max-width:260pt"><thead><tr><th>Hora</th><th class="num">Eventos pessoa</th><th class="num">Eventos veículo</th></tr></thead><tbody>{rows_html}</tbody></table></div></div>
 </section>
 <section class="pg"><div class="pgtitle">Diário de Obra · {esc(date)} · o dia em frames</div><h2>O dia em frames</h2>
-  <p>Frames do timelapse (câmera PT, 2304×1296, a cada 15 min).</p><div class="frames">{frames}</div></section>
+  <p>Frames do timelapse (lente PT em repouso, 2304×1296, a cada 15 min).</p><div class="frames">{frames}</div></section>
 <section class="pg"><div class="pgtitle">Diário de Obra · {esc(date)} · pessoas e veículos</div><h2>Pessoas e veículos</h2>
   <div class="two"><div><h3>Quem esteve na obra</h3><ul>{pessoas}</ul></div><div><h3>Veículos</h3><ul>{veiculos}</ul></div></div>
   <div class="snaps" style="margin-top:8pt">{snaps}</div></section>

@@ -146,6 +146,29 @@ to Casa SmokeTests). After changing the launcher or the clone, restart the task
 and check that the heartbeat `pid` changed: a Start right after a Stop can still
 find the lock held and exit, leaving the task `Ready` with nothing running.
 
+### bnu UPS (nobreak) — read it through ups-monitor on bnu-raspberrypi (found 2026-11-11)
+
+The bnu rack UPS is an **SMS Premium 1500 VA bivolt** (reports `PRM1500BiBiW`, fw
+`1.3`). It is wired to **bnu-raspberrypi** through a Prolific PL2303 USB-serial adapter
+(`/dev/ttyUSB0`, by-id `…Prolific…BHAFb149907…`, since 2026-10-28) and answers the SMS
+protocol at 2400 8N1, the same one NUT's `sms_ser` driver speaks. Since 2026-11-11 the
+**`ups-monitor` container owns that port**. It WhatsApps Casa Blumenau on *falta de
+energia* / *bateria < 20 %* / *energia voltou* and feeds the globalnet nobreak card.
+Read the UPS through its API, not the port:
+
+- `curl -s http://bnu-raspberrypi:8795/api/status`: live reading and state
+- `curl -s http://bnu-raspberrypi:8795/api/stats`: *ativações* and recent episodes and
+  messages
+- `curl -s -X POST http://bnu-raspberrypi:8795/api/test`: one test message to Casa
+  SmokeTests
+
+To read the raw port (`python3 sms_serial.py --raw`, sends only `Q`/`I`/`F`), stop the
+container first. The UPS's SMS "UPS Wi-Fi" module (`10.1.1.159`, LAN-only web UI) still
+answers, but its credentials are unknown (`admin`/`admin` is refused). Don't probe it for
+SNMP/Modbus/NUT: only HTTP is open. Code, protocol and deploy:
+`scripts/raspberry-pi/bnu-raspberrypi/docker/ups-monitor/README.md`. Runbook: globalnet
+`docs/runbooks/ups-monitor.md`.
+
 ### ARA (home build — dashboard site `home: true`, still not in devtool.py)
 
 `ara-raspberrypi2` is a tailnet node (the "computadorzinho" in the canteiro
@@ -157,7 +180,8 @@ node still sits offline in the tailnet. The successor joined as its own
 node, **`ara-raspberrypi2` (`100.65.218.33`)**, and every consumer was
 repointed the same day:
 - bnu go2rtc (since 2026-10-29 only `canteiro-sub`, plus `canteiro-alt-sub`
-  since 2026-11-04; the main stream is pulled by bnu `canteiro-hls`, see below);
+  since 2026-11-04; the two main streams, `canteiro` and — since 2026-11-14 —
+  `canteiro-alt`, are pulled by bnu `canteiro-hls`, see below);
 - the bnu canteiro-jobs env: `ARA_NTO_URL` and the watchdog's `ARA_HOST`;
 - globalnet `ARA_STARLINK_GRPC`, `architecture.yaml` and `app.py`;
 - HA `frigate_whatsapp.py`.
@@ -181,23 +205,45 @@ Dia de Trabalho grid; since 2026-10-29 the `canteiro-timelapse` container
 resumes the sequence on restart and the bnu grid falls back to an earlier
 baseline (see `scripts/raspberry-pi/ara-raspberrypi/timelapse/README.md`).
 
-**The camera drops its RTSP stream at the start of most PTZ excursions**
-(timelapse sequences 05:00–06:00 and 16:40–19:00 BRT). The relay logs
-`[path canteiro] [RTSP source] EOF` and reopens the camera 5 s later with
-a new RTP timestamp base (history: grep the raw relay json log as above;
-29/10 08:27:06Z, 08:37:06Z, 08:47:05Z; 28/10 21:09:42Z, 21:19:41Z). The
-timelapse grabs are unaffected (6 attempts). Until 2026-10-29 the bnu
-go2rtc pulled the main stream and swapped its producer under its
-consumers' sessions. That timestamp jump crash-looped the `/live` HLS
-muxer until the watchdog's auto-heal, 1–3 `🔧 Auto-heal do /live` pairs
-per sequence in Casa SmokeTests. Since then the main stream's single
-puller at bnu is `canteiro-hls` (mediamtx, `alwaysAvailable` with a
-"sem sinal" card), and go2rtc reads it from `127.0.0.1:8555`. Expect an
-EOF → `stream is online` pair in its log, 5–10 s apart, per excursion;
-the heal should stay silent. Do **not** add a second reader of the main
-stream from bnu: 1.4 Mbps per copy, and two copies stalled the Starlink
-upload on 2026-08-26. Details:
+**Nothing moves the camera any more (2026-11-14, decisão Eduardo).** The two
+lenses were re-aimed to give an "almost 180°" view side by side — fixed lens
+(channel 2, relay `canteiro-alt`) looking left to the street, PT lens
+(channel 1, relay `canteiro`) parked at its rest position looking right —
+and the mosaic `[fixed | PT]` is the view everywhere (timelapse folders
+`lentefixa` + `posicao1`, the bnu 2×2 before/after grids, `/live`, the TV).
+`timelapse-capture` sends no PTZ command; only the firmware's auto-tracking
+moves the PT lens (back to rest ~1 min after losing the target), and
+`canteiro-ptz` is a manual tool (a manual move changes the mosaic's right
+half and is not undone by the firmware). History: until 2026-11-13 the
+timelapse walked the PT lens through `posicao2`/`posicao3` in every solar
+window, and the camera dropped its RTSP stream at the start of most of
+those excursions (relay log `[path canteiro] [RTSP source] EOF`, reopened
+5 s later with a new RTP timestamp base). Until 2026-10-29 that timestamp
+jump crash-looped the `/live` HLS muxer behind go2rtc (1–3 `🔧 Auto-heal do
+/live` pairs per sequence in Casa SmokeTests); since then the single puller
+of the mains at bnu is `canteiro-hls` (mediamtx, `alwaysAvailable` with a
+"sem sinal" card) and go2rtc reads it from `127.0.0.1:8555` — that design
+stays, it also covers camera/Starlink dropouts. Do **not** add a second
+reader of either main stream from bnu: 1.4 Mbps per copy, and two copies of
+one main stalled the Starlink upload on 2026-08-26. Details:
 `scripts/raspberry-pi/bnu-raspberrypi/docker/canteiro-hls/README.md`.
+
+**The live mosaic is a systemd unit in the bnu Frigate LXC 105**
+(`canteiro-mosaico.service` + `/usr/local/bin/canteiro-mosaico.sh`, since
+2026-11-14): ffmpeg/VAAPI reads both mains from Frigate's own go2rtc and
+publishes H.264 2560×720 to `canteiro-hls` on bnu-raspberrypi
+(`rtsp://10.1.1.123:8555/mosaico` — that RTSP listener is LAN-exposed for
+this; publish allowed only from localhost and from `10.1.1.160` on path
+`mosaico`). Reach it through the Proxmox host:
+`python scripts/devtool.py run bnu-proxmox "pct exec 105 -- systemctl status canteiro-mosaico"`
+(logs: `… "pct exec 105 -- journalctl -u canteiro-mosaico -n 30 --no-pager"`;
+rollback: `systemctl disable --now canteiro-mosaico`). Consumers:
+`https://<bnu-pi-fqdn>.ts.net/live` (plays `/hls/mosaico`; `?src=canteiro`
+or `?src=canteiro-fixa` = one lens alone) and
+`http://10.1.1.123:1984/api/stream.mp4?src=canteiro_mosaico` (TV cast;
+`/api/frame.jpeg?src=canteiro_mosaico` for a still — the HEVC
+`src=canteiro` frame endpoint was answering HTTP 500). Details:
+`scripts/proxmox/frigate/bnu-frigate/README.md`.
 **A NUL line in a json-file log blinds every forward read of it**, on any
 Pi that loses power or is hard-reset: `docker logs`, `docker logs --since …`
 and the Engine API `GET /containers/<name>/logs?since=…` stop at the first
@@ -249,7 +295,7 @@ on bnu-raspberrypi). `/api/presence?from=<ISO UTC>&to=<ISO UTC>` accepts **short
 
 | ARA LAN-only device | Address | What it is |
 |---|---|---|
-| Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by the `canteiro-relay` container on the Pi (`rtsp://ara-raspberrypi2:8554/canteiro`). Each lens also has a 640×480 H264 substream (`subtype=1`; channel 1's is relayed as `canteiro-sub` — the bnu Frigate detect feed since 2026-08-26; channel 2's as `canteiro-alt-sub` → bnu go2rtc `canteiro_fixa_sub` → **Frigate camera `canteiro_fixa`** (detect 5 fps, since 2026-11-04 — the FIXED lens, aimed at the path vehicles take in; its HEVC main, relayed as `canteiro-alt` → bnu go2rtc `canteiro_fixa`, is that camera's **record** feed since 2026-11-05 — the second 24/7 main stream over the uplink, see "Canteiro uplink" below). No third stream (`subtype=2` → 404, probed 2026-11-04); ONVIF `GetVideoEncoderConfigurationOptions` caps the substreams at 640×480 and lists 1280×720/1920×1080/2304×1296 for the mains (`BitrateLimit` 1280 kbps), so a higher-res fixed feed means the main stream, not a bigger substream. ONVIF **events work** (PullPoint, probed 2026-08-26): topics are motion/tamper/scene-change only — **no person/vehicle classification locally** (that stays in the Imou cloud/Mibo app; CGI remains 401) |
+| Intelbras iM9+ Full Color camera | `192.168.1.56` | dual-lens canteiro camera — RTSP `:554` (Digest, `admin` + `ARA_CANTEIRO_CAM_KEY`), ONVIF/CGI `:80`, relayed to the tailnet by the `canteiro-relay` container on the Pi (`rtsp://ara-raspberrypi2:8554/canteiro`). Each lens also has a 640×480 H264 substream (`subtype=1`; channel 1's is relayed as `canteiro-sub` — the bnu Frigate detect feed since 2026-08-26; channel 2's as `canteiro-alt-sub` → bnu go2rtc `canteiro_fixa_sub` → **Frigate camera `canteiro_fixa`** (detect 5 fps, since 2026-11-04 — the FIXED lens, aimed at the path vehicles take in; re-aimed 2026-11-14 to look left to the street, the left half of the live mosaic; its HEVC main, relayed as `canteiro-alt` → bnu `canteiro-hls` path `canteiro-fixa` → bnu go2rtc `canteiro_fixa`, is that camera's **record** feed since 2026-11-05 — the second 24/7 main stream over the uplink, see "Canteiro uplink" below). No third stream (`subtype=2` → 404, probed 2026-11-04); ONVIF `GetVideoEncoderConfigurationOptions` caps the substreams at 640×480 and lists 1280×720/1920×1080/2304×1296 for the mains (`BitrateLimit` 1280 kbps), so a higher-res fixed feed means the main stream, not a bigger substream. ONVIF **events work** (PullPoint, probed 2026-08-26): topics are motion/tamper/scene-change only — **no person/vehicle classification locally** (that stays in the Imou cloud/Mibo app; CGI remains 401) |
 | Starlink router | `192.168.1.1` | house LAN gateway (DHCP for the whole `192.168.1.0/24`). **Local gRPC API works** (`192.168.1.1:9000`, reflection on): `grpcurl -plaintext -d '{"wifi_get_clients":{}}' 192.168.1.1:9000 SpaceX.API.Device.Device/Handle` → associated clients with **name+MAC+IP** (what the app shows; `wifi_set_client_given_name` also exists). No local roster of DISCONNECTED clients (that list lives in the Starlink cloud — probed 2026-08-26). `grpcurl` v1.9.1 installed at `/usr/local/bin` on the Pi; the `starlink-names` container syncs these names into netoverview nicknames every 5 min. **Relayed onto the tailnet as `ara-raspberrypi2:9000`** by the `router-proxy` socat container (since 2026-10-22, twin of `starlink-proxy`): every `CLIENT` entry carries **`associatedTimeS`** (seconds since it joined the Wi-Fi, firmware apiVersion 132), so `now − associatedTimeS` pins the second a phone connected — the signal `canteiro-vigia` on bnu-raspberrypi uses to arm itself (Wi-Fi empty of people) and to judge each detection; the 5-min netoverview ARP scan is only its fallback |
 | Starlink dish | `192.168.100.1` | behind the router (any LAN client reaches it). **Local gRPC API works** (`192.168.100.1:9200`, plaintext, no auth, reflection on — probed 2026-08-30): `get_status` = instantaneous down/uplink throughput, pop latency, obstruction, alerts; `get_history` = 900 s of 1 Hz ring buffers (throughput, latency, drop rate, **`powerIn` watts**) + outage event log. **Relayed onto the tailnet as `ara-raspberrypi2:9200`** by the `starlink-proxy` socat container (since 2026-08-30) — globalnet reads the ARA live WAN ▼▲ + dish ⚡ from it. Same `Device/Handle` service as the router, different RPCs |
 
@@ -1290,12 +1336,13 @@ drift the LXC wins — `scripts/proxmox/docker/mia-docker/senior/README.md`),
 `bnu-raspberrypi:~/canteiro-jobs/env/canteiro-{watchdog,presenca,sunset-compare}.env`
 (WAHA creds + group JIDs for the canteiro job containers — moved from
 `/etc/canteiro-*.env` on 2026-08-29; the `/etc` copies linger only as
-rollback for one wave), `ara-raspberrypi2:~/canteiro-relay/mediamtx.yml`
+rollback for one wave; `ups-monitor` also reads its WAHA creds from
+`canteiro-watchdog.env` via `env_file`, so rotating `BNU_WAHA_API_KEY` there covers it), `ara-raspberrypi2:~/canteiro-relay/mediamtx.yml`
 (camera `ARA_CANTEIRO_CAM_KEY` embedded in the source URLs — moved from
 `/etc/mediamtx/mediamtx.yml` on 2026-08-29, same one-wave lingering), and
 `ara-raspberrypi2:~/canteiro-timelapse/env/canteiro-ptz.env` (same camera
-key for ONVIF PTZ — moved from `/etc/canteiro-ptz.env`, which stays for
-the host-side manual `canteiro-ptz` copy),
+key for ONVIF PTZ — `canteiro-ptz` is a manual tool only since 2026-11-14;
+moved from `/etc/canteiro-ptz.env`, which stays for the host-side copy),
 `ara-raspberrypi2:~/canteiro-timelapse/env/alerts.env` (`ALERT_WAHA_KEY` =
 `BNU_WAHA_API_KEY`, plus `ALERT_WAHA_URL=http://bnu-proxmox:3001` — the
 socat relay to WAHA — and the Casa SmokeTests JID; the timelapse script's
