@@ -14,11 +14,14 @@
 #         (Digest auth): user admin, password = the camera's "chave de acesso"
 #         (printed on the sticker on the camera base; the factory key keeps
 #         working for RTSP even if the app key is later changed).
-# Consumers: go2rtc on bnu-raspberrypi pulls `canteiro` ONCE over the tailnet
-#            and fans it out on the bnu LAN (TV cast, /live HLS page, and the
-#            bnu Frigate LXC 105 record feed); Frigate's detect feed pulls
-#            `canteiro-sub`. Keep it this way — Starlink upload cannot
-#            sustain two parallel main-stream pulls (stall seen 2026-08-26).
+# Consumers: canteiro-hls (mediamtx) on bnu-raspberrypi pulls each main ONCE
+#            over the tailnet (`canteiro`, and `canteiro-alt` as its path
+#            `canteiro-fixa`) and hands them to go2rtc there -> bnu Frigate
+#            LXC 105 record feeds + the live MOSAIC [fixed | PT] (TV cast,
+#            /live page, since 2026-11-14); go2rtc pulls the two substreams
+#            for Frigate's detect feeds. Keep it one copy of each — Starlink
+#            upload cannot sustain two parallel pulls of the SAME main
+#            (stall seen 2026-08-26).
 ###############################################################################
 
 logLevel: info
@@ -44,8 +47,10 @@ pprof: no
 paths:
   # Lens mapping (verified 2026-08-24 by moving the PT lens and watching the
   # streams): channel=1 = PT lens (motorized, auto-tracking; ONVIF
-  # Profile000) — this is what the bnu TV/live page shows; channel=2 = fixed
-  # lens. Aim the PT lens with `canteiro-ptz` (see ../../ptz/).
+  # Profile000), parked at its rest position looking RIGHT; channel=2 = fixed
+  # lens, looking LEFT to the street. The bnu TV/live page show the mosaic
+  # [fixed | PT] of the two mains since 2026-11-14. Nothing automated moves
+  # the PT lens any more; `canteiro-ptz` (../../ptz/) is a manual tool.
   # subtype=0 = main stream (H.265 3MP), subtype=1 = substream (H.264 640x480).
   canteiro:
     source: rtsp://admin:__ARA_CANTEIRO_CAM_KEY__@192.168.1.56:554/cam/realmonitor?channel=1&subtype=0
@@ -54,7 +59,7 @@ paths:
   canteiro-alt:
     source: rtsp://admin:__ARA_CANTEIRO_CAM_KEY__@192.168.1.56:554/cam/realmonitor?channel=2&subtype=0
     rtspTransport: tcp
-    sourceOnDemand: yes     # second lens, pulled only when someone watches it
+    sourceOnDemand: yes     # fixed lens; held open 24/7 by bnu canteiro-hls (`canteiro-fixa`)
   canteiro-sub:
     source: rtsp://admin:__ARA_CANTEIRO_CAM_KEY__@192.168.1.56:554/cam/realmonitor?channel=1&subtype=1
     rtspTransport: tcp

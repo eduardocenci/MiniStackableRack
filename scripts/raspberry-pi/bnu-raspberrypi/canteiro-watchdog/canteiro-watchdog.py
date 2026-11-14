@@ -49,7 +49,11 @@ TZ = ZoneInfo("America/Sao_Paulo")
 STATE_DIR = Path(os.environ.get("STATE_DIRECTORY", "/var/lib/canteiro-watchdog"))
 STATE = STATE_DIR / "state.json"
 FRAME = STATE_DIR / "lastframe.jpg"
-GO2RTC_FRAME = "http://127.0.0.1:1984/api/frame.jpeg?src=canteiro"
+# O MOSAICO [lente fixa | lente PT] é a visão ao vivo desde 14/11/2026 (canteiro-mosaico
+# no LXC do Frigate → canteiro-hls `mosaico`): é ele que o /live toca, então é ele que o
+# watchdog guarda como "última imagem" e vigia no auto-heal.
+GO2RTC_FRAME = os.environ.get("GO2RTC_FRAME",
+                              "http://127.0.0.1:1984/api/frame.jpeg?src=canteiro_mosaico")
 
 WAHA_URL = os.environ.get("WAHA_URL", "http://10.1.1.126:3000")
 WAHA_KEY = os.environ["WAHA_KEY"]
@@ -60,7 +64,7 @@ ARA_PORT = int(os.environ.get("ARA_PORT", "8554"))
 FAILS_TO_ALERT = int(os.environ.get("FAILS_TO_ALERT", "3"))
 
 # ── auto-heal do /live ──────────────────────────────────────────────────────
-HLS_URL = os.environ.get("HLS_URL", "http://127.0.0.1:8888/canteiro/index.m3u8?cookieCheck=1")
+HLS_URL = os.environ.get("HLS_URL", "http://127.0.0.1:8888/mosaico/index.m3u8?cookieCheck=1")
 HEAL_JID = os.environ.get("HEAL_JID", "")  # vazio = heal sem WhatsApp (só stdout)
 HLS_FAILS_TO_HEAL = int(os.environ.get("HLS_FAILS_TO_HEAL", "2"))
 MAX_HEAL_ATTEMPTS = int(os.environ.get("MAX_HEAL_ATTEMPTS", "2"))

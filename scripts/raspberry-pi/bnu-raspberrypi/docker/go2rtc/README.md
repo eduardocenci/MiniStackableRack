@@ -3,35 +3,49 @@
 Bridges the tailnet-only ARA camera relay onto the bnu house LAN: everything
 at bnu (the TV cast, phone/PC viewers AND the bnu Frigate NVR) reads from
 this go2rtc, and ara's Starlink carries each canteiro stream exactly once.
-Since 2026-10-29 the **main stream** reaches go2rtc through canteiro-hls
-(mediamtx, the one that pulls it from ara, with `alwaysAvailable`); the
-substream is still pulled here directly:
+Since 2026-10-29 the PT lens' **main stream** reaches go2rtc through
+canteiro-hls (mediamtx, the one that pulls it from ara, with
+`alwaysAvailable`); since 2026-11-14 so does the fixed lens' main, and
+go2rtc also serves the **mosaic** `[fixed lens | PT lens]` — THE view for
+people (TV, `/live`, watchdog frame). The substreams are still pulled here
+directly:
 
 ```
-rtsp://ara-raspberrypi2:8554/canteiro ──tailnet (1 copy)──▶ canteiro-hls (mediamtx, alwaysAvailable)
-                                                            ├─ :8888 HLS → browser /live page
-                                                            └─ rtsp://127.0.0.1:8555/canteiro ──▶ go2rtc `canteiro`
+rtsp://ara-raspberrypi2:8554/canteiro ─────tailnet (1 copy)──▶ canteiro-hls path canteiro      ──▶ go2rtc `canteiro`      (127.0.0.1:8555/canteiro)
+rtsp://ara-raspberrypi2:8554/canteiro-alt ─tailnet (1 copy)──▶ canteiro-hls path canteiro-fixa ──▶ go2rtc `canteiro_fixa` (127.0.0.1:8555/canteiro-fixa)
 rtsp://ara-raspberrypi2:8554/canteiro-sub ──tailnet (1 copy)──────────────────▶ go2rtc `canteiro_sub`
 rtsp://ara-raspberrypi2:8554/canteiro-alt-sub ──tailnet (1 copy, 2026-11-04)──▶ go2rtc `canteiro_fixa_sub` (fixed lens, 640×480)
-rtsp://ara-raspberrypi2:8554/canteiro-alt ──tailnet (1 copy, 2026-11-05)──────▶ go2rtc `canteiro_fixa` (fixed lens, HEVC main)
 go2rtc on bnu-raspberrypi
   ├─ rtsp://10.1.1.123:8554/canteiro + canteiro_sub → bnu Frigate LXC 105 (record + person/vehicle detect, 2026-08-26)
   ├─ rtsp://10.1.1.123:8554/canteiro_fixa_sub + canteiro_fixa → bnu Frigate camera `canteiro_fixa` (detect 5 fps on the sub since 2026-11-04; record on the HEVC main since 2026-11-05)
-  └─ /api/stream.mp4?src=canteiro → 55" TV (Cast)
+  │     └─ canteiro-mosaico.service in that LXC (VAAPI): both mains from Frigate's own go2rtc → H.264 2560×720 15 fps
+  │           └─ publishes rtsp://10.1.1.123:8555/mosaico (canteiro-hls path `mosaico`) ─▶ /hls/mosaico → the /live page
+  ├─ `canteiro_mosaico` ◀─ rtsp://127.0.0.1:8555/mosaico
+  └─ /api/stream.mp4?src=canteiro_mosaico → 55" TV (Cast)
 ```
 
-**Why the main stream goes through mediamtx (2026-10-29):** the camera
-closes its RTSP session at the start of most PTZ excursions of the
-timelapse; the relay reopens it 5 s later with a new RTP timestamp base.
-go2rtc reconnects its producer fine (~6 s), but it swaps it under the
-consumers' live sessions, so they get a timestamp jump — the HLS muxer
-crash-looped until the watchdog's auto-heal (~100 s, 1–3× per solar
-sequence). No go2rtc option changes that. mediamtx with `alwaysAvailable`
-keeps its readers connected with a "sem sinal" card and one continuous
-timeline instead — so go2rtc's `canteiro` producer no longer sees EOFs at
-all, and during a camera or Starlink outage its consumers (TV, MSE, Frigate
-record, watchdog frame) get the card. Full story:
-[`../canteiro-hls/README.md`](../canteiro-hls/README.md).
+**The mosaic (2026-11-14, decisão Eduardo).** The two lenses were re-aimed
+so that side by side they give an "almost 180°" view: fixed lens looking
+left to the street, PT lens parked at its rest position looking right
+(nothing automated moves it any more). The composition runs in the bnu
+Frigate LXC, where the GPU is and where both mains already arrive — no
+extra copy over the Starlink; what, why and how to operate it:
+[`../../../../proxmox/frigate/bnu-frigate/README.md`](../../../../proxmox/frigate/bnu-frigate/README.md).
+Each lens alone is still here as `canteiro` / `canteiro_fixa` (HEVC).
+
+**Why the main streams go through mediamtx (2026-10-29):** go2rtc reconnects
+a dropped producer fine (~6 s), but it swaps it under the consumers' live
+sessions, so they get a timestamp jump — the HLS muxer crash-looped until
+the watchdog's auto-heal. No go2rtc option changes that. mediamtx with
+`alwaysAvailable` keeps its readers connected with a "sem sinal" card and
+one continuous timeline instead — so go2rtc's `canteiro`/`canteiro_fixa`
+producers no longer see EOFs at all, and during a camera or Starlink outage
+their consumers (Frigate record, the mosaic composer, MSE) get the card.
+History: the daily trigger was the camera closing its RTSP session at the
+start of most PTZ excursions of the timelapse (1–3× per solar sequence);
+those excursions ended on 2026-11-14, the design stays for camera/Starlink
+dropouts — and because the mosaic's `hstack` stalls when one input stops.
+Full story: [`../canteiro-hls/README.md`](../canteiro-hls/README.md).
 
 (The mpv wall view of this stream on the Pi's own screen —
 `canteiro-screen.service` — was removed on 2026-08-29, decisão Eduardo.)
@@ -48,24 +62,26 @@ upstream copy fixed it; the rule still applies to today's consumers.
 
 **Do not cast the `canteiro_h264` transcode:** ffmpeg software-decoding the
 3MP HEVC pushes the Pi 4 to load ~6 and starves everything on it (seen
-2026-08-26). The TV plays the HEVC passthrough natively; the transcode path
-exists only as a compatibility fallback for other devices, used sparingly.
-If the TV ever needs H.264 permanently, restream the camera's native
-substream (channel=1&subtype=1, H.264 640×480 — zero transcode) instead.
+2026-08-26). It exists only as a compatibility fallback for a single lens,
+used sparingly. A device that cannot decode HEVC should get
+`canteiro_mosaico` — already H.264, encoded on the Frigate LXC's GPU, zero
+transcode on this Pi.
 
 | URL (LAN `10.1.1.123` / tailnet `bnu-raspberrypi` = `100.91.64.62`) | Content |
 |---|---|
-| `…:1984/api/stream.mp4?src=canteiro` | HEVC passthrough (2304×1296) — the TV cast |
-| `https://bnu-raspberrypi.woodpecker-shark.ts.net/live` | **browser live view — THE bookmark** ([`canteiro-live.html`](canteiro-live.html), hls.js over the **mediamtx `/hls` endpoint** ([`../docker/canteiro-hls/`](../docker/canteiro-hls/)) — 4 s segments, ~35 s window riding out Starlink/DERP jitter; native HLS on iOS; served by `tailscale serve --set-path=/live`). Until 2026-08-29 it used go2rtc's own HLS, whose ~1 s window caused constant interruptions. |
-| `https://…ts.net/hls/canteiro/index.m3u8?cookieCheck=1` | the HLS endpoint itself (mediamtx via `tailscale serve --set-path=/hls`; the query param dodges a redirect that escapes the mount — see [`../docker/canteiro-hls/README.md`](../docker/canteiro-hls/README.md)) |
+| `…:1984/api/stream.mp4?src=canteiro_mosaico` | **the TV cast** since 2026-11-14 — the mosaic `[fixed lens \| PT lens]`, H.264 2560×720 15 fps (any device decodes it). Still frame: `…:1984/api/frame.jpeg?src=canteiro_mosaico` (the watchdog's "last frame"; the HEVC `frame.jpeg?src=canteiro` was answering HTTP 500) |
+| `…:1984/api/stream.mp4?src=canteiro` · `…?src=canteiro_fixa` | one lens alone, HEVC passthrough (2304×1296) — `canteiro` was the TV cast until 2026-11-13 |
+| `https://bnu-raspberrypi.woodpecker-shark.ts.net/live` | **browser live view — THE bookmark**; plays the mosaic (`/hls/mosaico`) since 2026-11-14, `…/live?src=canteiro` or `…/live?src=canteiro-fixa` plays one lens alone; verified in Chrome 2026-11-14 (2560×720 playing) ([`canteiro-live.html`](canteiro-live.html), hls.js over the **mediamtx `/hls` endpoint** ([`../docker/canteiro-hls/`](../docker/canteiro-hls/)) — 4 s segments, ~35 s window riding out Starlink/DERP jitter; native HLS on iOS; served by `tailscale serve --set-path=/live`). Until 2026-08-29 it used go2rtc's own HLS, whose ~1 s window caused constant interruptions. |
+| `https://…ts.net/hls/mosaico/index.m3u8?cookieCheck=1` | the HLS endpoint itself — also `/hls/canteiro/…` (PT lens) and `/hls/canteiro-fixa/…` (fixed lens), HEVC (mediamtx via `tailscale serve --set-path=/hls`; the query param dodges a redirect that escapes the mount — see [`../docker/canteiro-hls/README.md`](../docker/canteiro-hls/README.md)) |
 | `…:1984/stream.html?src=canteiro&mode=hls` | go2rtc's own HLS page — diagnostics only: ~1 s live window (2 fake-0.5 s segments), collapses on any hiccup; also **Safari/iOS only** (desktop Chrome has no native HLS) |
 | `…:1984/stream.html?src=canteiro&mode=mse` | low-latency view (~1 s behind live, but stutters on every network hiccup — HEVC via MSE) |
 | `…:1984/stream.html?src=canteiro_h264` | browser fallback if a device can't decode HEVC (starts the on-demand transcode — occasional use only) |
-| `…:8554/canteiro` · `…:8554/canteiro_sub` | RTSP (TCP) — Frigate's record feed (HEVC main) and detect feed (H.264 640×480 substream) |
+| `…:8554/canteiro` · `…:8554/canteiro_sub` · `…:8554/canteiro_fixa` · `…:8554/canteiro_fixa_sub` | RTSP (TCP) — Frigate's record feeds (HEVC mains) and detect feeds (H.264 640×480 substreams) of the two lenses |
 | `…:1984/` | go2rtc web UI (diagnostics) |
 
 Every viewer above consumes the **shared local producer** — N phones/PCs
-load bnu's network only; ara's Starlink always carries exactly one copy.
+load bnu's network only; ara's Starlink always carries exactly one copy of
+each stream (the mosaic is composed at bnu from the copies already here).
 Away from home the links work over the tailnet (Tailscale app on the
 device). **Bookmark the full MagicDNS FQDN**
 (`bnu-raspberrypi.woodpecker-shark.ts.net`) — it also resolves for users
@@ -85,8 +101,16 @@ upgrade). The `:1984` HTTP endpoints remain for LAN/IP consumers (the TV
 cast uses `http://10.1.1.123:1984/...` — IPs are not HSTS'd).
 
 Consumed by the **bnu HA script `script.canteiro_na_tv`** ("Canteiro na
-TV"), which casts the **HEVC passthrough** URL to the 55" Neo QLED
-(`media_player.qn85f1443`, Samsung's 2026 native Google Cast receiver).
+TV"), which casts `http://10.1.1.123:1984/api/stream.mp4?src=canteiro_mosaico`
+— the mosaic, since 2026-11-14 (the HEVC passthrough `src=canteiro` until
+then) — to the 55" Neo QLED (`media_player.qn85f1443`, Samsung's 2026
+native Google Cast receiver). The script lives only in the live HA config
+(`/config/scripts.yaml`, backup `.bak-20261114`). bg has the same cast in
+`/config/packages/canteiro_na_tv.yaml` (through its proxy
+`http://192.168.0.120:1984`; backup `/config/canteiro_na_tv.yaml.bak-20261114`;
+repo copy in the open PR MiniStackableRack#53). **Not yet seen on a physical
+TV** with the mosaic URL — the bnu TV was in standby on 2026-11-14; the
+findings below are from the HEVC stream.
 
 **One-click control (browser bookmarks).** Two HA webhook automations on
 bnu-homeassistant expose start/stop as plain-GET URLs (no login — the long
@@ -99,8 +123,9 @@ blank HTTP 200 — that is normal for an HA webhook.
 
 Findings from the 2026-08-24 test session (what works and what doesn't):
 - **55" Neo QLED via Google Cast + progressive MP4: WORKS** — including
-  native HEVC decode (2304×1296 passthrough, no transcode). This is the
-  production path.
+  native HEVC decode (2304×1296 passthrough, no transcode). This was the
+  production path until 2026-11-13; the mosaic uses the same
+  `stream.mp4` mechanism with H.264.
 - 55" via Cast + go2rtc **HLS**: the Default Media Receiver launches but
   never fetches segments (CORS headers were present; the receiver just
   rejects this HLS flavor). Use `stream.mp4`, not `stream.m3u8`.
@@ -128,6 +153,7 @@ stay on the Pi for one wave as rollback).
 | `~/go2rtc/compose.yml` | copy of [`compose.yml`](compose.yml) — image `alexxit/go2rtc:1.9.14` (pinned), host network, `/dev/video10-12` + `video` group for v4l2m2m encode |
 | `~/go2rtc/go2rtc.yaml` | copy of [`go2rtc.yaml`](go2rtc.yaml), ro-mounted at `/config/go2rtc.yaml` |
 | `/usr/local/share/canteiro-live/index.html` | copy of [`canteiro-live.html`](canteiro-live.html) — the `/live` page, served as a static file by `tailscale serve` (independent of the container) |
+| `~/go2rtc/go2rtc.yaml.bak-20261114` · `/usr/local/share/canteiro-live/index.html.bak-20261114` | pre-mosaic copies (rollback together with `~/canteiro-hls/mediamtx.yml.bak-20261114`) |
 
 ## Operate
 
@@ -135,6 +161,7 @@ stay on the Pi for one wave as rollback).
 python scripts/devtool.py run bnu-raspberrypi "docker ps --filter name=go2rtc"
 python scripts/devtool.py run bnu-raspberrypi "curl -s http://127.0.0.1:1984/api/streams | head -5"
 python scripts/devtool.py run bnu-raspberrypi "docker logs go2rtc --tail 20"
+python scripts/devtool.py run bnu-raspberrypi "curl -s -o /dev/null -w '%{http_code} %{size_download}\n' 'http://127.0.0.1:1984/api/frame.jpeg?src=canteiro_mosaico'"
 ```
 
 Streams are pulled from the relay **on demand** (go2rtc connects upstream
@@ -142,7 +169,8 @@ only while a client is reading). Since 2026-08-26 the bnu Frigate holds
 `canteiro` + `canteiro_sub` open 24/7 (record + detect), since 2026-11-04
 also `canteiro_fixa_sub` (the fixed lens' 640×480 substream, its detect
 feed) and since 2026-11-05 `canteiro_fixa` (the fixed lens' HEVC main, its
-record feed), so the Starlink upload carries **two main streams + two
+record feed — since 2026-11-14 through canteiro-hls, which holds both mains
+open 24/7 on its own), so the Starlink upload carries **two main streams + two
 substreams** continuously — still one copy of each; TV/browser viewers
 keep adding zero upstream load.
 
@@ -174,8 +202,10 @@ on bnu-raspberrypi + port-forward on the bnu router), then lowering the
 fixed lens' bitrate via ONVIF, then a Starlink plan with more upload (the
 100 Mbps figure of the current plan is download — irrelevant here, we use
 0.3 Mbps down). **Rollback** = point the `record` role of Frigate's
-`canteiro_fixa` back at `canteiro_fixa_sub` (go2rtc then drops the pull on
-its own). Watch: `ssh ara-raspberrypi2 'docker logs canteiro-relay --tail
+`canteiro_fixa` back at `canteiro_fixa_sub` (until 2026-11-14 go2rtc then
+dropped the pull on its own; since the mosaic, canteiro-hls keeps pulling
+`canteiro-alt` for it — freeing the uplink now also means stopping
+`canteiro-mosaico` and removing the `canteiro-fixa` path). Watch: `ssh ara-raspberrypi2 'docker logs canteiro-relay --tail
 300 | grep -c "too slow"'`, Frigate `/api/stats` `camera_fps` of both
 cameras, go2rtc `i/o timeout` lines, and the ad-hoc sampler
 `~/uplink-monitor/uplink.csv` on ara (10 s rows: dish up/down bps, ping,

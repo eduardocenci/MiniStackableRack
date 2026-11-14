@@ -1,0 +1,16 @@
+# canteiro-mosaico — live mosaic [fixed lens | PT lens] of the ARA canteiro.
+# Authoritative copy: scripts/proxmox/frigate/bnu-frigate/canteiro-mosaico.service
+# Live copy:          bnu Frigate LXC 105:/etc/systemd/system/canteiro-mosaico.service
+# What/why: see canteiro-mosaico.sh.
+[Unit]
+Description=canteiro-mosaico (fixed lens | PT lens -> H.264 2560x720 -> canteiro-hls on bnu-raspberrypi)
+After=network-online.target go2rtc.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/canteiro-mosaico.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

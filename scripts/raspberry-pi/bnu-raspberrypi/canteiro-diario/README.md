@@ -9,7 +9,8 @@ what the cameras show, who was there, what came in, what the group said.
 
 ```
  20:00  ara-pi   rclone move → Drive Timelapse/ (existing)
- 20:10  bnu-pi   canteiro-sunset-compare → Dia de Trabalho montage (existing)
+ 20:10  bnu-pi   canteiro-sunset-compare → Dia de Trabalho montage (existing; 2×2 mosaic
+                 [fixed lens | PT lens], baseline over today, since 2026-11-14)
  20:15  bnu-pi   canteiro-diario collect   → Drive CeuAzul/Diario/<D>/pack/ + manifest (public links)
  20:45  cloud    Claude Code routine "Diário de Obra ARA" (home-ara repo, skill
                  .claude/skills/diario-de-obra) reads the pack, writes docs/diario/<D>.md + .json
@@ -80,7 +81,12 @@ Logs: `docker logs canteiro-diario`. Local state: `/var/lib/canteiro-diario/coll
 ```
 manifest-latest.json          stable file (overwritten daily) — the routine's entry point
 <D>/manifest.json             counts + file index with public download links
-<D>/pack/…                    evidence (see module docstring)
+<D>/pack/…                    evidence (see module docstring). Camera stills: `montage.jpg` (the
+                              Dia de Trabalho grid) or, when it is missing, its fallback
+                              `sunset_fixa.jpg` + `sunset_pt.jpg` — the two halves of the sunset
+                              mosaic, `lentefixa/por-do-sol` and `posicao1/por-do-sol` (since
+                              2026-11-14; `sunset_pos2.jpg`/`sunset_pos3.jpg` before). The
+                              `frames/` of the day are still the PT lens only (`trabalho/`)
 <D>/diario.json               written by the cloud routine (Drive connector)
 <D>/resumo.{html,pdf,jpg}  <D>/completo.{html,pdf}
 <D>/sent.json  <D>/printed-<host>.json   idempotency markers

@@ -13,9 +13,12 @@ Vigia o canteiro da obra (ARA) e avisa o grupo **"Casa Céu Azul"**
 
 No momento da queda a câmera já está inalcançável — então o watchdog
 **cacheia um frame por minuto enquanto está no ar** (`/api/frame.jpeg` do
-go2rtc local, cujo produtor o Frigate e o canteiro-hls mantêm ativo: custo
-~zero) em `/var/lib/canteiro-watchdog/lastframe.jpg`, e é esse cache que
-vai no alerta.
+go2rtc local: custo ~zero) em `/var/lib/canteiro-watchdog/lastframe.jpg`, e
+é esse cache que vai no alerta. Desde 14/11/2026 o frame é o **mosaico**
+`[lente fixa | lente PT]` — `GO2RTC_FRAME`, agora configurável pelo env,
+tem por padrão `http://127.0.0.1:1984/api/frame.jpeg?src=canteiro_mosaico`
+(H.264 2560×720; o endpoint com `src=canteiro`, HEVC, vinha respondendo
+HTTP 500).
 
 ## Detecção
 
@@ -35,8 +38,9 @@ destrava (provado 2x); o remédio é reiniciar **go2rtc e DEPOIS
 canteiro-hls**.
 
 O watchdog agora aplica esse remédio: a cada tick com o **relay em pé**,
-considera o /live travado se a playlist
-(`http://127.0.0.1:8888/canteiro/index.m3u8?cookieCheck=1`) não devolver
+considera o /live travado se a playlist (`HLS_URL`, por padrão
+`http://127.0.0.1:8888/mosaico/index.m3u8?cookieCheck=1` desde 14/11/2026 —
+o mosaico é o que o /live toca; antes era `/canteiro/`) não devolver
 `#EXTM3U` **ou** se o log do canteiro-hls tiver ≥3 linhas ERR de crash nos
 últimos 90 s (lidas pelo socket do Docker — a janela nunca olha para trás
 do último heal). Dois ticks travados seguidos (~2 min) → reinicia os dois
@@ -46,9 +50,10 @@ episódio; se não resolver, escala e para. Interrupção colateral: o Frigate
 perde ~5 s de gravação na reconexão (aceito, decisão Eduardo 31/08).
 
 **Causa raiz eliminada em 29/10/2026** — o heal fica só como rede de
-segurança. O salto de timestamp nascia nos EOFs que a câmera emite no
-início das excursões PTZ do timelapse (1–3 pares `🔧 Auto-heal` /
-`✅ recuperado` por sequência solar, quase todo dia): o relay reabre a
+segurança. O salto de timestamp nascia nos EOFs que a câmera emitia no
+início das excursões PTZ do timelapse (que deixaram de existir em
+14/11/2026 — a câmera não é mais movida; 1–3 pares `🔧 Auto-heal` /
+`✅ recuperado` por sequência solar, quase todo dia): o relay reabria a
 câmera com outra base RTP e o go2rtc trocava o produtor por baixo da
 sessão do canteiro-hls. Agora o `canteiro-hls` puxa o relay ele mesmo, com
 `alwaysAvailable` (cartão "sem sinal" no buraco, linha do tempo contínua),
@@ -69,8 +74,16 @@ limpo. Teste e detalhes em
 [`../docker/canteiro-hls/README.md`](../docker/canteiro-hls/README.md)
 (Gotchas).
 
+**Mosaico (14/11/2026):** a playlist vigiada depende agora também do
+`canteiro-mosaico.service` no LXC 105 do Frigate (publica o caminho
+`mosaico` no canteiro-hls). Se ele parar, a playlist some e reiniciar
+go2rtc + canteiro-hls não a traz de volta — o remédio aí é o serviço
+(`python scripts/devtool.py run bnu-proxmox "pct exec 105 -- systemctl
+status canteiro-mosaico"`; ver
+[`../../../proxmox/frigate/bnu-frigate/README.md`](../../../proxmox/frigate/bnu-frigate/README.md)).
+
 Notas de heal/escalação vão a `HEAL_JID` (**Casa SmokeTests** — a família
-não vê nada disso; vazio = só stdout). Tunáveis no env: `HLS_URL`,
+não vê nada disso; vazio = só stdout). Tunáveis no env: `GO2RTC_FRAME`, `HLS_URL`,
 `HLS_FAILS_TO_HEAL` (2), `MAX_HEAL_ATTEMPTS` (2), `HEAL_CONTAINERS`
 (`go2rtc,canteiro-hls`), `DOCKER_SOCK`.
 

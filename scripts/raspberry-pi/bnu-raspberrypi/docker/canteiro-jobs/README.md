@@ -5,9 +5,9 @@ systemd timers on 2026-08-29 (decisão Eduardo):
 
 | Container | Schedule | What it does |
 |---|---|---|
-| `canteiro-watchdog` | 60 s loop (shell loop, script stays a oneshot) | WhatsApp alert with the last cached frame when the ARA canteiro relay drops; recovery message when it returns. Also auto-heals the /live HLS wedge: relay up + muxer crash-looping → restarts go2rtc then canteiro-hls via the mounted docker socket (`group_add` 984 = host `docker` group), notes to the SmokeTests group (`HEAL_JID`) |
+| `canteiro-watchdog` | 60 s loop (shell loop, script stays a oneshot) | WhatsApp alert with the last cached frame (the mosaic `[fixed lens \| PT lens]` since 2026-11-14) when the ARA canteiro relay drops; recovery message when it returns. Also auto-heals the /live HLS wedge: relay up + muxer crash-looping → restarts go2rtc then canteiro-hls via the mounted docker socket (`group_add` 984 = host `docker` group), notes to the SmokeTests group (`HEAL_JID`) |
 | `canteiro-presenca` | supercronic, daily 20:00 America/Sao_Paulo | "who was at the obra today" report from ara netoverview `/api/presence` |
-| `canteiro-sunset-compare` | supercronic, Mon–Fri 20:10 America/Sao_Paulo | yesterday-vs-today sunset montage (rclone ⇄ Drive, ffmpeg vstack), archived to Drive + sent to WhatsApp |
+| `canteiro-sunset-compare` | supercronic, daily 20:10 America/Sao_Paulo (Dia Mon–Fri, Semana Fridays, Mês day 25) | before/after sunset grid, 2×2 since 2026-11-14 — row 1 baseline, row 2 today, columns `lentefixa \| posicao1` (rclone ⇄ Drive, PIL), archived to Drive + sent to WhatsApp |
 | `canteiro-alertas` | 15 s polling loop | Truck alerts: Frigate vehicle events ≥ 10 s → OpenAI Decisions API → one alert per truck (snapshot + caption) to the WhatsApp obra group "Cenci Céu Azul Casa-Hangar" (since 2026-10-13; "Casa Céu Azul" before); `MODE` log/shadow/live. Added 2026-10-09 — see [`../../canteiro-alertas/`](../../canteiro-alertas/) (home-ara decision 0010) |
 | `canteiro-diario` | supercronic, Mon–Fri 20:15 collect · every 10 min 20:50→23:50 publish | Diário de Obra ARA: evidence pack → Drive (Frigate, timelapse, Wi-Fi, tags, plan, WhatsApp); after the cloud routine writes `diario.json`, renders the one-pager (Chromium), sends the JPG to the group and prints on the BNU HP (host CUPS socket). Added 2026-09-09 — see [`../../canteiro-diario/`](../../canteiro-diario/) |
 
@@ -38,8 +38,7 @@ back; container runs as uid 1000 so ownership never flips).
 # copy packaging + scripts into the build context on the Pi
 for f in docker/canteiro-jobs/{Dockerfile,compose.yml,crontab-presenca,crontab-sunset-compare} \
          canteiro-watchdog/canteiro-watchdog.py canteiro-presenca/canteiro-presenca.py \
-         canteiro-sunset-compare/canteiro-sunset-compare.py \
-         canteiro-sunset-compare/pilar_align.py; do
+         canteiro-sunset-compare/canteiro-sunset-compare.py; do
   MSYS_NO_PATHCONV=1 python scripts/devtool.py push bnu-raspberrypi \
     "scripts/raspberry-pi/bnu-raspberrypi/$f" "canteiro-jobs/$(basename $f)"
 done
@@ -59,6 +58,10 @@ for f in __init__ alertas decisions questions metrics datasets config veiculos; 
     "homes/ara/canteiro/$f.py" "canteiro-jobs/canteiro/$f.py"
 done
 ```
+
+Last rebuild: 2026-11-14 ~09:49 BRT (mosaic change — `pilar_align.py` left
+the image; all containers of this compose recreated; backups of the
+previous files in `~/canteiro-jobs/bak-20261114/`).
 
 Not yet on the 5-min DockerHub pull cron — the image is built locally on the
 Pi. TODO: GitHub Actions in this repo → `cenci/canteiro-jobs:latest` →

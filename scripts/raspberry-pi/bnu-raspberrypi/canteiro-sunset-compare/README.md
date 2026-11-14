@@ -3,25 +3,33 @@
 **Todo dia às 20:10 America/Sao_Paulo** o container `canteiro-sunset-compare`
 no bnu-raspberrypi (supercronic — ver
 [`../docker/canteiro-jobs/`](../docker/canteiro-jobs/); systemd timer até
-2026-08-29) decide o que emitir. Cada produto é uma **grade 2×3** com as
-fotos do pôr do sol nas TRÊS posições da lente PT (timelapse do ara Pi,
-upload às 20:00 — ver
+2026-08-29) decide o que emitir. Cada produto é uma **grade 2×2** — o
+MOSAICO das duas lentes, antes e depois (decisão Eduardo 14/11/2026: a
+câmera não é mais movida; lente fixa à esquerda, olhando a rua, lente PT à
+direita, parada na posição de repouso — juntas, "quase 180°"). As fotos são
+as do pôr do sol do timelapse do ara Pi (upload às 20:00 — ver
 [`../../ara-raspberrypi/timelapse/`](../../ara-raspberrypi/timelapse/)):
-linha 1 = baseline, linha 2 = hoje; colunas posicao3 | posicao1 | posicao2
-(esquerda→centro→direita da obra); 800 px/célula. A grade é **alinhada por
-software** (PIL) desde 07/09/2026 — ver abaixo; sem numpy/pillow ou sem as
-referências do Drive, cai no modo antigo (ffmpeg hstack+vstack, 2400×900).
 
-| Produto | Quando | Baseline (linha 1) | Exceção de estreia |
-|---|---|---|---|
-| 🌇 `Dia de Trabalho (DD/MM)` | seg–sex | ontem; segunda usa SEXTA | 31/08/2026 → domingo 30/08 |
-| 🏗️ `Semana de Trabalho (seg - sex)` | sexta, após o Dia | sexta anterior | 04/09/2026 → domingo 30/08 |
-| 📆 `Mês de Trabalho (26/MM - 25/MM)` | **dia 25, qualquer dia da semana** (janela de medição da empreiteira, 26→25) | dia 26 do mês anterior | 25/09/2026 → 31/08 (decisão Eduardo — sem imagens de 26/08) |
+```
+linha 1 = baseline   [ lentefixa | posicao1 ]
+linha 2 = hoje       [ lentefixa | posicao1 ]      1200 px/célula → 2400×1350
+```
+
+Montada em PIL, sem alinhamento por software (sem excursões da câmera não
+há tremor a corrigir). Quando a baseline é anterior a 14/11/2026, a legenda
+ganha uma linha avisando que a linha de cima mostra o enquadramento antigo
+das lentes.
+
+| Produto | Quando | Baseline (linha 1) |
+|---|---|---|
+| 🌇 `Dia de Trabalho (DD/MM)` | seg–sex | ontem; segunda usa SEXTA |
+| 🏗️ `Semana de Trabalho (seg - sex)` | sexta, após o Dia | sexta anterior |
+| 📆 `Mês de Trabalho (26/MM - 25/MM)` | **dia 25, qualquer dia da semana** (janela de medição da empreiteira, 26→25) | dia 26 do mês anterior |
 
 Envio via WAHA `sendImage` (funciona neste Core build; mesmo padrão do
 [`../canteiro-watchdog/`](../canteiro-watchdog/)). A câmera queima
-data/hora em cada frame; como o alinhamento recorta a faixa inferior onde
-esse carimbo fica, cada célula recebe uma etiqueta `DD/MM` desenhada.
+data/hora na faixa inferior de cada frame; cada célula recebe ainda uma
+etiqueta `DD/MM` desenhada no canto superior direito.
 Produtos do mesmo dia saem em sequência (Dia → Semana → Mês) e reusam os
 downloads entre si.
 
@@ -37,7 +45,7 @@ Pedido Eduardo 27/08/2026. Roda em bnu (e não no ara Pi) porque o WAHA
 - A foto de hoje pode ainda estar subindo às 20:10 (Starlink lenta): o
   script tenta de novo a cada 3 min por até ~25 min; se faltar foto,
   manda aviso de falha no mesmo chat em vez de silêncio.
-- **Linha de cima sem as 3 fotos → recua até 7 dias** (desde 29/10/2026):
+- **Linha de cima sem as fotos das duas lentes → recua até 7 dias** (desde 29/10/2026):
   em 27/10 o barracão ficou sem energia no meio da sequência do pôr do sol
   (só T−20 saiu, sem `Luminancia125`), e em 28/10 a grade não saiu porque
   27/10 era a linha de base. Agora `make_grid_cells` recua dia a dia até
@@ -50,7 +58,9 @@ Pedido Eduardo 27/08/2026. Roda em bnu (e não no ara Pi) porque o WAHA
 - `--test … --as-of AAAA-MM-DD` finge que "hoje" é outro dia (só com
   `--test`): serve para refazer uma grade perdida — a cópia no Drive
   (`DiaDeTrabalho/<dia>.jpg`) é gravada mesmo em teste, o envio vai ao
-  `TEST_JID`. Usado em 29/10/2026 para refazer 27/10 e 28/10.
+  `TEST_JID`. Usado em 29/10/2026 para refazer 27/10 e 28/10. Com
+  `--no-archive` (desde 14/11/2026) a grade só é enviada, sem sobrescrever a
+  arquivada no Drive — é o teste seguro de um dia que já tem grade.
 - Última montagem enviada fica em `/tmp/ultima-comparacao.jpg` **dentro do
   container** (inspeção: `docker exec canteiro-sunset-compare ls -la /tmp`;
   some quando o container é recriado).
@@ -65,7 +75,7 @@ Pedido Eduardo 27/08/2026. Roda em bnu (e não no ara Pi) porque o WAHA
 ## Fonte das fotos: `Luminancia125` (desde 11/09/2026)
 
 As células vêm de `<pos>/Luminancia125/YYYY-MM-DD_HHMM.jpg` — a janela do pôr
-do sol cujo frame de pos1 tem luminância média mais perto de 125, escolhida
+do sol cujo frame de posicao1 tem luminância média mais perto de 125, escolhida
 no ara ao fim da sequência (`timelapse-capture luminancia`; doutrina e
 números em [`../../ara-raspberrypi/timelapse/`](../../ara-raspberrypi/timelapse/)).
 Motivo: em `por-do-sol` fixo a luz variava de 100 a 128 conforme o clima;
@@ -75,32 +85,17 @@ aviso ao SmokeTests (`ℹ️ … sem Luminancia125 para … — usei por-do-sol`
 espera pelo upload das 20:00 (retries) vale para a pasta nova; o fallback é
 tentado uma vez, no fim.
 
-## Alinhamento por software (desde 07/09/2026)
+## Histórico (até 13/11/2026): grade 2×3 alinhada pelo pilar
 
-Mesmo com a re-âncora da câmera, a guarda (pos1) varia até ~170 px de um dia
-para o outro (a baseline do tracking caminha durante o dia; o passo mínimo do
-motor, ~280 px de pan, não corrige resíduos menores — medido 03–06/09/2026).
-No timelapse e nas grades isso vira um tremor visível entre dias. Como o
-offset de cada frame é medível com ~4 px, o alinhamento é feito por software:
-
-- [`pilar_align.py`](pilar_align.py) — MESMA medição da re-âncora do ara
-  (correlação de fase do numpy na ROI do pilar do galpão, validade por
-  concordância entre as 4 referências `posicao1-*.jpg`). As constantes (ROI,
-  PSR, AGREE) são cópia da doutrina do ara
-  ([`../../ara-raspberrypi/timelapse/`](../../ara-raspberrypi/timelapse/)) —
-  se a ROI ou as referências mudarem lá, atualizar aqui.
-- As referências vêm do backup no Drive `ceuazul:Timelapse/ref/` (o ara não é
-  alcançável do bnu), baixadas uma vez por execução.
-- Mede-se a **pos1** de cada dia; o offset daquele dia vale para as 3 colunas
-  (pos2/pos3 são excursões reproduzíveis a partir da guarda, herdam o mesmo
-  deslocamento). Recorta-se a janela de referência deslocada de `(sx, sy)`,
-  travando o pilar no mesmo pixel em todas as células.
-- **Fallbacks (a grade nunca deixa de sair):** sem numpy/pillow, sem as
-  referências, ou medição inválida/implausível de uma linha → aquela linha
-  não é deslocada; se nenhuma linha mede, cai na montagem ffmpeg de sempre.
-- A imagem do container ganhou `numpy`+`pillow` (ver
-  [`../docker/canteiro-jobs/`](../docker/canteiro-jobs/)). O log de cada
-  envio diz `alinhada` ou `sem alinhamento`.
+Até 13/11/2026 a grade era 2×3 — a lente PT em três enquadramentos, colunas
+posicao3 | posicao1 | posicao2, 800 px/célula (2400×900) — e, desde
+07/09/2026, alinhada por software: `pilar_align.py` media o deslocamento do
+pilar do galpão na posicao1 de cada dia (mesma correlação de fase da
+re-âncora do ara, referências em `ceuazul:Timelapse/ref/`) e deslocava +
+recortava as três colunas. Com a câmera parada isso saiu: `pilar_align.py`
+foi apagado (e tirado da imagem `canteiro-jobs`), assim como as exceções de
+baseline da estreia (31/08, 04/09 e 25/09/2026). As grades arquivadas no
+Drive até 13/11 seguem no formato antigo.
 
 ## Install (container desde 2026-08-29)
 
@@ -123,9 +118,11 @@ upload do ara Pi). Diferente do timer (`Persistent=true`), o supercronic
 docker exec canteiro-sunset-compare python3 /app/canteiro-sunset-compare.py --test                    # → TEST_JID, produtos de hoje
 docker exec canteiro-sunset-compare python3 /app/canteiro-sunset-compare.py --test all                # força os 3 produtos
 docker exec canteiro-sunset-compare python3 /app/canteiro-sunset-compare.py --test mes <chatId>       # um produto, chat específico
+docker exec canteiro-sunset-compare python3 /app/canteiro-sunset-compare.py --test daily --as-of 2026-11-13 --no-archive   # refaz um dia sem tocar o Drive
 ```
 
 A mensagem sai prefixada com `[TESTE]`. Smoke tests: 27/08/2026 (systemd,
 montagem 26/08×27/08) e 29/08/2026 (container: aviso de foto faltando +
 montagem 27/08×28/08 manual via ffmpeg) — ambos HTTP 201 no Casa
-SmokeTests.
+SmokeTests; 14/11/2026 (grade 2×2: `--test daily --as-of 2026-11-13
+--no-archive`).

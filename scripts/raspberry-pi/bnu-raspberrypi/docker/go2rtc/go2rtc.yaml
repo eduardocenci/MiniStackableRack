@@ -9,7 +9,8 @@
 #   - main stream: pulled ONCE by canteiro-hls (mediamtx, alwaysAvailable) and
 #     read here from rtsp://127.0.0.1:8555/canteiro (2026-10-29). Until then
 #     go2rtc pulled the relay itself, but it swaps a dropped producer under
-#     its consumers' live sessions — the camera's PTZ-excursion EOFs came out
+#     its consumers' live sessions — the camera's EOFs (PTZ excursions of the
+#     timelapse, retired 2026-11-14; Starlink/camera drops still happen) came out
 #     as RTP timestamp jumps that crash-looped the HLS muxer (see
 #     ../canteiro-hls/mediamtx.yml). mediamtx keeps the readers connected
 #     with an offline card and one continuous timeline instead.
@@ -17,8 +18,9 @@
 # Consumers:
 #   - canteiro-hls: upstream of `canteiro` (above) and HLS packager for the
 #     browser /live page
-#   - Samsung AU8000 60" TV via DLNA — progressive fMP4 over HTTP:
-#       http://10.1.1.123:1984/api/stream.mp4?src=canteiro         (HEVC, copy)
+#   - TVs via Google Cast (HA script.canteiro_na_tv at bnu and bg) — progressive fMP4 over HTTP:
+#       http://10.1.1.123:1984/api/stream.mp4?src=canteiro_mosaico (H.264 mosaic — THE cast since 2026-11-14)
+#       http://10.1.1.123:1984/api/stream.mp4?src=canteiro         (PT lens alone, HEVC, copy)
 #       http://10.1.1.123:1984/api/stream.mp4?src=canteiro_h264    (H.264 transcode,
 #                                         fallback for renderers that reject HEVC)
 #   - bnu Frigate (LXC 105, 10.1.1.160): record feed rtsp://10.1.1.123:8554/canteiro,
@@ -54,7 +56,14 @@ streams:
   # Frigate since 2026-11-05 (record of `canteiro_fixa`): the SECOND main stream over
   # the obra's uplink, re-tried with measurements after the 2026-08-26 stall (details and
   # rollback in README.md — "Two main streams").
-  canteiro_fixa: rtsp://ara-raspberrypi2:8554/canteiro-alt
+  # (2026-11-14: read from canteiro-hls like the PT main — mediamtx is now the puller,
+  # with alwaysAvailable, so the mosaic composer never loses this input.)
+  canteiro_fixa: rtsp://127.0.0.1:8555/canteiro-fixa
+  # MOSAICO [lente fixa | lente PT], H.264 2560x720 15 fps (2026-11-14) — composed by
+  # canteiro-mosaico.service in the bnu Frigate LXC (VAAPI), published to canteiro-hls. THE stream for people:
+  #   http://10.1.1.123:1984/api/stream.mp4?src=canteiro_mosaico   (TV cast)
+  #   /api/frame.jpeg?src=canteiro_mosaico                        (watchdog last frame)
+  canteiro_mosaico: rtsp://127.0.0.1:8555/mosaico
   # H.264 transcode fallback: hardware encode (h264_v4l2m2m) via ffmpeg,
   # downscaled to 1920 wide (the Pi 4 hw encoder cannot take 2304×1296).
   # It consumes the SHARED local canteiro producer (no extra pull from ara),

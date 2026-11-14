@@ -121,6 +121,50 @@ CPU cost). Consumer: mia HA `camera.frigate_birdseye` via a forward on
 mia-proxmox → `script.cast_frigate_birdseye` casts it to the mia
 entertainment-room TV (see `scripts/proxmox/mia-proxmox/README.md`).
 
+## canteiro-mosaico — live mosaic of the ARA canteiro (added 2026-11-14)
+
+A second, independent systemd unit in this LXC composes **the** live view of
+the obra: fixed lens (left, street side) | PT lens (right, parked at its
+rest position) side by side — the "almost 180°" view (decisão Eduardo
+2026-11-14). It runs here because this is where the GPU is (VAAPI) and where
+both HEVC 2304×1296 mains already arrive for `record`: it reads Frigate's
+own go2rtc (`rtsp://127.0.0.1:8554/canteiro_fixa` and `/canteiro`), so the
+canteiro's Starlink carries nothing extra.
+
+- **Pipeline** ([`canteiro-mosaico.sh`](canteiro-mosaico.sh), rationale in its
+  header): VAAPI decode of both mains → CPU `fps=15,scale=1280:720` +
+  `hstack` → `h264_vaapi` → **H.264 2560×720, 15 fps, ~3 Mbps**, no audio;
+  ~27 % of one core (measured). The all-GPU graph (`scale_vaapi` +
+  `hstack_vaapi`) ran out of VAAPI surfaces on this Mesa 22.3. Timestamps
+  are the streams' own clocks, not `-use_wallclock_as_timestamps` (ffmpeg 7
+  choked the demuxer and one half fell 15–30 s behind) — the halves stay a
+  constant ~1–3 s apart.
+- **Output**: published over RTSP to `canteiro-hls` (mediamtx) on
+  bnu-raspberrypi, `rtsp://10.1.1.123:8555/mosaico` — from there the `/live`
+  page (`/hls/mosaico`), go2rtc `canteiro_mosaico` (TV cast, watchdog frame).
+  See `scripts/raspberry-pi/bnu-raspberrypi/docker/canteiro-hls/README.md`.
+- **Why a separate unit and not a go2rtc `exec:` source**: Frigate refuses
+  `exec:` sources unless `GO2RTC_ALLOW_ARBITRARY_EXEC` is set (left alone),
+  and a publisher that dies is a clean EOF for mediamtx's readers.
+  **`config.yml` is unchanged** by the mosaic.
+- **Failure mode**: any input EOF or 15 s stall ends ffmpeg; systemd restarts
+  it 5 s later (`Restart=always`).
+
+| File | Live copy (LXC 105) |
+|---|---|
+| [`canteiro-mosaico.sh`](canteiro-mosaico.sh) | `/usr/local/bin/canteiro-mosaico.sh` (755) |
+| [`canteiro-mosaico.service`](canteiro-mosaico.service) | `/etc/systemd/system/canteiro-mosaico.service` (enabled; `After=go2rtc.service`) |
+
+```bash
+python scripts/devtool.py run bnu-proxmox "pct exec 105 -- systemctl status canteiro-mosaico"
+python scripts/devtool.py run bnu-proxmox "pct exec 105 -- journalctl -u canteiro-mosaico -n 30 --no-pager"
+python scripts/devtool.py run bnu-proxmox "pct exec 105 -- systemctl restart canteiro-mosaico"
+```
+
+**Rollback** = `systemctl disable --now canteiro-mosaico` in the LXC — Frigate
+is untouched either way; the `/live` page and the TV then lose the mosaic
+(`/live?src=canteiro` still plays the PT lens alone).
+
 ## Cameras
 
 8 bnu house cameras (Hikvision NVR `192.168.0.22` + doorbell `10.1.1.65`)
@@ -128,16 +172,19 @@ entertainment-room TV (see `scripts/proxmox/mia-proxmox/README.md`).
 
 ```
 iM9+ camera (ARA LAN) ─▶ mediamtx on ara-raspberrypi2 ─tailnet/Starlink─▶ go2rtc on bnu-raspberrypi (10.1.1.123)
-  PT lens (channel 1)                                (1 copy per stream)      └─▶ this LXC: canteiro (HEVC main, record)
+  PT lens (channel 1)        (mains via canteiro-hls) (1 copy per stream)      └─▶ this LXC: canteiro (HEVC main, record)
                                                                                   canteiro_sub (H264 640×480, detect)
   fixed lens (channel 2, since 2026-11-04)                                       canteiro_fixa (HEVC main, record — since 2026-11-05;
                                                                                   H264 640×480 substream, detect 5 fps)
 ```
 
 **`canteiro_fixa` (2026-11-04)** — the same iM9's FIXED lens, aimed by Eduardo at the path
-vehicles take in (many only pass the PT lens and park out of its angle). Detect comes from its
+vehicles take in (many only pass the PT lens and park out of its angle); re-aimed on 2026-11-14
+to look left, to the street, while the PT lens rests looking right (the two halves of the mosaic
+above — the zones/masks in `config.yml` were not touched by that change). Detect comes from its
 640×480 substream; **record comes from its HEVC main (2304×1296, ~1.4 Mbps) since 2026-11-05**
-(bnu go2rtc `canteiro_fixa` → relay `canteiro-alt`) — the second 24/7 main stream over the obra's
+(bnu go2rtc `canteiro_fixa` → bnu `canteiro-hls` path `canteiro-fixa` → relay `canteiro-alt`; go2rtc
+pulled the relay directly until 2026-11-14) — the second 24/7 main stream over the obra's
 Starlink uplink, re-tried with measurements after the 2026-08-26 stall (numbers, limits and
 rollback: `scripts/raspberry-pi/bnu-raspberrypi/docker/go2rtc/README.md`, "Two main streams").
 On 2026-11-04 both roles were on the substream and recording frames were 640×480. Detect runs at 5 fps
@@ -146,10 +193,13 @@ event; GenAI review is off for it (same scene as the PT lens). `canteiro-alertas
 and keeps ONE episode per truck across them (home-ara decision 0010, adendo 04/11/2026); the HA
 scripts treat it as an obra camera (`CEUAZUL_CAMERAS`, digest exclusion). If the uplink stalls
 (relay "reader is too slow" in series, `camera_fps` dropping on either canteiro camera), point the
-`record` role back at `canteiro_fixa_sub` — go2rtc drops the main pull on its own.
+`record` role back at `canteiro_fixa_sub` — until 2026-11-14 go2rtc then dropped the main pull on
+its own; since the mosaic, `canteiro-hls` holds the fixed main open 24/7 regardless (the mosaic
+needs it), so freeing the uplink also means stopping `canteiro-mosaico` and the `canteiro-fixa`
+path on bnu-raspberrypi.
 
-**Never point this LXC at `ara-raspberrypi2` directly** — the bnu-raspberrypi
-go2rtc is the single shared Starlink pull; a second main-stream reader
+**Never point this LXC at `ara-raspberrypi2` directly** — bnu-raspberrypi
+(`canteiro-hls` for the mains, go2rtc for the substreams) is the single shared Starlink pull; a second main-stream reader
 saturates the canteiro uplink (incident 2026-08-26, see
 `scripts/raspberry-pi/bnu-raspberrypi/go2rtc/README.md`). Canteiro events
 (person/vehicle) ride the same MQTT → HA pipeline and GenAI review
