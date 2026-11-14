@@ -14,14 +14,15 @@
 # jitter.
 #
 # Why it pulls the relay itself (2026-10-29): the camera closes its RTSP
-# session at the start of most PTZ excursions of the timelapse (sunrise
-# 05:00–06:00, sunset 16:40–19:00). The ara relay then drops its readers and
+# session now and then — until 2026-11-13 at the start of most PTZ excursions of
+# the timelapse (retired 2026-11-14: the camera is no longer moved). The ara relay then drops its readers and
 # reopens the camera ~5 s later with a NEW random RTP timestamp base. While
 # go2rtc was the WAN puller it swapped its producer under the SAME RTSP
 # session it served here, so this muxer got a timestamp jump it never digests
 # ("sample timestamp is impossible to handle", crash-looping every 10 s) until
 # the watchdog restarted both containers ~100 s later.
-# Now this path is the single puller of the main stream (Starlink still
+# Now this container is the single puller of BOTH main streams (PT here, fixed lens
+# in `canteiro-fixa` since 2026-11-14) — per path: the single puller of the main stream (Starlink still
 # carries exactly one copy) and go2rtc reads it from 127.0.0.1:8555:
 #   - mediamtx sees the relay EOF itself and reconnects (5 s pause, +5 s when
 #     it races the relay's own camera reconnect → back in ~5–10 s);
@@ -33,13 +34,14 @@
 logLevel: info
 
 # go2rtc owns RTSP :8554 / HTTP :1984 on this Pi; this RTSP server is only the
-# local hop to go2rtc (127.0.0.1:8555, TCP — no UDP listeners).
+# local hop to go2rtc (127.0.0.1:8555) plus the mosaic publisher (TCP — no UDP listeners).
 api: no
 metrics: no
 pprof: no
 playback: no
 rtsp: yes
-rtspAddress: 127.0.0.1:8555
+rtspAddress: :8555        # LAN-exposed since 2026-11-14 so the mosaic composer (Frigate
+                          # LXC, 10.1.1.160) can PUBLISH; who may do what is below
 rtspTransports: [tcp]
 rtspEncryption: "no"
 rtmp: no
@@ -57,6 +59,23 @@ hlsSegmentDuration: 4s   # matches the iM9 keyframe interval exactly
 hlsAlwaysRemux: yes      # muxer always hot → instant page loads, no
                          # first-viewer keyframe wait
 
+# Reading stays open (same LAN+tailnet trust as go2rtc); publishing only from this
+# Pi and from the Frigate LXC, and only the mosaic path for the latter.
+authInternalUsers:
+  - user: any
+    ips: []
+    permissions:
+      - action: read
+  - user: any
+    ips: ['127.0.0.1', '::1']
+    permissions:
+      - action: publish
+  - user: any
+    ips: ['10.1.1.160']
+    permissions:
+      - action: publish
+        path: mosaico
+
 paths:
   canteiro:
     source: rtsp://ara-raspberrypi2:8554/canteiro
@@ -67,3 +86,21 @@ paths:
     # AAC. Regenerate with make-offline-card.sh if the camera streams change.
     alwaysAvailable: yes
     alwaysAvailableFile: /offline.mp4
+  # Fixed lens (channel 2) main stream — pulled HERE since 2026-11-14 (was go2rtc's
+  # direct pull), same alwaysAvailable treatment as the PT lens: the mosaic below
+  # needs BOTH inputs to never drop (hstack stalls when one side stops). Same
+  # tracks as the PT lens (H265 2304x1296 + AAC 16 kHz mono), so the same card.
+  # go2rtc `canteiro_fixa` (Frigate record, mosaic input) reads 127.0.0.1:8555/canteiro-fixa.
+  canteiro-fixa:
+    source: rtsp://ara-raspberrypi2:8554/canteiro-alt
+    rtspTransport: tcp
+    alwaysAvailable: yes
+    alwaysAvailableFile: /offline.mp4
+  # MOSAICO [lente fixa | lente PT] (2026-11-14): H.264 2560x720 15 fps, PUBLISHED
+  # here by canteiro-mosaico.service in the bnu Frigate LXC 105 (10.1.1.160, VAAPI
+  # — scripts/proxmox/frigate/bnu-frigate/canteiro-mosaico.sh). THE live view since
+  # then: the /live page plays /hls/mosaico, go2rtc `canteiro_mosaico` (TV cast,
+  # watchdog frame) reads 127.0.0.1:8555/mosaico. No alwaysAvailable: both inputs
+  # of the composer already carry the offline card, and a publisher that dies is
+  # a clean EOF for the readers (they reconnect), not a timestamp jump.
+  mosaico:

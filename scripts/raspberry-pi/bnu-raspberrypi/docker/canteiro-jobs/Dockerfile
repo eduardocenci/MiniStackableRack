@@ -20,8 +20,8 @@ ADD https://github.com/google/fonts/raw/main/ofl/barlowcondensed/BarlowCondensed
 ADD https://github.com/google/fonts/raw/main/ofl/sourcesans3/SourceSans3%5Bwght%5D.ttf /usr/share/fonts/truetype/google/
 RUN chmod 0644 /usr/share/fonts/truetype/google/* && fc-cache -f
 
-# numpy + pillow: alinhamento por software das grades do por do sol
-# (canteiro-sunset-compare + pilar_align — mede o pilar e desloca+recorta)
+# numpy + pillow: grades do por do sol (mosaico 2x2) e o render do diario
+# (canteiro-sunset-compare monta a grade 2x2 em PIL; diario_render)
 # gspread: PlanejadoRealizado (canteiro-diario); paramiko: condfy tags via bnu-proxmox (canteiro-diario)
 # requests + pyyaml: canteiro-alertas (the home-ara canteiro/ package: Decisions API client + engine)
 RUN pip install --no-cache-dir numpy pillow gspread paramiko requests pyyaml
@@ -34,7 +34,7 @@ RUN chmod 0755 /usr/local/bin/supercronic
 
 WORKDIR /app
 COPY canteiro-watchdog.py canteiro-presenca.py canteiro-sunset-compare.py \
-     pilar_align.py canteiro-diario.py diario_render.py canteiro-alertas.py \
+     canteiro-diario.py diario_render.py canteiro-alertas.py \
      crontab-presenca crontab-sunset-compare crontab-diario /app/
 # home-ara canteiro/ package (homes/ara/canteiro — authoritative there, CI-tested)
 COPY canteiro/ /app/canteiro/

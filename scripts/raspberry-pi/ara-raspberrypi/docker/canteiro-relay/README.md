@@ -7,9 +7,10 @@ touching the camera or the house LAN. Docker container since 2026-08-29
 unit + hand-downloaded binary, left disabled on the Pi one wave as rollback):
 
 ```
-iM9 camera ──RTSP 554 (LAN)──▶ canteiro-relay on ara-raspberrypi2 ──RTSP 8554 (tailnet)──▶ go2rtc on bnu-raspberrypi
-                                                                      (single consumer)     ├─ TV cast + /live HLS page
-                                                                                            └─ bnu Frigate (record + detect)
+iM9 camera ──RTSP 554 (LAN)──▶ canteiro-relay on ara-raspberrypi2 ──RTSP 8554 (tailnet)──▶ bnu-raspberrypi
+                                                                      mains (HEVC)  ──▶ canteiro-hls ─▶ go2rtc ─▶ bnu Frigate (record)
+                                                                                                              └▶ canteiro-mosaico ─▶ TV cast + /live
+                                                                      subs (H264)   ──▶ go2rtc ─▶ bnu Frigate (detect)
 ```
 
 **Cutover/restart guard:** the bnu `canteiro-watchdog` container pages the
@@ -21,8 +22,8 @@ timestamp is impossible to handle", /live answers 500) —
 
 | Path | What it is |
 |---|---|
-| `rtsp://ara-raspberrypi2:8554/canteiro` | lens on `channel=1`, main stream (HEVC 2304×1296) — pulled 24/7 (`sourceOnDemand: no`) |
-| `rtsp://ara-raspberrypi2:8554/canteiro-alt` | lens on `channel=2` (fixed), main stream (HEVC 2304×1296, ~1.4 Mbps) — on demand; bnu go2rtc `canteiro_fixa` → bnu Frigate's `canteiro_fixa` **record** feed since 2026-11-05 (held open 24/7 — the second main over the uplink, measured attempt; see the bnu go2rtc README, "Two main streams") |
+| `rtsp://ara-raspberrypi2:8554/canteiro` | lens on `channel=1` (PT, parked at rest looking right), main stream (HEVC 2304×1296) — pulled 24/7 (`sourceOnDemand: no`); consumer: bnu `canteiro-hls` path `canteiro` (→ go2rtc `canteiro` → Frigate record + right half of the mosaic) |
+| `rtsp://ara-raspberrypi2:8554/canteiro-alt` | lens on `channel=2` (fixed), main stream (HEVC 2304×1296, ~1.4 Mbps) — on demand; pulled by bnu `canteiro-hls` path `canteiro-fixa` since 2026-11-14 (its single puller; until then go2rtc `canteiro_fixa` pulled it directly) → go2rtc `canteiro_fixa` → bnu Frigate's `canteiro_fixa` **record** feed since 2026-11-05 + left half of the live mosaic (held open 24/7 — the second main over the uplink, measured attempt; see the bnu go2rtc README, "Two main streams") |
 | `rtsp://ara-raspberrypi2:8554/canteiro-sub` | lens on `channel=1`, substream (H264 640×480) — on demand; bnu Frigate's detect feed (held open 24/7 while Frigate is up, added 2026-08-26) |
 | `rtsp://ara-raspberrypi2:8554/canteiro-alt-sub` | lens on `channel=2` (fixed), substream (H264 640×480, 20 fps) — on demand; bnu Frigate's `canteiro_fixa` **detect** feed since 2026-11-04 (held open 24/7; it was also the record feed until 2026-11-05, when record moved to the main — `canteiro-alt` above) |
 

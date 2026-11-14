@@ -1,7 +1,15 @@
 # canteiro-ptz — remote aiming of the iM9's PT lens (ara-raspberrypi2)
 
 CLI for nudging the canteiro camera's motorized PT lens over ONVIF and
-checking the result, from anywhere on the tailnet:
+checking the result, from anywhere on the tailnet.
+
+**Manual tool only.** Since 2026-11-14 (decisão Eduardo) nothing automated
+calls it: the timelapse no longer moves the camera (see
+[`../timelapse/README.md`](../timelapse/README.md)). The PT lens is parked
+at its rest position looking right — the right half of the mosaic
+`[fixed lens | PT lens]` that the grids, `/live` and the TV show — so any
+manual `move` changes that framing; the firmware does not return the lens
+after a manual move. Use `snap` freely (it moves nothing).
 
 ```bash
 ssh eduardocenci@ara-raspberrypi2 "canteiro-ptz move -0.4 0 1"   # pan burst
@@ -35,11 +43,12 @@ this CLI covers scripted/remote *aiming* (nudge + look).
 
 Also learned, and worth not re-deriving:
 
-- **RTSP channel 1 (`canteiro`, on the bnu screen/TV) = the PT lens** =
-  ONVIF `Profile000`/`VideoSource000`. Channel 2 (`canteiro-alt`) = fixed
-  lens. (DOC-2026-197's lens descriptions predate the lens having moved.)
+- **RTSP channel 1 (`canteiro`, right half of the mosaic) = the PT lens** =
+  ONVIF `Profile000`/`VideoSource000`. Channel 2 (`canteiro-alt`, left
+  half) = fixed lens. (DOC-2026-197's lens descriptions predate the lens having moved.)
 - The camera's **auto-tracking keeps re-aiming the PT lens** whenever it
-  follows someone — any manually set framing is transient while tracking is
+  follows someone and returns it to the rest position ~1 min after losing
+  the target — any manually set framing is transient while tracking is
   enabled in the Mibo app.
 - SOAP faults arrive with **HTTP 200**; parse the body.
 - Snapshots must be **keyframe-only** (`ffmpeg -skip_frame nokey`) — HEVC

@@ -28,8 +28,8 @@ Pack layout (Drive CeuAzul/Diario/<D>/pack/, all files public "anyone with the l
                      creates files one API call at a time, ~500 loose files took 20 min
   vehicles_sheet.jpg / people_sheet.jpg   quick-scan sheets (car events ≥20 s / person close-ups)
   frames/<D>_HHMM.jpg (1152×648) + frames_sheet.jpg   timelapse frames of the day
-  montage.jpg        Timelapse/DiaDeTrabalho/<D>.jpg (ontem × hoje, 3 posições) when present
-  sunset_pos2.jpg / sunset_pos3.jpg   calibrated sunset frames (same framing every day)
+  montage.jpg        Timelapse/DiaDeTrabalho/<D>.jpg (ontem × hoje, mosaico 2×2 das duas lentes) when present
+  sunset_fixa.jpg / sunset_pt.jpg     the two halves of the sunset mosaic (fixed lens | PT lens)
 
 Env (env/canteiro-diario.env — see canteiro-diario.env.example). Failures (rc≠0) are
 posted to ALERT_JID (Casa SmokeTests) — regra Eduardo 04/09/2026.
@@ -427,17 +427,19 @@ def collect_timelapse(d: dt.date, pack: Path, tmp: Path) -> dict:
         items.append((f.name[11:13] + ":" + f.name[13:15], f, False))
     if items:
         contact_sheet(items, pack / "frames_sheet.jpg", cols=5, tw=480, th=270, quality=82)
-    # montage (posted to the group at ~20:12) and calibrated sunset frames
+    # montage (posted to the group at ~20:12) and, as its fallback, the two halves of the
+    # sunset mosaic: fixed lens (left, street) + PT lens at rest (right) — 14/11/2026;
+    # until then the fallback was the PT lens at posicao2/posicao3 (no longer shot)
     got_montage = False
     r = run(["rclone", "copyto", rc_remote(TIMELAPSE_DIR, "DiaDeTrabalho", f"{d.isoformat()}.jpg"), str(tmp / "montage.jpg")], timeout=300)
     if r.returncode == 0 and (tmp / "montage.jpg").exists():
         shutil.copy(tmp / "montage.jpg", pack / "montage.jpg"); got_montage = True
-    for pos in ("posicao2", "posicao3"):
+    for pos, nome in (("lentefixa", "fixa"), ("posicao1", "pt")):
         dst = tmp / f"sun_{pos}"; dst.mkdir(exist_ok=True)
         r = run(["rclone", "copy", rc_remote(TIMELAPSE_DIR, pos, "por-do-sol"), str(dst), "--include", f"{d.isoformat()}_*.jpg"], timeout=300)
         fs = sorted(dst.glob("*.jpg"))
         if fs:
-            Image.open(fs[0]).convert("RGB").resize((1600, 900)).save(pack / f"sunset_{pos}.jpg", quality=82)
+            Image.open(fs[0]).convert("RGB").resize((1600, 900)).save(pack / f"sunset_{nome}.jpg", quality=82)
     return {"frames": len(frames), "montage": got_montage}
 
 
