@@ -86,7 +86,7 @@ manifest-latest.json          stable file (overwritten daily) — the routine's 
                               `sunset_fixa.jpg` + `sunset_pt.jpg` — the two halves of the sunset
                               mosaic, `lentefixa/por-do-sol` and `posicao1/por-do-sol` (since
                               2026-11-14; `sunset_pos2.jpg`/`sunset_pos3.jpg` before). The
-                              `frames/` of the day are still the PT lens only (`trabalho/`)
+                              `frames/` of the day are the PT lens (`trabalho/`); `frames_fixa/` + `frames_fixa_sheet.jpg` carry the fixed lens at the same instants (`trabalho-fixa/`, since 2026-11-14)
 <D>/diario.json               written by the cloud routine (Drive connector)
 <D>/resumo.{html,pdf,jpg}  <D>/completo.{html,pdf}
 <D>/sent.json  <D>/printed-<host>.json   idempotency markers

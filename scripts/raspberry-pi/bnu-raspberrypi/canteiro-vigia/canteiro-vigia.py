@@ -84,7 +84,12 @@ LIVE_URL = E("LIVE_URL")                        # opcional: link do /live no fim
 AVISAR_ESTADO = E("AVISAR_ESTADO", "teste")     # ligou/desligou → teste | grupo | nao
 
 FRIGATE_URL = E("FRIGATE_URL", "http://bnu-frigate:5000").rstrip("/")
-FRIGATE_CAMERA = E("FRIGATE_CAMERA", "canteiro")
+# As DUAS lentes desde 14/11/2026 (pedido Eduardo): a PT em repouso olha a obra (direita),
+# a fixa olha a rua/entrada (esquerda) — quem chega pela rua só aparece na fixa. Os eventos
+# das duas caem no MESMO episódio (a junção é por tempo), então não há aviso em dobro.
+# FRIGATE_CAMERA (uma lente só) continua aceito por compatibilidade.
+FRIGATE_CAMERAS = [x.strip() for x in E("FRIGATE_CAMERAS", E("FRIGATE_CAMERA", "canteiro,canteiro_fixa")).split(",")
+                   if x.strip()]
 LABELS = [x.strip() for x in E("LABELS", "person,car,bus,motorcycle,bicycle").split(",") if x.strip()]
 
 ROUTER_GRPC = E("ROUTER_GRPC", "ara-raspberrypi2:9000")   # relay socat → roteador Starlink
@@ -186,19 +191,25 @@ def router_clients():
 
 # ── Frigate ───────────────────────────────────────────────────────────────────
 def frigate_events(after):
-    q = urllib.parse.urlencode({"cameras": FRIGATE_CAMERA, "labels": ",".join(LABELS),
+    q = urllib.parse.urlencode({"cameras": ",".join(FRIGATE_CAMERAS), "labels": ",".join(LABELS),
                                 "after": int(after), "limit": 100})
     evs = http_json(f"{FRIGATE_URL}/api/events?{q}")
-    return sorted((e for e in evs if e.get("camera") == FRIGATE_CAMERA and e.get("label") in LABELS),
+    return sorted((e for e in evs if e.get("camera") in FRIGATE_CAMERAS and e.get("label") in LABELS),
                   key=lambda e: e["start_time"])
 
 
 def foto(eid, t0):
-    """Foto do evento: snapshot com a caixa do objeto → frame full-res da gravação → latest.jpg."""
+    """Foto do evento: snapshot com a caixa do objeto → frame full-res da gravação → latest.jpg
+    (os dois últimos na lente que viu o evento)."""
+    cam = FRIGATE_CAMERAS[0]
+    try:
+        cam = http_json(f"{FRIGATE_URL}/api/events/{eid}").get("camera") or cam
+    except Exception as ex:  # noqa: BLE001 — sem a lente, cai na principal
+        log(f"lente do evento {eid} não lida: {ex}")
     for url, nome in (
         (f"{FRIGATE_URL}/api/events/{eid}/snapshot.jpg?bbox=1&quality=85", "snapshot"),
-        (f"{FRIGATE_URL}/api/{FRIGATE_CAMERA}/recordings/{t0 + 2:.3f}/snapshot.jpg", "gravação"),
-        (f"{FRIGATE_URL}/api/{FRIGATE_CAMERA}/latest.jpg?h=720&quality=85", "latest"),
+        (f"{FRIGATE_URL}/api/{cam}/recordings/{t0 + 2:.3f}/snapshot.jpg", "gravação"),
+        (f"{FRIGATE_URL}/api/{cam}/latest.jpg?h=720&quality=85", "latest"),
     ):
         try:
             raw = http_bytes(url)
@@ -539,7 +550,7 @@ def selftest():
     try:
         ver = http_bytes(f"{FRIGATE_URL}/api/version", timeout=10).decode().strip()   # texto puro ("0.17.1-")
         evs = frigate_events(agora - 86400)
-        print(f"frigate   OK  {ver}  eventos 24h ({FRIGATE_CAMERA}, {','.join(LABELS)}): {len(evs)}")
+        print(f"frigate   OK  {ver}  eventos 24h ({'+'.join(FRIGATE_CAMERAS)}, {','.join(LABELS)}): {len(evs)}")
     except Exception as ex:  # noqa: BLE001
         ok = False
         print(f"frigate   FALHA  {ex}")
