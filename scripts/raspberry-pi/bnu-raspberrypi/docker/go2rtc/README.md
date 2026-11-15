@@ -101,9 +101,10 @@ upgrade). The `:1984` HTTP endpoints remain for LAN/IP consumers (the TV
 cast uses `http://10.1.1.123:1984/...` — IPs are not HSTS'd).
 
 Consumed by the **bnu HA script `script.canteiro_na_tv`** ("Canteiro na
-TV"), which casts `http://10.1.1.123:1984/api/stream.mp4?src=canteiro_mosaico_tv`
-— the mosaic at 1920x540, since 2026-11-14 (the HEVC passthrough `src=canteiro` until
-then) — to the 55" Neo QLED (`media_player.qn85f1443`, Samsung's 2026
+TV"), which casts the mosaic at 1920x540 as **HLS from canteiro-hls** —
+`http://10.1.1.123:8888/mosaico-tv/index.m3u8?cookieCheck=1`, content type
+`application/x-mpegURL`, `extra: {stream_type: LIVE, media_info: {hlsVideoSegmentFormat: fmp4}}`
+— since 2026-11-14 (the HEVC passthrough `stream.mp4?src=canteiro` until then) — to the 55" Neo QLED (`media_player.qn85f1443`, Samsung's 2026
 native Google Cast receiver). The script lives only in the live HA config
 (`/config/scripts.yaml`, backup `.bak-20261114`). bg has the same cast in
 `/config/packages/canteiro_na_tv.yaml` (through its proxy
@@ -117,6 +118,16 @@ on the Pi: the software decode took the load to 9 and stalled both camera
 pulls. mediamtx does not pick up a new path by itself — `docker restart
 canteiro-hls` after editing `mediamtx.yml`. Backups of this change:
 `scripts.yaml.bak-20261114b` (bnu), `/config/canteiro_na_tv.yaml.bak-20261114b` (bg).
+**Progressive `stream.mp4?src=canteiro_mosaico_tv` plays but rebuffers every
+5-10 s** (the player sits on the live edge with no cushion; Eduardo, on the
+TV); mediamtx's HLS gives it ~3 segments of reserve and played with no
+`buffering` state in 70 s. The URL needs `?cookieCheck=1` (without it mediamtx
+answers 302 + a `Secure` cookie the receiver cannot keep) and has NO `/hls`
+prefix on `:8888` (that prefix exists only behind `tailscale serve`). Known
+gap: when the composer restarts, the HLS muxer is destroyed and the TV stays in
+`buffering` until `script.canteiro_na_tv` runs again. bg still casts
+`stream.mp4?src=canteiro_mosaico_tv` through its go2rtc proxy (no HLS proxy
+there). Backup: `scripts.yaml.bak-20261114c`.
 The other findings below are from the HEVC stream.
 
 **One-click control (browser bookmarks).** Two HA webhook automations on
@@ -135,7 +146,7 @@ Findings from the 2026-08-24 test session (what works and what doesn't):
   `stream.mp4` mechanism with H.264.
 - 55" via Cast + go2rtc **HLS**: the Default Media Receiver launches but
   never fetches segments (CORS headers were present; the receiver just
-  rejects this HLS flavor). Use `stream.mp4`, not `stream.m3u8`.
+  rejects this HLS flavor). mediamtx's HLS (fMP4, H.264) DOES play — see above.
 - 60" AU8000 via **DLNA** (`media_player.samsung_au8000_60_tv`): accepts
   the push, flashes "playing", then drops to idle without fetching video —
   for both MP4 and HLS. Samsung's DMR does not play endless live streams;
