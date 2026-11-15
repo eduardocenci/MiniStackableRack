@@ -530,23 +530,60 @@ def render() -> Image.Image:
         sub = f"diário de {WD_PT[dd.weekday()]} {dd:%d/%m}"
     xa, y, xb, ye = head("entregas", "ENTREGAS", sub, "diario")
     if dj:
-        col = {"ok": GREEN, "part": AMBER, "no": RED, "na": BLUE}
-        for e in dj["entregas"]:
-            if y + 58 > ye:
-                break
-            c = col.get(e["status"], DIM)
-            dr.ellipse((xa, y + 9, xa + 14, y + 23), fill=c)
-            dr.text((xa + 24, y), fit(dr, e["o_que"], f_b, int(xb - xa - 24)), font=f_b, fill=FG)
-            y += 29
+        col = {"part": AMBER, "no": RED, "na": BLUE}
+        rows = [e for e in dj["entregas"] if not _filler(e)]
+        feitos = [e for e in rows if _recebido(e)]
+        falta = [e for e in rows if not _recebido(e)]
+        tw = int(xb - xa - 24)
+
+        def bloco(e: dict, done: bool, maxl: int, draw: bool) -> int:
+            """Height of one delivery; draws it at y when asked."""
+            c = GREEN if done else col.get(e["status"], AMBER)
+            lines = wrap(dr, e["o_que"], f_b, tw)
+            if len(lines) > maxl:
+                lines = lines[:maxl - 1] + [fit(dr, " ".join(lines[maxl - 1:]), f_b, tw)]
             st = e["status_label"]
-            sw = dr.textlength(st, font=f_bs)
-            dr.text((xb - sw, y), st, font=f_bs, fill=c)
             det = " · ".join(t for t in (re.sub(r"^CON-\d+\w?\s*", "", e["contrato"]), e["previsto"])
-                             if t and t.strip("—-– "))
-            dr.text((xa + 24, y), fit(dr, det, f_bs, int(xb - xa - 24 - sw - 14)), font=f_bs, fill=DIM)
-            y += 33
-        if not dj["entregas"]:
-            dr.text((xa, y), "nenhuma entrega no último diário", font=f_b, fill=DIM)
+                             if t and t.strip("—-– ") and _key(t) != _key(st))
+            sw = dr.textlength(st, font=f_bs)
+            dl = wrap(dr, det, f_bs, int(tw - sw - 14))[:2] if det else []
+            if len(dl) == 2:
+                dl[1] = fit(dr, " ".join(wrap(dr, det, f_bs, int(tw - sw - 14))[1:]), f_bs, tw)
+            if draw:
+                dr.ellipse((xa, y + 9, xa + 14, y + 23), fill=c)
+                yy = y
+                for ln in lines:
+                    dr.text((xa + 24, yy), ln, font=f_b, fill=FG)
+                    yy += 28
+                dr.text((xb - sw, yy), st, font=f_bs, fill=c)
+                for ln in dl:
+                    dr.text((xa + 24, yy), ln, font=f_bs, fill=DIM)
+                    yy += 25
+            return 28 * len(lines) + 25 * max(1, len(dl)) + 9
+
+        secs = [("A RECEBER", falta, False), ("JÁ RECEBIDOS", feitos, True)]
+        maxl = 4   # as many lines of text per item as the card has room for
+        while maxl > 1 and sum(27 + (sum(bloco(e, d, maxl, False) for e in li) if li else 30) + 6
+                               for _, li, d in secs if li or not d) > ye - y:
+            maxl -= 1
+        for titulo, lista, done in secs:
+            if not lista and done:
+                continue
+            if y + 27 + 30 > ye:
+                break
+            dr.text((xa, y), titulo, font=f_s, fill=DIM)
+            y += 27
+            if not lista:
+                dr.text((xa, y), "nada pendente no último diário", font=f_bs, fill=DIM)
+                y += 30
+            for i, e in enumerate(lista):
+                h = bloco(e, done, maxl, False)
+                if y + h > ye:
+                    dr.text((xa, y - 4), f"+ {len(lista) - i}", font=f_bs, fill=DIM)
+                    break
+                bloco(e, done, maxl, True)
+                y += h
+            y += 6
 
     # 4 — week plan
     pl = CACHE["plano"]["data"]
@@ -580,6 +617,25 @@ def render() -> Image.Image:
                 dr.text((xa, y), fit(dr, "· " + it, f_bs, int(xb - xa)), font=f_bs, fill=DIM)
                 y += 26
     return im
+
+
+RECEBIDO_RE = re.compile(r"\b(entreg(ue|ues|a|ou)|recebid[oa]s?|executad[oa]s?|conclu[ií]d[oa]s?|"
+                         r"descarregad[oa]s?|retirad[oa]s?|instalad[oa]s?|chegou|chegaram|no canteiro)\b", re.I)
+
+
+def _recebido(e: dict) -> bool:
+    """Has this delivery already happened? The Diário marks most of them `na` and says it in words
+    ("entregue seg 09/11", "executada ontem", "no canteiro"), so the label decides."""
+    if e["status"] == "ok":
+        return True
+    if e["status"] in ("no", "part"):
+        return False
+    return bool(RECEBIDO_RE.search(e["status_label"]) or RECEBIDO_RE.search(e["previsto"]))
+
+
+def _filler(e: dict) -> bool:
+    """The Diário's closing row "Nenhuma outra entrega prevista para hoje" is not a delivery."""
+    return not e["contrato"].strip("—-– ") and e["o_que"].lower().startswith(("nenhum", "sem "))
 
 
 def wrap(dr: ImageDraw.ImageDraw, txt: str, f, maxw: int) -> list[str]:
