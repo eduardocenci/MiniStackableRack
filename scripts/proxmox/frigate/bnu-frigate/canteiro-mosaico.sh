@@ -44,7 +44,42 @@
 # restart). So ffmpeg runs in the background and this script watches its two
 # publisher connections to mediamtx: fewer than two for 30 s in a row (after
 # 60 s of start-up grace) = kill it and let systemd start a fresh one.
+# A GREY HALF does not end it either: when the VAAPI HEVC decoder loses its
+# reference frames (it happened right after two restarts in a row, 2026-11-15
+# 06:34 and 12:07 BRT) it paints most of that lens as a flat mid-grey slab and
+# never recovers — keyframes included; a separate software decode of the same
+# stream was whole. The picture stayed like that for 2 h and for 1 h 15 until
+# someone looked. So every 30 s the watch also decodes ONE frame of the newest
+# complete segment canteiro-clipe keeps of `mosaico` (local file, software, a few
+# ms of CPU) and hands it to canteiro-mosaico-cinza.py: a half with >= 30 % of
+# flat neutral-grey cells in 3 checks in a row (90 s) = exit and let systemd start
+# a fresh decoder. At most 3 such restarts per hour (epochs in /run) — beyond
+# that it only logs, because a restart storm takes the stream down for the
+# watchdog (auto-heal cascade, 2026-11-14). No segment / same segment / clipe
+# down = no verdict, nothing counted. `canteiro-mosaico.sh --cinza` runs the
+# check once against the live buffer and prints the shares (diagnosis).
 F=/usr/lib/ffmpeg/7.0/bin/ffmpeg
+CLIPE=${CLIPE_DIR:-/var/lib/canteiro-clipe}
+CINZA=${CINZA:-/usr/local/bin/canteiro-mosaico-cinza.py}
+GREY_LOG=/run/canteiro-painel/cinza-restarts
+GREY_MAX=${GREY_MAX:-3}
+START=$(date +%s)
+LAST_SEG=
+grey_check() {   # 0 healthy, 1 a half is grey, 2 no verdict; message in GREY_MSG
+  local seg ts
+  seg=$(ls -1 "$CLIPE"/*.ts 2>/dev/null | tail -n 2 | head -n 1)
+  [ -n "$seg" ] && [ "$seg" != "$LAST_SEG" ] || return 2
+  ts=$(basename "$seg" .ts)
+  [ "$ts" -gt $((START + 30)) ] 2>/dev/null || return 2
+  LAST_SEG=$seg
+  GREY_MSG=$("$F" -v error -i "$seg" -frames:v 1 -vf scale=640:180 -pix_fmt yuv444p -f rawvideo - 2>/dev/null | python3 "$CINZA")
+}
+if [ "$1" = "--cinza" ]; then
+  START=0
+  grey_check; rc=$?
+  echo "${GREY_MSG:-cinza: no verdict} (segment $(basename "${LAST_SEG:-none}"), rc=$rc)"
+  exit $rc
+fi
 PAINEL_URL=${PAINEL_URL:-http://10.1.1.123:8557/painel.png}
 PAINEL=/run/canteiro-painel/painel.png
 mkdir -p /run/canteiro-painel
@@ -76,12 +111,32 @@ PID=$!
 trap 'kill $PID $LOOP 2>/dev/null' EXIT TERM INT
 sleep 60 & wait -n $PID $! && true
 bad=0
+grey=0
+tick=0
 while kill -0 $PID 2>/dev/null; do
   n=$(ss -Htnp state established dst 10.1.1.123:8555 2>/dev/null | grep -c "pid=$PID,")
   if [ "$n" -ge 2 ]; then bad=0; else bad=$((bad + 1)); fi
   if [ "$bad" -ge 3 ]; then
     echo "canteiro-mosaico: $n of 2 publisher connections for 30 s - restarting" >&2
     exit 1
+  fi
+  tick=$((tick + 1))
+  if [ $((tick % 3)) -eq 0 ]; then
+    grey_check
+    case $? in
+      0) grey=0 ;;
+      1) grey=$((grey + 1)) ;;
+    esac
+    if [ "$grey" -ge 3 ]; then
+      now=$(date +%s)
+      recent=$(awk -v t=$((now - 3600)) '$1 > t' "$GREY_LOG" 2>/dev/null)
+      if [ "$(printf '%s' "$recent" | grep -c .)" -lt "$GREY_MAX" ]; then
+        { [ -n "$recent" ] && printf '%s' "$recent" && echo; echo "$now"; } > "$GREY_LOG"
+        echo "canteiro-mosaico: grey half for 90 s ($GREY_MSG) - restarting" >&2
+        exit 1
+      fi
+      [ "$grey" -eq 3 ] && echo "canteiro-mosaico: grey half ($GREY_MSG) but $GREY_MAX restarts in the last hour - leaving it" >&2
+    fi
   fi
   sleep 10 & wait -n $PID $! && true
 done
