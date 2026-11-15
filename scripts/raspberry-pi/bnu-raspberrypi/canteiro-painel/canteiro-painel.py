@@ -498,24 +498,43 @@ def render() -> Image.Image:
             dr.text((xa, y), fit(dr, f"{quando} · {t['o_que']}", f_bs, int(xb - xa - sw - 34)), font=f_bs, fill=DIM)
             y += 29
 
-        for titulo, lista, late in (("A VENCER", avencer, False), (f"VENCIDOS SEM BAIXA — ÚLTIMOS {VENC_ATRAS} DIAS", vencidos, True)):
+        # What needs someone's attention comes first: overdue without a payment scheduled (red),
+        # then falling due without one (amber). A title already scheduled (green) is drawn only
+        # in the room the others leave - hidden ones are counted in the section's "+ N" line.
+        secs = [("A VENCER", avencer, False), (f"VENCIDOS SEM BAIXA — ÚLTIMOS {VENC_ATRAS} DIAS", vencidos, True)]
+        pick: list[set[int]] = [set(), set()]
+
+        def altura(sel: list[set[int]]) -> int:
+            h = 0
+            for (_, lista, late), k in zip(secs, sel):
+                if not lista and late:
+                    continue
+                h += 27 + (57 * len(k) + (26 if len(k) < len(lista) else 0) if lista else 30) + 4
+            return h
+
+        fila = ([(1, i) for i, t in enumerate(vencidos) if not t["agendado"]]
+                + [(0, i) for i, t in enumerate(avencer) if not t["agendado"]]
+                + [(0, i) for i, t in enumerate(avencer) if t["agendado"]]
+                + [(1, i) for i, t in enumerate(vencidos) if t["agendado"]])
+        for si, i in fila:
+            pick[si].add(i)
+            if altura(pick) > ye - y:
+                pick[si].discard(i)
+        for (titulo, lista, late), k in zip(secs, pick):
             if not lista and late:
                 continue
-            if y + 26 + 57 > ye:
+            if y + 27 + 26 > ye:
                 break
             dr.text((xa, y), titulo, font=f_s, fill=RED if late else DIM)
             y += 27
             if not lista:
                 dr.text((xa, y), "nenhum título nos próximos dias", font=f_bs, fill=DIM)
                 y += 30
-            shown = 0
-            for t in lista:
-                if y + 57 > ye - (24 if len(lista) - shown > 1 else 0):
-                    break
-                linha(t, late)
-                shown += 1
-            if len(lista) > shown:
-                resto = lista[shown:]
+            for i, t in enumerate(lista):
+                if i in k:
+                    linha(t, late)
+            resto = [t for i, t in enumerate(lista) if i not in k]
+            if resto:
                 ag = sum(1 for x in resto if x["agendado"])
                 dr.text((xa, y), f"+ {len(resto)}" + (f" ({ag} agendado{'s' if ag > 1 else ''})" if ag else "")
                         + f" · R$ {brl(sum(x['valor'] for x in resto))}", font=f_bs, fill=DIM)
