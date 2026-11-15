@@ -11,6 +11,10 @@ Wants=network-online.target
 ExecStart=/usr/local/bin/canteiro-mosaico.sh
 Restart=always
 RestartSec=5
+# Steady state is ~0.8 GB. With its outputs dead ffmpeg grew 25 MB/s (2026-11-15) and the
+# LXC-wide OOM killer may pick a Frigate process instead: keep the damage in this unit.
+MemoryMax=1200M
+MemorySwapMax=0
 
 [Install]
 WantedBy=multi-user.target
