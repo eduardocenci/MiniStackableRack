@@ -42,8 +42,15 @@
 # muxers and stays alive publishing nothing (seen 2026-11-14 and 15, every time
 # the watchdog's auto-heal restarted canteiro-hls: mosaic down until a manual
 # restart). So ffmpeg runs in the background and this script watches its two
-# publisher connections to mediamtx: fewer than two for 30 s in a row (after
-# 60 s of start-up grace) = kill it and let systemd start a fresh one.
+# publisher connections to mediamtx: fewer than two in 2 readings 5 s apart
+# (after 60 s of start-up grace) = kill it and let systemd start a fresh one.
+# It was 30 s until 2026-11-15: that day at 14:15 BRT ffmpeg DID see the broken
+# pipes, ended its two muxer threads and kept decoding and compositing into a
+# queue nobody drained - 0.8 -> 1.4 GB in 28 s, and the LXC's 4 GB memory limit
+# (Frigate alone keeps it at ~3.9 GB) killed it before the watch got there.
+# ffmpeg never reconnects an RTSP output, so waiting buys nothing. The unit also
+# carries MemoryMax, so a runaway composer is killed inside its own cgroup and
+# the kernel never has to pick a Frigate process instead.
 # A GREY HALF does not end it either: when the VAAPI HEVC decoder loses its
 # reference frames (it happened right after two restarts in a row, 2026-11-15
 # 06:34 and 12:07 BRT) it paints most of that lens as a flat mid-grey slab and
@@ -116,12 +123,12 @@ tick=0
 while kill -0 $PID 2>/dev/null; do
   n=$(ss -Htnp state established dst 10.1.1.123:8555 2>/dev/null | grep -c "pid=$PID,")
   if [ "$n" -ge 2 ]; then bad=0; else bad=$((bad + 1)); fi
-  if [ "$bad" -ge 3 ]; then
-    echo "canteiro-mosaico: $n of 2 publisher connections for 30 s - restarting" >&2
+  if [ "$bad" -ge 2 ]; then
+    echo "canteiro-mosaico: $n of 2 publisher connections for 10 s - restarting" >&2
     exit 1
   fi
   tick=$((tick + 1))
-  if [ $((tick % 3)) -eq 0 ]; then
+  if [ $((tick % 6)) -eq 0 ]; then
     grey_check
     case $? in
       0) grey=0 ;;
@@ -138,7 +145,7 @@ while kill -0 $PID 2>/dev/null; do
       [ "$grey" -eq 3 ] && echo "canteiro-mosaico: grey half ($GREY_MSG) but $GREY_MAX restarts in the last hour - leaving it" >&2
     fi
   fi
-  sleep 10 & wait -n $PID $! && true
+  sleep 5 & wait -n $PID $! && true
 done
 wait $PID
 exit 1
