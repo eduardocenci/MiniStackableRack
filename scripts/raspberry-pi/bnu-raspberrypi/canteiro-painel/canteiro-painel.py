@@ -2,10 +2,14 @@
 """canteiro-painel — live data band shown UNDER the canteiro mosaic (pedido Eduardo 15/11/2026).
 
 The mosaic [fixed lens | PT lens] is 32:9; a TV and most screens are 16:9. This service draws the
-missing half: a 1920x540 PNG with four blocks, redrawn every minute —
+missing half: a 1920x540 PNG with five blocks, redrawn every minute —
 
   NA REDE AGORA       who is on the site Wi-Fi (ara netoverview /api/devices; fixed devices apart)
   PORTÃO              last gate passes by tag (condfy.db in the bnu docker LXC, via bnu-proxmox)
+                      (these two share the first column, one above the other — Eduardo 15/11/2026)
+  VENCIMENTOS         titles falling due in the next 7 days + the ones overdue up to 7 days and
+                      still open, each "agendado DD/MM" (a scheduling slip was filed) or "sem
+                      agendamento" (sheet tab Financeiro, same spreadsheet as the plan)
   ENTREGAS            deliveries of the last Diário de Obra (Drive Diario/<date>/diario.json)
   PLANO DA SEMANA     the week's planned activities (sheet PlanejadoRealizado; with the Diário's
                       status marks when the last Diário is of the same week)
@@ -65,7 +69,10 @@ RCLONE_REMOTE = E("RCLONE_REMOTE", "ceuazul:").rstrip("/")
 DIARIO_DIR = E("DIARIO_DIR", "Diario")
 RENDER_S = int(E("RENDER_S", "60"))
 TTL = {"rede": 60, "tags": int(E("TAGS_S", "180")), "diario": int(E("DIARIO_S", "1800")),
-       "plano": int(E("PLANO_S", "1800"))}
+       "plano": int(E("PLANO_S", "1800")), "venc": int(E("VENC_S", "900"))}
+FIN_TAB = E("FIN_TAB", "Financeiro")
+VENC_DIAS = int(E("VENC_DIAS", "7"))      # titles due from today to today + N days…
+VENC_ATRAS = int(E("VENC_ATRAS", "7"))    # …plus the ones that fell due in the last N days and are still open
 
 W, H = 1920, 540
 BG, CARD, LINE = (14, 17, 22), (24, 29, 37), (44, 52, 64)
@@ -231,7 +238,109 @@ def _itens(txt: str) -> list[str]:
     return out
 
 
-SOURCES = {"rede": src_rede, "tags": src_tags, "diario": src_diario, "plano": src_plano}
+TAX_RE = re.compile(r"^\s*(ISS|INSS|IRRF|PIS|COFINS|CSLL|CSRF)\b", re.I)
+VENC_RE = re.compile(r"venc(?:imento|e|\.)?\s*(?:normal\s*|em\s*|:\s*)?(\d{2})/(\d{2})(?:/(\d{4}))?", re.I)
+BR_DATE = re.compile(r"^\s*(\d{2})/(\d{2})/(\d{4})\s*$")
+# Financeiro tab, 0-based columns (layout v7 — home-ara finance/sheets_client.py FIELD)
+FC = {"id": 0, "fornecedor": 3, "parcela": 9, "data_nf": 10, "numero": 11, "valor_nf": 14, "pago": 20, "obs": 22}
+
+
+def _money(s: str) -> float:
+    """Sheet currency as displayed ("R$3,391.50" or "R$ 3.391,50") -> float; 0.0 when not a number."""
+    s = re.sub(r"[^\d,.\-]", "", s or "")
+    if not s or s in "-.,":
+        return 0.0
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".") if s.rfind(",") > s.rfind(".") else s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".") if len(s) - s.rfind(",") == 3 else s.replace(",", "")
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def _vendor(s: str) -> str:
+    skip = {"de", "da", "do", "das", "dos", "e", "ltda", "s/a", "sa", "epp", "me", "eireli", "-", "ind", "com", "imp",
+            "exp", "industria", "indústria", "comercio", "comércio", "importacao", "exportacao", "empreiteira",
+            "mao", "mão", "obra", "obras", "municipio", "município", "prefeitura"}
+    out = []
+    for w in re.split(r"[\s\-]+", s.strip()):
+        k = w.lower().strip(".,")
+        if not k or k in skip:
+            continue
+        out.append(w.upper() if len(w) <= 4 else w.capitalize())
+        if len(out) == 2:
+            break
+    return " ".join(out) or (s.strip()[:24] or "?")
+
+
+def src_venc() -> dict:
+    """Titles falling due, from the Financeiro tab (same spreadsheet as the plan). Read-only.
+
+    A row is OPEN while Pago (U) does not start with "Sim" ("Sim" is Jorge's, "Sim (IA), date" the
+    ingest's). "Agend. (IA), DD/MM/YYYY" there = a scheduling slip was filed: scheduled, not paid.
+    Due date: a retention guia (Parcela = ISS/INSS/IRRF…) or a parcel without NF number carries it
+    in the Data column (K); an invoiced row carries the NF date in K and its boleto's due date in
+    Observações ("venc. DD/MM/AAAA") — an invoiced row with no such note is skipped rather than
+    guessed."""
+    if not SHEET_ID or not Path(GSA_KEYFILE).exists():
+        raise RuntimeError("sheet not configured")
+    import gspread  # noqa: WPS433
+    rows = gspread.service_account(filename=GSA_KEYFILE).open_by_key(SHEET_ID).worksheet(FIN_TAB).get_all_values()
+    hoje = dt.datetime.now(TZ).date()
+    lo, hi = hoje - dt.timedelta(days=VENC_ATRAS), hoje + dt.timedelta(days=VENC_DIAS)
+    cid, forn, tit, antigos_n, antigos_total = "", "", [], 0, 0.0
+    for r in rows[2:]:
+        r = r + [""] * (FC["obs"] + 1 - len(r))
+        if r[FC["id"]].strip():
+            cid, forn = r[FC["id"]].strip(), r[FC["fornecedor"]].strip()
+        pago, parcela, obs = r[FC["pago"]].strip(), r[FC["parcela"]].strip(), r[FC["obs"]]
+        if pago.lower().startswith("sim"):
+            continue
+        valor = _money(r[FC["valor_nf"]])
+        if valor < 0 or (r[FC["valor_nf"]].strip() and valor == 0):
+            continue                      # credit notes and zeroed (cancelled) rows
+        tax = bool(TAX_RE.match(parcela))
+        venc = None
+        mk = BR_DATE.match(r[FC["data_nf"]])
+        mo = VENC_RE.search(obs)
+        if tax or not r[FC["numero"]].strip():
+            if mk:
+                venc = dt.date(int(mk.group(3)), int(mk.group(2)), int(mk.group(1)))
+        elif mo:
+            year = int(mo.group(3)) if mo.group(3) else (int(mk.group(3)) if mk else hoje.year)
+            venc = dt.date(year, int(mo.group(2)), int(mo.group(1)))
+            if mk and not mo.group(3) and venc < dt.date(int(mk.group(3)), int(mk.group(2)), int(mk.group(1))):
+                venc = venc.replace(year=year + 1)
+        if venc is None:
+            continue
+        if not valor:
+            mv = re.search(r"R\$\s*([\d.]+,\d{2})", obs)
+            valor = _money(mv.group(1)) if mv else 0.0
+        if venc < lo:
+            antigos_n += 1
+            antigos_total += valor
+            continue
+        if venc > hi:
+            continue
+        ag = ""
+        if pago.lower().startswith("agend"):
+            ma = re.search(r"(\d{2}/\d{2})/\d{4}", pago)
+            ag = ma.group(1) if ma else "sim"
+        if tax:
+            o_que = parcela
+        elif r[FC["numero"]].strip():
+            o_que = "NF " + r[FC["numero"]].strip().lstrip("0")
+        else:
+            o_que = "parcela " + parcela if parcela else "parcela"
+        tit.append({"venc": venc.isoformat(), "quem": _vendor(forn), "contrato": cid, "o_que": o_que,
+                    "valor": round(valor, 2), "agendado": ag})
+    tit.sort(key=lambda t: (t["venc"], -t["valor"]))
+    return {"titulos": tit, "antigos_n": antigos_n, "antigos_total": round(antigos_total, 2)}
+
+
+SOURCES = {"rede": src_rede, "tags": src_tags, "venc": src_venc, "diario": src_diario, "plano": src_plano}
 CACHE: dict[str, dict] = {k: {"data": None, "ok_ts": 0.0, "try_ts": 0.0, "erro": None} for k in SOURCES}
 
 
@@ -281,20 +390,24 @@ def age_txt(k: str) -> tuple[str, tuple]:
 def render() -> Image.Image:
     im = Image.new("RGB", (W, H), BG)
     dr = ImageDraw.Draw(im)
-    f_t, f_s, f_b, f_bs, f_n = font(F_HEAD, 30), font(F_SEMI, 22), font(F_BODY, 24), font(F_BODY, 20), font(F_HEAD, 64)
+    f_t, f_s, f_b, f_bs, f_n = font(F_HEAD, 30), font(F_SEMI, 22), font(F_BODY, 24), font(F_BODY, 20), font(F_HEAD, 56)
     now = dt.datetime.now(TZ)
-    pad, gap, top = 14, 12, 10
-    widths = [350, 410, 500, 0]
-    widths[3] = W - 2 * pad - 3 * gap - sum(widths[:3])
-    x = pad
-    boxes = []
-    for w in widths:
-        boxes.append((x, top, x + w, H - 10))
-        dr.rounded_rectangle(boxes[-1], radius=10, fill=CARD, outline=LINE)
-        x += w + gap
+    pad, gap, top, bot = 14, 12, 10, H - 10
+    w1, w2, w3 = 350, 440, 470
+    x2 = pad + w1 + gap
+    x3 = x2 + w2 + gap
+    x4 = x3 + w3 + gap
+    rede_h = 176
+    boxes = {"rede": (pad, top, pad + w1, top + rede_h),
+             "tags": (pad, top + rede_h + gap, pad + w1, bot),
+             "venc": (x2, top, x2 + w2, bot),
+             "entregas": (x3, top, x3 + w3, bot),
+             "plano": (x4, top, W - pad, bot)}
+    for b in boxes.values():
+        dr.rounded_rectangle(b, radius=10, fill=CARD, outline=LINE)
 
-    def head(i: int, title: str, sub: str = "", key: str | None = None) -> tuple[int, int, int]:
-        x0, y0, x1, _ = boxes[i]
+    def head(name: str, title: str, sub: str = "", key: str | None = None) -> tuple[int, int, int, int]:
+        x0, y0, x1, y1 = boxes[name]
         dr.text((x0 + 16, y0 + 8), title, font=f_t, fill=AMBER)
         tw = dr.textlength(title, font=f_t)
         note, col = age_txt(key) if key else ("", DIM)
@@ -303,49 +416,38 @@ def render() -> Image.Image:
             right = fit(dr, right, f_s, int(x1 - x0 - tw - 48))
             dr.text((x1 - 16 - dr.textlength(right, font=f_s), y0 + 16), right, font=f_s, fill=col if note else DIM)
         dr.line((x0 + 16, y0 + 50, x1 - 16, y0 + 50), fill=LINE, width=2)
-        return x0 + 16, y0 + 60, x1 - 16
+        return x0 + 16, y0 + 58, x1 - 16, y1 - 12
 
-    # 1 — network
-    xa, y, xb = head(0, "NA REDE AGORA", f"{now:%H:%M}", "rede")
+    # 1a — network (top of the first column)
+    xa, y, xb, ye = head("rede", "NA REDE AGORA", f"{now:%H:%M}", "rede")
     d = CACHE["rede"]["data"]
     if d:
         n = len(d["pessoas"])
-        dr.text((xa, y - 6), str(n), font=f_n, fill=GREEN if n else DIM)
+        dr.text((xa, y - 8), str(n), font=f_n, fill=GREEN if n else DIM)
         nw = dr.textlength(str(n), font=f_n)
-        dr.text((xa + nw + 12, y + 6), "aparelho" + ("" if n == 1 else "s") + " de pessoas", font=f_b, fill=FG)
-        dr.text((xa + nw + 12, y + 34), f"fixos: {d['fixos_on']}/{d['fixos_total']} no ar", font=f_bs,
+        dr.text((xa + nw + 12, y), "aparelho" + ("" if n == 1 else "s") + " de pessoas", font=f_b, fill=FG)
+        dr.text((xa + nw + 12, y + 28), f"fixos: {d['fixos_on']}/{d['fixos_total']} no ar", font=f_bs,
                 fill=DIM if d["fixos_on"] == d["fixos_total"] else RED)
-        y += 76
-        for p in d["pessoas"][:9]:
-            t = "desde " + hhmm(p["desde"])
-            dr.text((xb - dr.textlength(t, font=f_bs), y + 3), t, font=f_bs, fill=DIM)
-            dr.text((xa, y), fit(dr, p["nome"], f_b, int(xb - xa - 130)), font=f_b, fill=FG)
-            y += 30
-        if n > 9:
-            dr.text((xa, y), f"+ {n - 9}", font=f_bs, fill=DIM)
-            y += 28
-        if d["saidas"] and y < H - 130:
-            y += 6
-            dr.text((xa, y), "ÚLTIMOS A SAIR", font=f_s, fill=DIM)
-            y += 28
-            for s in d["saidas"]:
-                if y > H - 44:
-                    break
-                t = hhmm(s["saiu"])
-                dr.text((xb - dr.textlength(t, font=f_bs), y + 2), t, font=f_bs, fill=DIM)
-                dr.text((xa, y), fit(dr, s["nome"], f_bs, int(xb - xa - 110)), font=f_bs, fill=DIM)
-                y += 26
+        y += 62
+        if n:
+            names = ", ".join(p["nome"] for p in d["pessoas"])
+            for ln in wrap(dr, names, f_bs, int(xb - xa))[:2]:
+                dr.text((xa, y), ln, font=f_bs, fill=FG)
+                y += 25
+        elif d["saidas"]:
+            s = d["saidas"][0]
+            dr.text((xa, y), fit(dr, f"último a sair: {s['nome']} · {hhmm(s['saiu'])}", f_bs, int(xb - xa)), font=f_bs, fill=DIM)
 
-    # 2 — gate
-    xa, y, xb = head(1, "PORTÃO — TAGS", "últimas passagens", "tags")
+    # 1b — gate (bottom of the first column)
+    xa, y, xb, ye = head("tags", "PORTÃO — TAGS", "últimas", "tags")
     d = CACHE["tags"]["data"]
     if d:
         last_day = None
         for e in d["eventos"]:
-            if y > H - 44:
-                break
             ts = str(e.get("ts_local") or "")
             day, hm = ts[:10], ts[11:16]
+            if y + (54 if day != last_day else 28) > ye:
+                break
             if day != last_day:
                 try:
                     dd = dt.date.fromisoformat(day)
@@ -355,14 +457,70 @@ def render() -> Image.Image:
                 dr.text((xa, y), lab, font=f_s, fill=DIM)
                 y += 26
                 last_day = day
-            dr.text((xa, y), hm, font=f_b, fill=BLUE)
+            dr.text((xa, y), hm, font=f_bs, fill=BLUE)
             gate = str(e.get("gate") or "").replace("portão ", "")
             gw = dr.textlength(gate, font=f_bs)
-            dr.text((xb - gw, y + 3), gate, font=f_bs, fill=DIM)
-            dr.text((xa + 74, y), fit(dr, str(e.get("person") or "?"), f_b, int(xb - xa - 74 - gw - 14)), font=f_b, fill=FG)
-            y += 30
+            dr.text((xb - gw, y), gate, font=f_bs, fill=DIM)
+            dr.text((xa + 62, y), fit(dr, str(e.get("person") or "?"), f_bs, int(xb - xa - 62 - gw - 12)), font=f_bs, fill=FG)
+            y += 27
         if not d["eventos"]:
-            dr.text((xa, y), "nenhuma passagem registrada", font=f_b, fill=DIM)
+            dr.text((xa, y), "nenhuma passagem registrada", font=f_bs, fill=DIM)
+
+    # 2 — titles falling due
+    d = CACHE["venc"]["data"]
+    xa, y, xb, ye = head("venc", "VENCIMENTOS", f"até {WD_PT[(now + dt.timedelta(days=VENC_DIAS)).weekday()]} "
+                         f"{now + dt.timedelta(days=VENC_DIAS):%d/%m}", "venc")
+    if d:
+        hoje = now.date()
+        if d["antigos_n"]:
+            ye -= 30
+            dr.text((xa, ye + 6), fit(dr, f"+ {d['antigos_n']} mais antigos sem baixa · R$ {brl(d['antigos_total'])}",
+                                      f_bs, int(xb - xa)), font=f_bs, fill=DIM)
+        avencer = [t for t in d["titulos"] if t["venc"] >= hoje.isoformat()]
+        vencidos = [t for t in d["titulos"] if t["venc"] < hoje.isoformat()][::-1]   # most recent first
+
+        def linha(t: dict, late: bool) -> None:
+            nonlocal y
+            dd = dt.date.fromisoformat(t["venc"])
+            v = "R$ " + brl(t["valor"]) if t["valor"] else "valor a definir"
+            vw = dr.textlength(v, font=f_b)
+            dr.text((xb - vw, y), v, font=f_b, fill=FG)
+            dr.text((xa, y), fit(dr, t["quem"], f_b, int(xb - xa - vw - 14)), font=f_b, fill=FG)
+            y += 28
+            if t["agendado"]:
+                st, c = "agendado" + (f" {t['agendado']}" if t["agendado"] != "sim" else ""), GREEN
+            else:
+                st, c = "sem agendamento", (RED if late else AMBER)
+            sw = dr.textlength(st, font=f_bs)
+            dr.ellipse((xb - sw - 22, y + 6, xb - sw - 10, y + 18), fill=c)
+            dr.text((xb - sw, y), st, font=f_bs, fill=c)
+            quando = "hoje" if dd == hoje else f"{WD_PT[dd.weekday()]} {dd:%d/%m}"
+            dr.text((xa, y), fit(dr, f"{quando} · {t['o_que']}", f_bs, int(xb - xa - sw - 34)), font=f_bs, fill=DIM)
+            y += 29
+
+        for titulo, lista, late in (("A VENCER", avencer, False), (f"VENCIDOS SEM BAIXA — ÚLTIMOS {VENC_ATRAS} DIAS", vencidos, True)):
+            if not lista and late:
+                continue
+            if y + 26 + 57 > ye:
+                break
+            dr.text((xa, y), titulo, font=f_s, fill=RED if late else DIM)
+            y += 27
+            if not lista:
+                dr.text((xa, y), "nenhum título nos próximos dias", font=f_bs, fill=DIM)
+                y += 30
+            shown = 0
+            for t in lista:
+                if y + 57 > ye - (24 if len(lista) - shown > 1 else 0):
+                    break
+                linha(t, late)
+                shown += 1
+            if len(lista) > shown:
+                resto = lista[shown:]
+                ag = sum(1 for x in resto if x["agendado"])
+                dr.text((xa, y), f"+ {len(resto)}" + (f" ({ag} agendado{'s' if ag > 1 else ''})" if ag else "")
+                        + f" · R$ {brl(sum(x['valor'] for x in resto))}", font=f_bs, fill=DIM)
+                y += 26
+            y += 4
 
     # 3 — deliveries
     dj = CACHE["diario"]["data"]
@@ -370,11 +528,11 @@ def render() -> Image.Image:
     if dj:
         dd = dt.date.fromisoformat(dj["date"])
         sub = f"diário de {WD_PT[dd.weekday()]} {dd:%d/%m}"
-    xa, y, xb = head(2, "ENTREGAS", sub, "diario")
+    xa, y, xb, ye = head("entregas", "ENTREGAS", sub, "diario")
     if dj:
         col = {"ok": GREEN, "part": AMBER, "no": RED, "na": BLUE}
         for e in dj["entregas"]:
-            if y > H - 74:
+            if y + 58 > ye:
                 break
             c = col.get(e["status"], DIM)
             dr.ellipse((xa, y + 9, xa + 14, y + 23), fill=c)
@@ -392,7 +550,7 @@ def render() -> Image.Image:
 
     # 4 — week plan
     pl = CACHE["plano"]["data"]
-    xa, y, xb = head(3, f"PLANO DA SEMANA {pl['week']}" if pl else "PLANO DA SEMANA", pl["range"] if pl else "", "plano")
+    xa, y, xb, ye = head("plano", f"PLANO DA SEMANA {pl['week']}" if pl else "PLANO DA SEMANA", pl["range"] if pl else "", "plano")
     if pl:
         marks = []
         if dj and dj.get("week") == pl["week"]:
@@ -400,7 +558,7 @@ def render() -> Image.Image:
         col = {"ok": GREEN, "part": AMBER, "no": RED, "na": DIM}
         itens = pl["itens"] or ["(semana sem plano na planilha)"]
         for it in itens:
-            if y > H - 44:
+            if y + 30 > ye:
                 break
             m = _match(it, marks)
             c = col.get(m["status"], DIM) if m else LINE
@@ -412,16 +570,32 @@ def render() -> Image.Image:
             dr.text((xa + 24, y), fit(dr, it, f_b, int(xb - xa - 24 - sw - (14 if st else 0))), font=f_b, fill=FG)
             y += 30
         nx = pl.get("proxima")
-        if nx and y < H - 100:
+        if nx and y + 60 < ye:
             y += 6
             dr.text((xa, y), f"PRÓXIMA — SEMANA {nx['week']} ({nx['range']})", font=f_s, fill=DIM)
             y += 28
             for it in nx["itens"]:
-                if y > H - 42:
+                if y + 26 > ye:
                     break
                 dr.text((xa, y), fit(dr, "· " + it, f_bs, int(xb - xa)), font=f_bs, fill=DIM)
                 y += 26
     return im
+
+
+def wrap(dr: ImageDraw.ImageDraw, txt: str, f, maxw: int) -> list[str]:
+    lines, cur = [], ""
+    for w in txt.split(" "):
+        t = (cur + " " + w).strip()
+        if dr.textlength(t, font=f) <= maxw or not cur:
+            cur = t
+        else:
+            lines.append(cur)
+            cur = w
+    return lines + ([cur] if cur else [])
+
+
+def brl(v: float) -> str:
+    return f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
 def _key(s: str) -> str:

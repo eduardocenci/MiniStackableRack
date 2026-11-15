@@ -1,13 +1,14 @@
 # canteiro-painel — live data band under the canteiro mosaic
 
 The canteiro mosaic `[fixed lens | PT lens]` is 32:9; a TV is 16:9. This service draws the
-other half — a **1920×540 PNG with four blocks, redrawn every 60 s** — shown under the
+other half — a **1920×540 PNG with five blocks, redrawn every 60 s** — shown under the
 mosaic **on the office TV and on the `/live` page** (pedido Eduardo 15/11/2026).
 
 | Block | Source | Refresh |
 |---|---|---|
-| NA REDE AGORA — people's devices on the site Wi-Fi, fixed gear, last to leave | ara netoverview `GET /api/devices` | 60 s |
-| PORTÃO — TAGS — last 12 gate passes | `condfy.db` (bnu docker LXC 101) through `bnu-proxmox`, paramiko — the path `canteiro-diario` uses | 3 min |
+| NA REDE AGORA — people's devices on the site Wi-Fi, fixed gear, last to leave (top of column 1) | ara netoverview `GET /api/devices` | 60 s |
+| PORTÃO — TAGS — last gate passes (bottom of column 1) | `condfy.db` (bnu docker LXC 101) through `bnu-proxmox`, paramiko — the path `canteiro-diario` uses | 3 min |
+| VENCIMENTOS — titles falling due in the next 7 days ("A VENCER") and the ones overdue up to 7 days still open ("VENCIDOS SEM BAIXA"), each `agendado DD/MM` or `sem agendamento`; older open ones as one total line | sheet tab `Financeiro` (same spreadsheet as the plan): open = Pago (U) not starting with "Sim"; scheduled = `Agend. (IA), DD/MM/YYYY` there; due date = column Data (K) on retention guias and parcels without NF, `venc. DD/MM/AAAA` in Observações on invoiced rows (none → skipped, not guessed) | 15 min |
 | ENTREGAS — deliveries of the last Diário de Obra | Drive `Diario/<date>/diario.json` (rclone; public copy, no `equipe`) | 30 min |
 | PLANO DA SEMANA — planned activities, next week, status dots | sheet `PlanejadoRealizado` (gspread) + the Diário's `plano` when it is of the same week (fuzzy match: the Diário rewrites the sheet's wording) | 30 min |
 
@@ -51,7 +52,7 @@ First install only: `sudo install -d -o 1000 -g 1000 /var/lib/canteiro-painel`.
 
 ## Privacy
 
-Device names and who passed the gate: home LAN (two clients) and tailnet only — never send
+Device names, who passed the gate and what is owed to whom: home LAN (two clients) and tailnet only — never send
 this picture to a WhatsApp group.
 
 Runbook: globalnet `docs/runbooks/canteiro-painel.md`.
