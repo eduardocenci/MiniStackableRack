@@ -542,9 +542,19 @@ def render() -> Image.Image:
             lines = wrap(dr, e["o_que"], f_b, tw)
             if len(lines) > maxl:
                 lines = lines[:maxl - 1] + [fit(dr, " ".join(lines[maxl - 1:]), f_b, tw)]
-            st = e["status_label"]
-            det = " · ".join(t for t in (re.sub(r"^CON-\d+\w?\s*", "", e["contrato"]), e["previsto"])
-                             if t and t.strip("—-– ") and _key(t) != _key(st))
+            # The Diário writes from its own day ("executada ontem"): on the panel, days later, that
+            # reads wrong - relative words become that day's date. And it often says the same thing
+            # twice ("no canteiro até 19/11" / "no canteiro"): a received item shows it ONCE, in
+            # green on the right, in its fuller form; the grey line keeps only the vendor.
+            st, prev = _abs_dia(e["status_label"], dd, now.date()), _abs_dia(e["previsto"], dd, now.date())
+            if not prev.strip("—-– "):
+                prev = ""
+            if done and prev and (RECEBIDO_RE.search(prev) or not RECEBIDO_RE.search(st)):
+                if RECEBIDO_RE.search(prev):
+                    st, prev = prev, ""
+            elif prev and (_key(prev) == _key(st) or _key(st) in _key(prev)):
+                st, prev = prev, ""
+            det = " · ".join(t for t in (re.sub(r"^CON-\d+\w?\s*", "", e["contrato"]).strip("—-– "), prev) if t)
             sw = dr.textlength(st, font=f_bs)
             dl = wrap(dr, det, f_bs, int(tw - sw - 14))[:2] if det else []
             if len(dl) == 2:
@@ -631,6 +641,20 @@ def _recebido(e: dict) -> bool:
     if e["status"] in ("no", "part"):
         return False
     return bool(RECEBIDO_RE.search(e["status_label"]) or RECEBIDO_RE.search(e["previsto"]))
+
+
+REL_DIA = {"anteontem": -2, "ontem": -1, "hoje": 0, "amanhã": 1, "amanha": 1}
+
+
+def _abs_dia(txt: str, ref: dt.date, today: dt.date) -> str:
+    """"executada ontem" in the Diário of Fri 13/11, read on Sunday -> "executada qui 12/11"."""
+    if ref == today:
+        return txt
+
+    def sub(m: re.Match) -> str:
+        d = ref + dt.timedelta(days=REL_DIA[m.group(0).lower()])
+        return f"{WD_PT[d.weekday()]} {d:%d/%m}"
+    return re.sub(r"\b(anteontem|ontem|hoje|amanh[ãa])\b", sub, txt, flags=re.I)
 
 
 def _filler(e: dict) -> bool:
