@@ -29,9 +29,15 @@
 # TV cast — the Neo QLED's Google Cast receiver refuses H.264 2560 px wide
 # (2026-11-14, seen on the physical TV: player `idle`, no request made).
 # Any input EOF/stall (15 s) ends ffmpeg; systemd restarts it 5 s later.
+# A dead OUTPUT does not: with two outputs, ffmpeg 7 logs "Broken pipe" on both
+# muxers and stays alive publishing nothing (seen 2026-11-14 and 15, every time
+# the watchdog's auto-heal restarted canteiro-hls: mosaic down until a manual
+# restart). So ffmpeg runs in the background and this script watches its two
+# publisher connections to mediamtx: fewer than two for 30 s in a row (after
+# 60 s of start-up grace) = kill it and let systemd start a fresh one.
 F=/usr/lib/ffmpeg/7.0/bin/ffmpeg
 IN="-hwaccel vaapi -hwaccel_device va -rtsp_transport tcp -timeout 15000000 -analyzeduration 1000000"
-exec "$F" -hide_banner -loglevel warning -nostdin \
+"$F" -hide_banner -loglevel warning -nostdin \
   -init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va \
   $IN -i rtsp://127.0.0.1:8554/canteiro_fixa \
   $IN -i rtsp://127.0.0.1:8554/canteiro \
@@ -39,4 +45,19 @@ exec "$F" -hide_banner -loglevel warning -nostdin \
   -map "[v]" -c:v h264_vaapi -profile:v high -b:v 3M -maxrate 4M -g 30 -an \
   -rtsp_transport tcp -f rtsp rtsp://10.1.1.123:8555/mosaico \
   -map "[t]" -c:v h264_vaapi -profile:v high -b:v 2M -maxrate 3M -g 30 -an \
-  -rtsp_transport tcp -f rtsp rtsp://10.1.1.123:8555/mosaico-tv
+  -rtsp_transport tcp -f rtsp rtsp://10.1.1.123:8555/mosaico-tv &
+PID=$!
+trap 'kill $PID 2>/dev/null' EXIT TERM INT
+sleep 60 & wait -n $PID $! && true
+bad=0
+while kill -0 $PID 2>/dev/null; do
+  n=$(ss -Htnp state established dst 10.1.1.123:8555 2>/dev/null | grep -c "pid=$PID,")
+  if [ "$n" -ge 2 ]; then bad=0; else bad=$((bad + 1)); fi
+  if [ "$bad" -ge 3 ]; then
+    echo "canteiro-mosaico: $n of 2 publisher connections for 30 s - restarting" >&2
+    exit 1
+  fi
+  sleep 10 & wait -n $PID $! && true
+done
+wait $PID
+exit 1
