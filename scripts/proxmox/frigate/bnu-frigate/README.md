@@ -221,6 +221,13 @@ web UI (use Edge/Safari or export).
   with dead outputs grew from 0.8 to 1.4 GB in 28 s and the LXC's memory limit killed it first;
   the unit now also has `MemoryMax=1200M`) → exit, systemd starts a fresh composer. Before, a restart
   of `canteiro-hls` could leave ffmpeg alive publishing nothing (14 and 15/11/2026).
+- **Halves seconds apart** (fixed 2026-11-15): hstack pairs frames by timestamp and ffmpeg
+  zeroes each input at its own first frame, so a lens that connected N s after the other left
+  the other half N s late for the life of the process (14 s that evening, after a restart that
+  followed `canteiro-hls`). Both lenses are now stamped with the wall clock after decoding
+  (`setpts=(RTCTIME-RTCSTART)/(TB*1000000)`); a 12 s staggered start on the sub streams gave
+  15 s apart without it and the same second with it. Measure: crop the two burned clocks of
+  `frame.jpeg?src=canteiro_mosaico`.
 - **Grey half** (added 2026-11-15): twice that day, right after back-to-back restarts, the
   VAAPI HEVC decoder lost its references and painted ~75 % of the PT half as a flat grey slab
   that never healed (2 h, then 1 h 15, until Eduardo saw it); a software decode of the same
