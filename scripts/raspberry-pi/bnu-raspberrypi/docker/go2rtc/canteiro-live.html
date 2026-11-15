@@ -29,6 +29,12 @@
 <style>
   html, body { margin: 0; height: 100%; background: #000; }
   video { width: 100vw; height: 100vh; object-fit: contain; background: #000; }
+  /* Mosaico (32:9) + painel de dados (32:9) = 16:9 — desde 15/11/2026. */
+  #painel { display: none; }
+  body.painel { display: flex; flex-direction: column; justify-content: center; }
+  body.painel video, body.painel #painel { display: block; width: 100vw;
+         height: min(50vh, 28.125vw); object-fit: contain; }
+  body.painel #painel { background: #0e1116; }
   #msg { position: fixed; top: 12px; left: 12px; color: #9a9a9a;
          font: 14px system-ui, sans-serif; z-index: 2; }
   #offline { position: fixed; inset: 0; display: none; z-index: 3;
@@ -57,6 +63,7 @@
   </div>
 </div>
 <video id="v" muted autoplay playsinline controls></video>
+<img id="painel" alt="Painel do canteiro: rede, portão, entregas, plano da semana">
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
   // MOSAICO [lente fixa (rua) | lente PT] desde 14/11/2026 — H.264 2560x720.
@@ -64,6 +71,16 @@
   const ONLY = new URLSearchParams(location.search).get('src');
   const PATH = ['canteiro', 'canteiro-fixa'].includes(ONLY) ? ONLY : 'mosaico';
   const SRC = '/hls/' + PATH + '/index.m3u8?cookieCheck=1';
+  // Painel de dados sob o mosaico (canteiro-painel, tailscale serve /painel -> :8557),
+  // refeito a cada minuto. ?painel=0 volta ao vídeo em tela cheia; uma lente só não leva painel.
+  if (PATH === 'mosaico' && new URLSearchParams(location.search).get('painel') !== '0') {
+    const pimg = document.getElementById('painel');
+    const load = () => { pimg.src = '/painel/painel.png?t=' + Date.now(); };
+    pimg.addEventListener('load', () => document.body.classList.add('painel'));
+    pimg.addEventListener('error', () => { if (!pimg.naturalWidth) document.body.classList.remove('painel'); });
+    load();
+    setInterval(load, 30000);
+  }
   const OFFLINE_AFTER_MS = 15000;   // tolera rebuffer curto antes de declarar queda
   const RETRY_MS = 5000;
   const v = document.getElementById('v');

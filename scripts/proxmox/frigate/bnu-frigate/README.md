@@ -207,6 +207,18 @@ descriptions as the house cameras. Recordings are HEVC — Frigate handles
 them fine; some browsers without HEVC decode may not play them back in the
 web UI (use Edge/Safari or export).
 
+## canteiro-mosaico: data band + self-restart (2026-11-15)
+
+- `mosaico-tv` is now **1920×1080**: the 1920×540 mosaic on top and the 1920×540 band of
+  `canteiro-painel` (bnu-raspberrypi `:8557`) under it. The script fetches the PNG every 30 s
+  into `/run/canteiro-painel/painel.png` (atomic rename; only a complete PNG replaces the last
+  good one) and ffmpeg reads it with `-re -f image2 -loop 1` — `-re` is what makes it re-open
+  the file (measured: without it the picture never changes). `mosaico` stays 2560×720.
+  Measured with the band: composer RSS ~660 MB, stable.
+- The script watches ffmpeg's two publisher connections to mediamtx (`ss -p`): fewer than two
+  for 30 s (after 60 s of grace) → exit, systemd starts a fresh composer. Before, a restart
+  of `canteiro-hls` could leave ffmpeg alive publishing nothing (14 and 15/11/2026).
+
 ## canteiro-clipe — mosaic rolling buffer + clips on demand (added 2026-11-14)
 
 [`canteiro-clipe.py`](canteiro-clipe.py) + [`canteiro-clipe.service`](canteiro-clipe.service)
