@@ -123,9 +123,16 @@ canteiro-hls` after editing `mediamtx.yml`. Backups of this change:
 TV); mediamtx's HLS gives it ~3 segments of reserve and played with no
 `buffering` state in 70 s. The URL needs `?cookieCheck=1` (without it mediamtx
 answers 302 + a `Secure` cookie the receiver cannot keep) and has NO `/hls`
-prefix on `:8888` (that prefix exists only behind `tailscale serve`). Known
-gap: when the composer restarts, the HLS muxer is destroyed and the TV stays in
-`buffering` until `script.canteiro_na_tv` runs again. bg still casts
+prefix on `:8888` (that prefix exists only behind `tailscale serve`). When the composer restarts, the HLS muxer is recreated and the TV keeps
+flipping `buffering`/`playing` every ~11 s until the cast is started again —
+`automation.canteiro_na_tv_retomar_apos_travar` (bnu HA, id `canteiro_na_tv_retomar`,
+created through the config API 2026-11-14) reruns `script.canteiro_na_tv` after 8 s
+straight in `buffering` (seen firing 21:26). It does not retry: if the mosaic is
+still down when it fires, the TV ends `idle` until someone presses the button.
+Do NOT restart `canteiro-mosaico` repeatedly to test: two restarts within
+minutes made the canteiro-watchdog auto-heal restart go2rtc + canteiro-hls twice
+(🔧 🔧 🚨 on WhatsApp), after which the composer sat alive without publishing
+until a manual `systemctl restart canteiro-mosaico`. bg still casts
 `stream.mp4?src=canteiro_mosaico_tv` through its go2rtc proxy (no HLS proxy
 there). Backup: `scripts.yaml.bak-20261114c`.
 The other findings below are from the HEVC stream.
