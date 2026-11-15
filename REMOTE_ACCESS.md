@@ -242,7 +242,10 @@ Same LXC, since 2026-11-14: `canteiro-clipe.service` — 60 min rolling buffer o
 rollback: `systemctl disable --now canteiro-mosaico`). Consumers:
 `https://<bnu-pi-fqdn>.ts.net/live` (plays `/hls/mosaico`; `?src=canteiro`
 or `?src=canteiro-fixa` = one lens alone) and
-`http://10.1.1.123:1984/api/stream.mp4?src=canteiro_mosaico` (TV cast;
+`http://10.1.1.123:8888/mosaico-tv/index.m3u8?cookieCheck=1` (bnu TV cast, HLS — the
+same mosaic at 1920x540, path `mosaico-tv`: the Neo QLED's Cast receiver refuses
+the 2560 px wide one and rebuffers on the progressive `stream.mp4?src=canteiro_mosaico_tv`,
+which bg still uses;
 `/api/frame.jpeg?src=canteiro_mosaico` for a still — the HEVC
 `src=canteiro` frame endpoint was answering HTTP 500). Details:
 `scripts/proxmox/frigate/bnu-frigate/README.md`.
