@@ -39,6 +39,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -69,7 +70,10 @@ RCLONE_REMOTE = E("RCLONE_REMOTE", "ceuazul:").rstrip("/")
 DIARIO_DIR = E("DIARIO_DIR", "Diario")
 RENDER_S = int(E("RENDER_S", "60"))
 TTL = {"rede": 60, "tags": int(E("TAGS_S", "60")), "diario": int(E("DIARIO_S", "1800")),
-       "plano": int(E("PLANO_S", "1800")), "venc": int(E("VENC_S", "900"))}
+       "plano": int(E("PLANO_S", "1800")), "venc": int(E("VENC_S", "900")), "hoje": 60}
+LISTENER_URL, LISTENER_TOKEN, OBRA_JID = E("LISTENER_URL").rstrip("/"), E("LISTENER_TOKEN"), E("OBRA_CHAT_JID")
+HOJE_DIA = E("PAINEL_HOJE")            # YYYY-MM-DD: read that day's trucks instead of today's (tests)
+HOJE_CONF = int(E("HOJE_CONF", "60"))  # below this Claudinho's answer is "provável" and gives no automatic baixa
 FIN_TAB = E("FIN_TAB", "Financeiro")
 VENC_DIAS = int(E("VENC_DIAS", "7"))      # titles due from today to today + N days…
 VENC_ATRAS = int(E("VENC_ATRAS", "7"))    # …plus the ones that fell due in the last N days and are still open
@@ -343,7 +347,78 @@ def src_venc() -> dict:
     return {"titulos": tit, "antigos_n": antigos_n, "antigos_total": round(antigos_total, 2)}
 
 
-SOURCES = {"rede": src_rede, "tags": src_tags, "venc": src_venc, "diario": src_diario, "plano": src_plano}
+ALERTA_RE = re.compile(r"^(?:\U0001F69A|\U0001F6A7)\s*\*?Caminh[ãa]o\s*(?:de\s+)?(.*?)\s*no canteiro\*?\s*—\s*(\d{1,2}:\d{2})(.*)")
+CLAUD_RE = re.compile(r"^\U0001FAE1\s*(\d{1,3})\s*%\s*confiante\s*—\s*([^·]+?)\s*·\s*(.+?)\s*\((CON-\d+\w?)[^)]*\)\s*:\s*(.*)", re.S)
+CLAUD2_RE = re.compile(r"^\U0001FAE1\s*(\d{1,3})\s*%\s*confiante\s*—\s*([^·]+?)\s*·\s*([^:(]+?)\s*[:(](.*)", re.S)
+SAIU_RE = re.compile(r"^\U0001FAE1\s*Saiu às (\d{1,2}:\d{2})\s*—\s*o caminhão das (\d{1,2}:\d{2})")
+
+
+def src_hoje() -> dict:
+    """Today's trucks, from the obra group itself: every 🚚/🚧 alert of canteiro-alertas and the 🫡
+    answer Claudinho gives right after it ("NN % confiante — entrega · Empresa (CON-NNN …): o quê").
+    One row per identified contract/company (or per unidentified truck). Evidence, never state: the
+    Diário of the night is what records a delivery."""
+    if not (LISTENER_URL and LISTENER_TOKEN and OBRA_JID):
+        raise RuntimeError("LISTENER_URL / LISTENER_TOKEN / OBRA_CHAT_JID not set")
+    dia = dt.date.fromisoformat(HOJE_DIA) if HOJE_DIA else dt.datetime.now(TZ).date()
+    t0 = dt.datetime.combine(dia, dt.time(), TZ).timestamp()
+    q = urllib.parse.urlencode({"chat": OBRA_JID, "since": t0, "limit": 3000})
+    req = urllib.request.Request(f"{LISTENER_URL}/messages?{q}", headers={"X-Listener-Token": LISTENER_TOKEN})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        msgs = json.loads(r.read().decode())["messages"]
+    return {"dia": dia.isoformat(), "caminhoes": _caminhoes([m for m in msgs if m.get("ts", 0) < t0 + 86400])}
+
+
+def _caminhoes(msgs: list[dict]) -> list[dict]:
+    rows: list[dict] = []          # one per truck / per identified contract
+    aberto: dict | None = None     # last alert still waiting for Claudinho's answer
+    for m in sorted(msgs, key=lambda x: x.get("ts", 0)):
+        b = str(m.get("body") or "").strip()
+        if not m.get("from_me") or not b:
+            continue
+        head = b.split("\n", 1)[0]
+        a = ALERTA_RE.match(head)
+        if a:
+            veic, hora, resto = a.group(1).strip(" *"), a.group(2), a.group(3)
+            if "saindo" in resto:                       # 2nd and last message of the same truck
+                ch = re.search(r"chegou às (\d{1,2}:\d{2})", resto)
+                alvo = next((r for r in rows if ch and ch.group(1) in r["horas"]), None)
+                if alvo:
+                    alvo["saiu"] = hora
+                    aberto = None
+                    continue
+            aberto = {"chegou": hora, "horas": [hora], "veiculo": veic, "saiu": None, "conf": 0, "tipo": "",
+                      "empresa": "", "con": "", "o_que": "", "ts": m["ts"]}
+            rows.append(aberto)
+            continue
+        sx = SAIU_RE.match(b)
+        if sx:
+            alvo = next((r for r in rows if sx.group(2) in r["horas"]), None)
+            if alvo:
+                alvo["saiu"] = sx.group(1)
+            continue
+        c = CLAUD_RE.match(b) or CLAUD2_RE.match(b)
+        if c and aberto and m["ts"] - aberto["ts"] <= 900:
+            full = c.re is CLAUD_RE
+            conf, tipo, emp = int(c.group(1)), c.group(2).strip(), c.group(3).strip()
+            con = c.group(4) if full else ""
+            oq = re.split(r"(?<=[^\d])\.\s", (c.group(5) if full else ""), maxsplit=1)[0].strip()
+            mesmo = next((r for r in rows if r is not aberto and (
+                (con and r["con"] == con) or (not con and r["empresa"] and _key(r["empresa"]) == _key(emp)))), None)
+            if mesmo:                                    # same contract again today: one row, first arrival
+                rows.remove(aberto)
+                mesmo["horas"] += aberto["horas"]
+                mesmo["conf"] = max(mesmo["conf"], conf)
+            else:
+                aberto.update(conf=conf, tipo=tipo, empresa=emp, con=con, o_que=oq)
+            aberto = None
+    for r in rows:
+        r.pop("ts", None)
+    return rows
+
+
+SOURCES = {"rede": src_rede, "tags": src_tags, "venc": src_venc, "diario": src_diario, "plano": src_plano,
+           "hoje": src_hoje}
 CACHE: dict[str, dict] = {k: {"data": None, "ok_ts": 0.0, "try_ts": 0.0, "erro": None} for k in SOURCES}
 
 
@@ -561,10 +636,50 @@ def render() -> Image.Image:
         feitos = [e for e in rows if _recebido(e)]
         falta = [e for e in rows if not _recebido(e)]
         tw = int(xb - xa - 24)
+        # Today, before tonight's Diário: the trucks the camera alerted and Claudinho identified.
+        # Blue = seen by the camera (evidence); green stays for what a Diário recorded.
+        hj = CACHE["hoje"]["data"]
+        hoje = hj["caminhoes"] if hj and hj["dia"] > dj["date"] else []
+        hd = dt.date.fromisoformat(hj["dia"]) if hj else now.date()
+        quando = "hoje" if hd == now.date() else f"{WD_PT[hd.weekday()]} {hd:%d/%m}"
+        for t in hoje:
+            if t["con"] and t["conf"] >= HOJE_CONF and _key(t["tipo"]).startswith("entrega"):
+                for e in [e for e in falta if e["contrato"].split(" ")[0] == t["con"]]:
+                    falta.remove(e)
+                    feitos.insert(0, dict(e, _cam=True, previsto="", status_label=f"chegou {quando} {t['chegou']}"))
+        if hoje:
+            dr.text((xa, y), "HOJE" if hd == now.date() else f"{WD_PT[hd.weekday()].upper()} {hd:%d/%m}", font=f_s, fill=DIM)
+            dr.text((xb - dr.textlength("pela câmera", font=f_bs), y + 2), "pela câmera", font=f_bs, fill=BLUE)
+            y += 27
+            for i, t in enumerate(hoje):
+                if y + 56 > ye - 120:                    # always leave room for the Diário's sections
+                    dr.text((xa, y - 2), f"+ {len(hoje) - i} caminhões", font=f_bs, fill=DIM)
+                    y += 24
+                    break
+                ident = bool(t["empresa"])
+                fraco = ident and t["conf"] < HOJE_CONF
+                cc = BLUE if ident and not fraco else AMBER if fraco else DIM
+                dr.ellipse((xa, y + 9, xa + 14, y + 23), fill=cc if ident else None, outline=cc, width=2)
+                # no exit message yet: "no canteiro" only while that is still likely (2 h), then nothing
+                hh, mm = (int(x) for x in t["chegou"].split(":"))
+                idade = (now - dt.datetime.combine(hd, dt.time(hh, mm), TZ)).total_seconds()
+                st = f"saiu {t['saiu']}" if t["saiu"] else "no canteiro" if 0 <= idade < 7200 else ""
+                sw = dr.textlength(st, font=f_bs)
+                dr.text((xb - sw, y + 3), st, font=f_bs, fill=DIM if t["saiu"] else BLUE)
+                quem = t["empresa"] if ident else "caminhão " + (t["veiculo"] or "de tipo incerto")
+                dr.text((xa + 24, y), fit(dr, f"{t['chegou']}  {quem}", f_b, int(tw - sw - 12)), font=f_b, fill=FG)
+                y += 28
+                if ident:
+                    d2 = " · ".join(x for x in ((f"provável {t['conf']} %" if fraco else ""), t["tipo"], t["o_que"]) if x)
+                else:
+                    d2 = "não identificado"
+                dr.text((xa + 24, y), fit(dr, d2, f_bs, tw), font=f_bs, fill=AMBER if fraco else DIM)
+                y += 28
+            y += 4
 
         def bloco(e: dict, done: bool, maxl: int, draw: bool) -> int:
             """Height of one delivery; draws it at y when asked."""
-            c = GREEN if done else col.get(e["status"], AMBER)
+            c = BLUE if e.get("_cam") else GREEN if done else col.get(e["status"], AMBER)
             lines = wrap(dr, e["o_que"], f_b, tw)
             if len(lines) > maxl:
                 lines = lines[:maxl - 1] + [fit(dr, " ".join(lines[maxl - 1:]), f_b, tw)]
@@ -573,9 +688,13 @@ def render() -> Image.Image:
             # twice ("no canteiro até 19/11" / "no canteiro"): a received item shows it ONCE, in
             # green on the right, in its fuller form; the grey line keeps only the vendor.
             st, prev = _abs_dia(e["status_label"], dd, now.date()), _abs_dia(e["previsto"], dd, now.date())
+            if e.get("_cam"):
+                st = e["status_label"]
             if not prev.strip("—-– "):
                 prev = ""
-            if done and prev and (RECEBIDO_RE.search(prev) or not RECEBIDO_RE.search(st)):
+            if e.get("_cam"):
+                pass
+            elif done and prev and (RECEBIDO_RE.search(prev) or not RECEBIDO_RE.search(st)):
                 if RECEBIDO_RE.search(prev):
                     st, prev = prev, ""
             elif prev and (_key(prev) == _key(st) or _key(st) in _key(prev)):

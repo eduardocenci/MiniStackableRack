@@ -17,6 +17,8 @@ Rules and their consumers:
 | `finance` | Eduardo's "Casa, financeiro" wake word | `notify_url` → `scripts/finance_trigger.py` on bnu-win11 (headless `finance-hangar`) |
 | `caminhao` | every truck alert `canteiro-alertas` posts (`🚚 *… no canteiro* — HH:MM`) | **polled** by mia-desktop: `python -m canteiro.claudinho loop` (home-ara, decision 0016) answers with the Claudinho 🫡 delivery/pickup guess — no `notify_url`, LXC 101 cannot reach the tailnet (since 2026-10-30) |
 
+Besides the rules, `GET /messages` is read every minute by `canteiro-painel` (bnu-raspberrypi): the 🚚/🚧 truck alerts and Claudinho's 🫡 answers of the day become the HOJE rows of the ENTREGAS card (`scripts/raspberry-pi/bnu-raspberrypi/canteiro-painel/`). It depends on the wording of those messages.
+
 ## Where it runs
 
 bnu-proxmox → LXC 101 `docker` → container `waha-listener`, on the
