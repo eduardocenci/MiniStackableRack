@@ -235,6 +235,10 @@ publishes H.264 2560×720 to `canteiro-hls` on bnu-raspberrypi
 (`rtsp://10.1.1.123:8555/mosaico` — that RTSP listener is LAN-exposed for
 this; publish allowed only from localhost and from `10.1.1.160` on path
 `mosaico`). Reach it through the Proxmox host:
+Since 2026-11-15 the TV output `mosaico-tv` is 1920×1080: mosaic + the data band of `canteiro-painel`
+(bnu-raspberrypi `:8557`, `/painel.png` only for `127.0.0.1` and `10.1.1.160`; `/health` open; tailnet:
+`https://bnu-raspberrypi…ts.net/painel/painel.png`). The composer exits by itself when its two publisher
+connections to mediamtx are gone for 30 s (it used to stay alive publishing nothing).
 Same LXC, since 2026-11-14: `canteiro-clipe.service` — 60 min rolling buffer of the mosaic +
 `http://10.1.1.160:8556/clip.mp4?start=&end=` (LAN, only `10.1.1.123`), consumed by `canteiro-vigia`.
 `python scripts/devtool.py run bnu-proxmox "pct exec 105 -- systemctl status canteiro-mosaico"`

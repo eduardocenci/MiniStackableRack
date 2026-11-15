@@ -1,6 +1,6 @@
-# canteiro-jobs — shared image for the five canteiro job containers
+# canteiro-jobs — shared image for the six canteiro job containers
 # (canteiro-watchdog, canteiro-presenca, canteiro-sunset-compare, canteiro-diario,
-# canteiro-alertas).
+# canteiro-alertas, canteiro-painel).
 #
 # Authoritative copy: scripts/raspberry-pi/bnu-raspberrypi/docker/canteiro-jobs/
 # Live build context:  bnu-raspberrypi:~/canteiro-jobs/  (this folder plus the
@@ -34,7 +34,7 @@ RUN chmod 0755 /usr/local/bin/supercronic
 
 WORKDIR /app
 COPY canteiro-watchdog.py canteiro-presenca.py canteiro-sunset-compare.py \
-     canteiro-diario.py diario_render.py canteiro-alertas.py \
+     canteiro-diario.py diario_render.py canteiro-alertas.py canteiro-painel.py \
      crontab-presenca crontab-sunset-compare crontab-diario /app/
 # home-ara canteiro/ package (homes/ara/canteiro — authoritative there, CI-tested)
 COPY canteiro/ /app/canteiro/

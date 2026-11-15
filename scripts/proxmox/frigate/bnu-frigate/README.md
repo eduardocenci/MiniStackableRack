@@ -153,6 +153,7 @@ canteiro's Starlink carries nothing extra.
 | File | Live copy (LXC 105) |
 |---|---|
 | [`canteiro-mosaico.sh`](canteiro-mosaico.sh) | `/usr/local/bin/canteiro-mosaico.sh` (755) |
+| [`canteiro-mosaico-cinza.py`](canteiro-mosaico-cinza.py) | `/usr/local/bin/canteiro-mosaico-cinza.py` (755) |
 | [`canteiro-mosaico.service`](canteiro-mosaico.service) | `/etc/systemd/system/canteiro-mosaico.service` (enabled; `After=go2rtc.service`) |
 
 ```bash
@@ -206,6 +207,29 @@ saturates the canteiro uplink (incident 2026-08-26, see
 descriptions as the house cameras. Recordings are HEVC — Frigate handles
 them fine; some browsers without HEVC decode may not play them back in the
 web UI (use Edge/Safari or export).
+
+## canteiro-mosaico: data band + self-restart (2026-11-15)
+
+- `mosaico-tv` is now **1920×1080**: the 1920×540 mosaic on top and the 1920×540 band of
+  `canteiro-painel` (bnu-raspberrypi `:8557`) under it. The script fetches the PNG every 30 s
+  into `/run/canteiro-painel/painel.png` (atomic rename; only a complete PNG replaces the last
+  good one) and ffmpeg reads it with `-re -f image2 -loop 1` — `-re` is what makes it re-open
+  the file (measured: without it the picture never changes). `mosaico` stays 2560×720.
+  Measured with the band: composer RSS ~660 MB, stable.
+- The script watches ffmpeg's two publisher connections to mediamtx (`ss -p`): fewer than two
+  for 30 s (after 60 s of grace) → exit, systemd starts a fresh composer. Before, a restart
+  of `canteiro-hls` could leave ffmpeg alive publishing nothing (14 and 15/11/2026).
+- **Grey half** (added 2026-11-15): twice that day, right after back-to-back restarts, the
+  VAAPI HEVC decoder lost its references and painted ~75 % of the PT half as a flat grey slab
+  that never healed (2 h, then 1 h 15, until Eduardo saw it); a software decode of the same
+  stream was whole. Every 30 s the script decodes one frame of the newest complete
+  `canteiro-clipe` segment and [`canteiro-mosaico-cinza.py`](canteiro-mosaico-cinza.py) counts,
+  per half, the flat neutral-grey 32×30 cells of a 640×180 copy: ≥ 30 % in 3 checks in a row
+  (90 s) → exit, systemd starts a fresh decoder. At most 3 such restarts per hour
+  (`/run/canteiro-painel/cinza-restarts`); beyond that it only logs. Measured: stuck half
+  0.67–0.82 on every sample of an hour of buffer, healthy halves 0.00 (daylight; night not
+  yet sampled). Check by hand: `canteiro-mosaico.sh --cinza` (prints the shares; exit 1 = grey).
+  It needs `canteiro-clipe` running — no segment = no verdict.
 
 ## canteiro-clipe — mosaic rolling buffer + clips on demand (added 2026-11-14)
 

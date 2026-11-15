@@ -115,3 +115,28 @@ services:
     volumes:
       - /var/lib/canteiro-alertas:/var/lib/canteiro-alertas
     command: ["python3", "/app/canteiro-alertas.py"]
+
+  canteiro-painel:
+    # Live data band shown under the canteiro mosaic (pedido Eduardo 15/11/2026): Wi-Fi devices,
+    # gate tags, deliveries, week plan -> PNG 1920x540 on :8557 (clients: localhost = tailscale
+    # serve /painel for the /live page; 10.1.1.160 = canteiro-mosaico in the Frigate LXC, which
+    # stacks it under the TV output). Reads the same sources as canteiro-diario, hence its env file.
+    image: canteiro-jobs:local
+    container_name: canteiro-painel
+    network_mode: host
+    user: "1000:1000"
+    restart: unless-stopped
+    init: true
+    env_file: env/canteiro-diario.env
+    environment:
+      TZ: America/Sao_Paulo
+      PYTHONUNBUFFERED: "1"
+      RCLONE_CONFIG: /config/rclone/rclone.conf
+      GSA_KEYFILE: /config/gsa.json
+      STATE_DIR: /var/lib/canteiro-painel
+      HOME: /tmp
+    volumes:
+      - /home/eduardocenci/.config/rclone:/config/rclone
+      - /home/eduardocenci/canteiro-jobs/env/gsa.json:/config/gsa.json:ro
+      - /var/lib/canteiro-painel:/var/lib/canteiro-painel
+    command: ["python3", "/app/canteiro-painel.py"]
