@@ -111,6 +111,7 @@ def src_rede() -> dict:
     if isinstance(devs, dict):
         devs = devs.get("devices", [])
     pessoas, fixos_on, fixos_total, saidas = [], 0, 0, []
+    agora = time.time()
     for d in devs:
         name = (d.get("display_name") or d.get("nickname") or d.get("hostname") or d.get("ip") or "?").strip()
         fixed = name.lower() in FIXED
@@ -124,7 +125,9 @@ def src_rede() -> dict:
             saidas.append({"nome": name, "saiu": since})
     pessoas.sort(key=lambda x: x["desde"] or 0)
     saidas.sort(key=lambda x: -x["saiu"])
-    return {"pessoas": pessoas, "fixos_on": fixos_on, "fixos_total": fixos_total, "saidas": saidas[:4]}
+    # people's devices seen in the last hour: on the network now, or gone less than an hour ago
+    hora = len(pessoas) + sum(1 for x in saidas if agora - x["saiu"] <= 3600)
+    return {"pessoas": pessoas, "fixos_on": fixos_on, "fixos_total": fixos_total, "saidas": saidas[:4], "hora": hora}
 
 
 def _utc(s: str | None) -> float | None:
@@ -426,8 +429,12 @@ def render() -> Image.Image:
         dr.text((xa, y - 8), str(n), font=f_n, fill=GREEN if n else DIM)
         nw = dr.textlength(str(n), font=f_n)
         dr.text((xa + nw + 12, y), "aparelho" + ("" if n == 1 else "s") + " de pessoas", font=f_b, fill=FG)
-        dr.text((xa + nw + 12, y + 28), f"fixos: {d['fixos_on']}/{d['fixos_total']} no ar", font=f_bs,
-                fill=DIM if d["fixos_on"] == d["fixos_total"] else RED)
+        h1 = d.get("hora", n)
+        t1 = f"{h1} na última hora"
+        dr.text((xa + nw + 12, y + 28), t1, font=f_bs, fill=DIM)
+        if d["fixos_on"] != d["fixos_total"]:   # the site's own gear (camera, Pi...) only shows up when one is down
+            dr.text((xa + nw + 12 + dr.textlength(t1 + " · ", font=f_bs), y + 28),
+                    f"fixos {d['fixos_on']}/{d['fixos_total']}", font=f_bs, fill=RED)
         y += 62
         if n:
             names = ", ".join(p["nome"] for p in d["pessoas"])
