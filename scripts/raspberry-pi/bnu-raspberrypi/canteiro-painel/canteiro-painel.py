@@ -68,7 +68,7 @@ GSA_KEYFILE = E("GSA_KEYFILE", "/config/gsa.json")
 RCLONE_REMOTE = E("RCLONE_REMOTE", "ceuazul:").rstrip("/")
 DIARIO_DIR = E("DIARIO_DIR", "Diario")
 RENDER_S = int(E("RENDER_S", "60"))
-TTL = {"rede": 60, "tags": int(E("TAGS_S", "180")), "diario": int(E("DIARIO_S", "1800")),
+TTL = {"rede": 60, "tags": int(E("TAGS_S", "60")), "diario": int(E("DIARIO_S", "1800")),
        "plano": int(E("PLANO_S", "1800")), "venc": int(E("VENC_S", "900"))}
 FIN_TAB = E("FIN_TAB", "Financeiro")
 VENC_DIAS = int(E("VENC_DIAS", "7"))      # titles due from today to today + N days…
