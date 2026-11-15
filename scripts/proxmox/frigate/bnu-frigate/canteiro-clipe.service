@@ -1,0 +1,17 @@
+# canteiro-clipe — rolling buffer of the canteiro mosaic + clips on demand (for canteiro-vigia).
+# Authoritative copy: scripts/proxmox/frigate/bnu-frigate/canteiro-clipe.service
+# Live copy:          bnu Frigate LXC 105:/etc/systemd/system/canteiro-clipe.service
+# What/why: see canteiro-clipe.py.
+[Unit]
+Description=canteiro-clipe (mosaic rolling buffer + /clip.mp4 on :8556 for canteiro-vigia)
+After=network-online.target canteiro-mosaico.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/canteiro-clipe.py
+Restart=always
+RestartSec=5
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

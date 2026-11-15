@@ -44,6 +44,7 @@ CeuAzul/Timelapse/
 │                             PT no enquadramento antigo da guarda)
 ├── <pos>/Luminancia125/      cópia da janela do pôr do sol com a luz certa
 │                             (ver abaixo) — só lentefixa e posicao1
+├── trabalho-fixa/YYYY-MM/    lente fixa (rua/entrada), mesmos instantes de trabalho/ — desde 14/11/2026
 ├── trabalho/YYYY-MM/         lente PT, 07:00–18:00 a cada 15 min —
 │                             presença (25 min até 26/08/2026)
 └── posicao2/ posicao3/ ref/  SÓ HISTÓRICO (27/08–13/11/2026), ver o fim
@@ -105,7 +106,7 @@ com `TZ=America/Sao_Paulo`; até 2026-08-29 eram 4 systemd timers):
 | Entrada do crontab | Agenda | Faz |
 |---|---|---|
 | `timelapse-capture sunrise` | 05:00 (cobre o nascer mais cedo do ano, ~05:15 dez) | dorme até cada janela; lentefixa + posicao1 ×3 |
-| `timelapse-capture trabalho` | 07:00–18:00, a cada 15 min (45×/dia) | 1 frame PT → `outbox/trabalho/` |
+| `timelapse-capture trabalho` | 07:00–18:00, a cada 15 min (45×/dia) | 1 frame de cada lente → `outbox/trabalho-fixa/` (fixa) e `outbox/trabalho/` |
 | `timelapse-capture sunset` | 16:40 (cobre o T−20 mais cedo do ano, 17:09 jun) | dorme até cada janela; lentefixa + posicao1 ×5; termina com `luminancia` |
 | `rclone move …` | 20:00 diário **+ na partida do container** | `rclone move outbox → ceuazul:Timelapse` |
 

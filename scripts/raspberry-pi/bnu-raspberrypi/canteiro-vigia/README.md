@@ -2,7 +2,7 @@
 
 While the canteiro Wi-Fi has **no person's device** on it (only the fixed gear:
 router, camera, the Pi) the watch is **armed**: every **person or vehicle** the
-bnu Frigate (LXC 105) tracks on the `canteiro` camera becomes **one short
+bnu Frigate (LXC 105) tracks on the `canteiro` (PT lens, parked looking at the works) **or `canteiro_fixa`** (fixed lens, looking at the street/entrance — added 2026-11-14, `FRIGATE_CAMERAS=canteiro,canteiro_fixa`; both lenses fold into the same episode by time, so one person seen by both is still one message; the recording/latest fallback photo comes from the lens that saw the event) camera becomes **one short
 message** in the WhatsApp group **"Casa Céu Azul"** — the snapshot of the moment
 plus one line saying whether a known device joined the Wi-Fi in the minute after
 the detection (a friendly sign: whoever has the Wi-Fi password may be there) or
@@ -136,6 +136,37 @@ python scripts/devtool.py run bnu-raspberrypi "sudo mkdir -p /var/lib/canteiro-v
 The build takes longer than devtool's read timeout the first time: run it
 detached, `nohup sh -c 'docker compose build > build.log 2>&1' &`, and poll
 `build.log`.)
+
+## Video of each detection stretch (since 2026-11-14)
+
+After the photo of a 🔴 episode, every **stretch of detection** becomes one video in the
+layout of the live mosaic `[fixed lens | PT lens]` (pedido Eduardo 14/11/2026):
+
+| Rule | Env | Default | Why |
+|---|---|---|---|
+| Pauses up to this stay in the same video; a longer pause closes the stretch and the video goes out | `VIDEO_GAP_S` | 60 | measured on 10 days of empty-site events: 19 of the pauses are < 60 s, 7 are 60–120 s; 120 s would merge those 7 and delay EVERY video by one more minute |
+| A stretch that does not stop is cut into parts ("parte N, a detecção continua") | `VIDEO_MAX_S` | 120 | the first video of a long visit arrives ~2,5 min after it began instead of after it ends |
+| One Frigate event sustains a stretch for at most | `VIDEO_EV_MAX_S` | 360 | a leaning bicycle stays ONE open event for hours (8,5 h on 11/11) |
+| Context before / after | `VIDEO_PRE_S` / `VIDEO_POS_S` | 6 / 8 | |
+| Cap | `MAX_VIDEOS_HORA` | 6 | beyond it only `vigia.jsonl` |
+
+A typical passage (median 28 s) → photo at t0 + 60 s, video at about t0 + 1 min 45 s. A 🟢
+episode (someone from the team on the Wi-Fi) sends no video. `VIDEO=0` turns it off.
+
+The clip comes from **`canteiro-clipe`** in the bnu Frigate LXC 105
+(`CLIPE_URL=http://10.1.1.160:8556`, [`../../../proxmox/frigate/bnu-frigate/canteiro-clipe.py`](../../../proxmox/frigate/bnu-frigate/canteiro-clipe.py)):
+a 60 min rolling buffer of the mosaic stream, trimmed and re-encoded on the GPU to H.264
+1920×540 ≤ 14 MB in a few seconds. Not Frigate's recordings: those are kept per lens by
+motion (~2–3 h/day), so the lens that did not see the event often has nothing. No clip
+(composer down, buffer empty) = the video is skipped and logged (`tipo: video`, `motivo`),
+the photo already went.
+
+```bash
+python scripts/devtool.py run bnu-raspberrypi "docker exec canteiro-vigia python3 /app/canteiro-vigia.py --test-video"   # last 30 s of the mosaic, "[TESTE]" → TEST_JID
+```
+
+An unknown CLI flag now exits with an error (it used to fall into the main loop and start a
+second watch inside the container).
 
 ## Test without pinging the family
 

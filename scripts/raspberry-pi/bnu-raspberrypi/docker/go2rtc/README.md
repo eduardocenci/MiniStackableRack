@@ -22,7 +22,7 @@ go2rtc on bnu-raspberrypi
   │           └─ publishes rtsp://10.1.1.123:8555/mosaico (canteiro-hls path `mosaico`) ─▶ /hls/mosaico → the /live page
   ├─ `canteiro_mosaico` ◀─ rtsp://127.0.0.1:8555/mosaico
   ├─ /api/stream.mp4?src=canteiro_mosaico → 55" TV (Cast)
-  └─ same URL ─tailnet─▶ bg-proxmox :1984 forward → bg 50" TV (Cast, on demand, 2026-10-29)
+  └─ /api/stream.mp4?src=canteiro_mosaico_tv (1920×540, ◀─ :8555/mosaico-tv) ─tailnet─▶ bg-proxmox :1984 forward → bg 50" TV (Cast, on demand, 2026-10-29)
 ```
 
 **The mosaic (2026-11-14, decisão Eduardo).** The two lenses were re-aimed
@@ -102,27 +102,56 @@ upgrade). The `:1984` HTTP endpoints remain for LAN/IP consumers (the TV
 cast uses `http://10.1.1.123:1984/...` — IPs are not HSTS'd).
 
 Consumed by the **bnu HA script `script.canteiro_na_tv`** ("Canteiro na
-TV"), which casts `http://10.1.1.123:1984/api/stream.mp4?src=canteiro_mosaico`
-— the mosaic, since 2026-11-14 (the HEVC passthrough `src=canteiro` until
-then) — to the 55" Neo QLED (`media_player.qn85f1443`, Samsung's 2026
+TV"), which casts the mosaic at 1920x540 as **HLS from canteiro-hls** —
+`http://10.1.1.123:8888/mosaico-tv/index.m3u8?cookieCheck=1`, content type
+`application/x-mpegURL`, `extra: {stream_type: LIVE, media_info: {hlsVideoSegmentFormat: fmp4}}`
+— since 2026-11-14 (the HEVC passthrough `stream.mp4?src=canteiro` until then) — to the 55" Neo QLED (`media_player.qn85f1443`, Samsung's 2026
 native Google Cast receiver). The script lives only in the live HA config
-(`/config/scripts.yaml`, backup `.bak-20261114`); the bg twin below moved to
-the mosaic the same day. **Not yet seen on a physical TV** with the mosaic
-URL — the bnu TV was in standby on 2026-11-14; the findings below are from
-the HEVC stream.
+(`/config/scripts.yaml`, backup `.bak-20261114`); bg has the same cast — see
+the **bg twin** below. **Seen on the physical bnu TV on 2026-11-14 evening:** the 2560x720
+`src=canteiro_mosaico` leaves the Cast receiver `idle` (it never requests the
+URL) while the HEVC single lens and a 1920x540 H.264 mosaic play — hence
+`canteiro_mosaico_tv`, the second output of the composer in the Frigate LXC
+(`mosaico-tv` on canteiro-hls). Do NOT build it with a go2rtc `ffmpeg:` source
+on the Pi: the software decode took the load to 9 and stalled both camera
+pulls. mediamtx does not pick up a new path by itself — `docker restart
+canteiro-hls` after editing `mediamtx.yml`. Backups of this change:
+`scripts.yaml.bak-20261114b` (bnu), `/config/canteiro_na_tv.yaml.bak-20261114b` (bg).
+**Progressive `stream.mp4?src=canteiro_mosaico_tv` plays but rebuffers every
+5-10 s** (the player sits on the live edge with no cushion; Eduardo, on the
+TV); mediamtx's HLS gives it ~3 segments of reserve and played with no
+`buffering` state in 70 s. The URL needs `?cookieCheck=1` (without it mediamtx
+answers 302 + a `Secure` cookie the receiver cannot keep) and has NO `/hls`
+prefix on `:8888` (that prefix exists only behind `tailscale serve`). When the composer restarts, the HLS muxer is recreated and the TV keeps
+flipping `buffering`/`playing` every ~11 s until the cast is started again —
+`automation.canteiro_na_tv_retomar_apos_travar` (bnu HA, id `canteiro_na_tv_retomar`,
+created through the config API 2026-11-14) reruns `script.canteiro_na_tv` after 8 s
+straight in `buffering` (seen firing 21:26). It does not retry: if the mosaic is
+still down when it fires, the TV ends `idle` until someone presses the button.
+Do NOT restart `canteiro-mosaico` repeatedly to test: two restarts within
+minutes made the canteiro-watchdog auto-heal restart go2rtc + canteiro-hls twice
+(🔧 🔧 🚨 on WhatsApp), after which the composer sat alive without publishing
+until a manual `systemctl restart canteiro-mosaico`. bg still casts
+`stream.mp4?src=canteiro_mosaico_tv` through its go2rtc proxy (no HLS proxy
+there). Backup: `scripts.yaml.bak-20261114c`.
+The other findings below are from the HEVC stream.
 
 The **bg twin** (2026-10-29) is bg HA `script.canteiro_na_tv` → the
-living-room 50" QLED (`media_player.50_qled`), fetching this same
-`stream.mp4?src=canteiro_mosaico` (since 2026-11-14, `src=canteiro` before;
-live file `/config/packages/canteiro_na_tv.yaml`, backup
-`/config/canteiro_na_tv.yaml.bak-20261114`, repo copy
+living-room 50" QLED (`media_player.50_qled`), fetching
+`stream.mp4?src=canteiro_mosaico_tv` (since the evening of 2026-11-14;
+`src=canteiro_mosaico` earlier that day, `src=canteiro` before; live file
+`/config/packages/canteiro_na_tv.yaml`, backups
+`/config/canteiro_na_tv.yaml.bak-20261114` and `…bak-20261114b`, repo copy
 `scripts/proxmox/homeassistant/bg-homeassistant/packages/`) through the
 `canteiro-tv-proxy` forward on bg-proxmox (`http://192.168.0.120:1984/…`,
 see `scripts/proxmox/bg-proxmox/`) — one more reader of the shared
 producer, so ara's Starlink still carries one copy; bnu's WAN upload
-carries ~3 Mbps extra while it plays (the mosaic through the bg forward:
-7.6 MB in 20 s, 2026-11-14; ~2 Mbps with the HEVC lens). Its own
-start/stop links are `BG_TV_WEBHOOK_ON` / `BG_TV_WEBHOOK_OFF`.
+carries ~1.2 Mbps extra while it plays (through the bg forward: 3.0 MB in
+20 s, 2026-11-15). That is the progressive URL that rebuffers on the bnu
+TV: bg-proxmox forwards only go2rtc's `:1984`, not canteiro-hls `:8888`, so
+the HLS cast is not reachable from the bg LAN yet. Not yet seen on the bg
+TV with any mosaic URL. Its own start/stop links are `BG_TV_WEBHOOK_ON` /
+`BG_TV_WEBHOOK_OFF`.
 
 **One-click control (browser bookmarks).** Two HA webhook automations on
 bnu-homeassistant expose start/stop as plain-GET URLs (no login — the long
@@ -140,7 +169,7 @@ Findings from the 2026-08-24 test session (what works and what doesn't):
   `stream.mp4` mechanism with H.264.
 - 55" via Cast + go2rtc **HLS**: the Default Media Receiver launches but
   never fetches segments (CORS headers were present; the receiver just
-  rejects this HLS flavor). Use `stream.mp4`, not `stream.m3u8`.
+  rejects this HLS flavor). mediamtx's HLS (fMP4, H.264) DOES play — see above.
 - 60" AU8000 via **DLNA** (`media_player.samsung_au8000_60_tv`): accepts
   the push, flashes "playing", then drops to idle without fetching video —
   for both MP4 and HLS. Samsung's DMR does not play endless live streams;

@@ -14,7 +14,7 @@ on its LAN address:
 | Unit | Listens | Forwards to | Used by |
 |---|---|---|---|
 | `waha-proxy.service` (socat, always on) | `192.168.0.120:3001` | bnu-proxmox `100.113.204.100:3001` → WAHA | bg HA `rest_command.send_whatsapp_bg` (`packages/whatsapp.yaml`) |
-| `canteiro-tv-proxy.socket` (socket-activated `systemd-socket-proxyd`) | `192.168.0.120:1984` | bnu-raspberrypi go2rtc `100.91.64.62:1984` | bg HA `script.canteiro_na_tv` → the TV fetches `http://192.168.0.120:1984/api/stream.mp4?src=canteiro_mosaico` |
+| `canteiro-tv-proxy.socket` (socket-activated `systemd-socket-proxyd`) | `192.168.0.120:1984` | bnu-raspberrypi go2rtc `100.91.64.62:1984` | bg HA `script.canteiro_na_tv` → the TV fetches `http://192.168.0.120:1984/api/stream.mp4?src=canteiro_mosaico_tv` |
 
 Deploy: copy the unit files to `/etc/systemd/system/`, `systemctl
 daemon-reload`, then `systemctl enable --now waha-proxy.service
@@ -35,12 +35,18 @@ in the repo-root `.env`).
 
 - **Never pull from ara here.** bg reads bnu's go2rtc, which already holds the
   single Starlink copy; while the bg TV plays, bnu's WAN upload carries one
-  extra copy of the cast stream. Since 2026-11-14 that is the two-lens
-  mosaic `canteiro_mosaico` (H.264 2560×720, composed at bnu): ~3 Mbps,
-  measured through this forward 2026-11-14 (HTTP 200, 7.6 MB in 20 s, first
-  byte at 0.6 s). Before, the PT lens alone (`src=canteiro`, HEVC) was
-  ~2 Mbps with ~6 s to the first byte (2026-10-29). bnu→bg tailnet path is
-  direct (no DERP).
+  extra copy of the cast stream. Since the evening of 2026-11-14 that is the
+  two-lens mosaic `canteiro_mosaico_tv` (H.264 1920×540, composed at bnu):
+  ~1.2 Mbps, measured through this forward 2026-11-15 (HTTP 200, 3.0 MB in
+  20 s, first byte at 0.2 s). Earlier that day it was the 2560×720
+  `canteiro_mosaico` (~3 Mbps; Samsung Cast receivers stay idle on it), and
+  before, the PT lens alone (`src=canteiro`, HEVC, ~2 Mbps, 2026-10-29).
+  bnu→bg tailnet path is direct (no DERP).
+- **Progressive only, for now.** On the bnu TV the progressive
+  `stream.mp4?src=canteiro_mosaico_tv` rebuffers every 5-10 s, so bnu casts
+  the same picture as mediamtx HLS (`:8888/mosaico-tv/index.m3u8?cookieCheck=1`
+  on canteiro-hls). This host forwards only go2rtc's `:1984`, so the bg TV
+  cannot use that HLS URL until a `:8888` forward exists here.
 - **The first cast needs a one-time "Permitir" on the TV.** The Samsung
   receiver answers HA's launch with `USER_PENDING_AUTHORIZATION` and shows an
   allow/deny prompt; until someone accepts it with the remote, every cast
@@ -51,8 +57,8 @@ in the repo-root `.env`).
   buffering (keyframe wait), then `playing` with the position advancing in
   real time; bnu go2rtc showed bg-proxmox as one extra `mp4` consumer and
   still one ara producer. Stop link → `media_stop`, the TV's Cast entity back
-  to `off` and the consumer gone. That was the HEVC `src=canteiro`; the
-  mosaic URL is not yet seen on this TV.
+  to `off` and the consumer gone. That was the HEVC `src=canteiro`; no
+  mosaic URL has been seen on this TV yet.
 - TV: Samsung QN50Q7FAAGXZD (2025, Tizen, **Wi-Fi**, MAC `28:07:08:02:db:c1`)
   at `192.168.0.111` (DHCP — reserve it on the HUMAX). HA entities:
   `media_player.50_qled` (Cast — the one to use), `media_player.50_qled_2`
