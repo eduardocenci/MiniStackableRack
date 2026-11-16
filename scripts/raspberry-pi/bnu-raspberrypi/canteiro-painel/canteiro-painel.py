@@ -117,8 +117,7 @@ def src_rede() -> dict:
     pessoas, fixos_on, fixos_total, saidas = [], 0, 0, []
     agora = time.time()
     meia_noite = dt.datetime.combine(dt.datetime.now(TZ).date(), dt.time(), TZ).timestamp()
-    tags: dict[str, bool] = {}     # tag -> seen in the last hour (else: earlier today)
-    sem_tag = 0
+    novos: dict[str, dict] = {}    # people's devices seen today in THIS answer
     for d in devs:
         name = (d.get("display_name") or d.get("nickname") or d.get("hostname") or d.get("ip") or "?").strip()
         fixed = name.lower() in FIXED
@@ -134,18 +133,49 @@ def src_rede() -> dict:
             # the tag is what the nickname carries in its last parentheses: "moto-g14 (Ariane)"
             visto = agora if d.get("online") else (_utc(d.get("last_seen_utc")) or 0)
             if visto >= meia_noite:
-                tg = re.search(r"\(([^()]+)\)\s*$", name)
-                if tg:
-                    tags[tg.group(1).strip()] = tags.get(tg.group(1).strip(), False) or agora - visto <= 3600
-                else:
-                    sem_tag += 1
+                novos[(d.get("mac") or name).lower()] = {"nome": name, "ts": visto}
     pessoas.sort(key=lambda x: x["desde"] or 0)
     saidas.sort(key=lambda x: -x["saiu"])
-    # people's devices seen in the last hour: on the network now, or gone less than an hour ago
-    hora = len(pessoas) + sum(1 for x in saidas if agora - x["saiu"] <= 3600)
+    # netoverview drops an offline device from /api/devices once it is more than 30 days old
+    # (most of the crew, since 2026-11), so "seen today / in the last hour" cannot come from one
+    # answer: the panel sees every device while it is online (one read a minute) and keeps the
+    # day's list itself.
+    vistos = _rede_hoje(dt.datetime.now(TZ).date().isoformat(), novos)
+    tags: dict[str, bool] = {}     # tag -> seen in the last hour (else: earlier today)
+    sem_tag = hora = 0
+    for v in vistos.values():
+        na_hora = agora - v["ts"] <= 3600
+        hora += na_hora
+        tg = re.search(r"\(([^()]+)\)\s*$", v["nome"])
+        if tg:
+            tags[tg.group(1).strip()] = tags.get(tg.group(1).strip(), False) or na_hora
+        else:
+            sem_tag += 1
     return {"pessoas": pessoas, "fixos_on": fixos_on, "fixos_total": fixos_total, "saidas": saidas[:4], "hora": hora,
             "tags": [{"tag": k, "on": v} for k, v in sorted(tags.items(), key=lambda kv: (not kv[1], kv[0].lower()))],
             "sem_tag": sem_tag}
+
+
+def _rede_hoje(dia: str, novos: dict[str, dict]) -> dict[str, dict]:
+    """The people's devices seen on the site Wi-Fi today: {mac: {nome, ts of the last sighting}},
+    kept in STATE_DIR so that a restart of the container does not forget the morning."""
+    f = STATE_DIR / "rede-hoje.json"
+    try:
+        st = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        st = {}
+    vistos = st.get("vistos", {}) if st.get("dia") == dia else {}
+    for k, v in novos.items():
+        if v["ts"] >= vistos.get(k, {}).get("ts", 0):
+            vistos[k] = v
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"dia": dia, "vistos": vistos}, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(f)
+    except OSError as ex:
+        log(f"rede-hoje: {ex}")
+    return vistos
 
 
 def _utc(s: str | None) -> float | None:
