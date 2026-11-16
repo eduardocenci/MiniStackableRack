@@ -12,6 +12,7 @@ listens on the LXC).
 | ⚠ Decoy config | `/opt/frigate/config/config.yml` is the dev-checkout 16-line example — **not** the active file (cost a session real time on 2026-08-26) |
 | Services | `frigate.service`, `go2rtc.service` (Frigate's internal go2rtc — its config is generated from `config.yml`'s `go2rtc:` block), `nginx.service` |
 | Logs | `/dev/shm/logs/frigate/current`, `/dev/shm/logs/go2rtc/current` |
+| Memory | **6 GB since 2026-11-16** (`pct set 105 -memory 6144` on bnu-proxmox, live; was 4 GB). At 4 GB the LXC sat on its limit all day with the 512 MB swap full, and the kernel killed the mosaic composer 21 times on 2026-11-16 (15 at the service's own 1.2 GB cap, 6 at the LXC limit) |
 | Media | `/media/frigate` on the LXC root disk — **64 GB since 2026-10-23** (`pct resize 105 rootfs +40G` on bnu-proxmox, online, no restart; was 24 GB and 80 % full). Recordings are event-gated (alerts/detections, 10 days, `mode: all`), no continuous retention — see *Recording & retention* below for what that really keeps |
 | ffmpeg | bundled at `/usr/lib/ffmpeg/7.0/bin` (not in `PATH`) |
 | Detector | CPU tflite `/models/cpu_model.tflite` — its labelmap has **no `truck`** (config warning if tracked; trucks come through as `car`); the OpenVINO CPU plugin fails to load in this LXC. **The truck TYPE on the canteiro (caçamba · munck · poliguindaste com caçamba (para retirar entulho) · carroceria · prancha · betoneira · bomba — V3 on recording frames since 29/10/2026 18:56) is not decided here** — see *Consumers* |

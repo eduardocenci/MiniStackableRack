@@ -104,7 +104,7 @@ painel_loop() {
 painel_loop &
 LOOP=$!
 IN="-hwaccel vaapi -hwaccel_device va -rtsp_transport tcp -timeout 15000000 -analyzeduration 1000000"
-# Each lens is stamped with the wall clock as its frames leave the decoder ($NOW), not with
+# Each lens is put on the wall clock as its frames leave the decoder ($NOW), not on
 # its stream's own clock. hstack pairs frames by timestamp and ffmpeg zeroes each input at ITS
 # first frame, so a lens that connects N seconds after the other stayed N seconds ahead for the
 # life of the process - the other half was shown N seconds late and N seconds of its frames sat
@@ -113,7 +113,20 @@ IN="-hwaccel vaapi -hwaccel_device va -rtsp_transport tcp -timeout 15000000 -ana
 # (which the fixed lens depends on) restarted. Measured with a 12 s staggered start on the sub
 # streams: 15 s apart without this, same second with it. (The demuxer-level
 # -use_wallclock_as_timestamps is NOT the same thing - see above.)
-NOW="setpts=(RTCTIME-RTCSTART)/(TB*1000000)"
+#
+# 2026-11-16: stamping EVERY frame with the wall clock froze the picture. The lenses reach this
+# host in bursts (the site uplink: measured gaps of up to 1.1 s, then 15-25 frames glued
+# together), so the frames of a burst got the same instant and fps=15 threw them away, then
+# repeated the last one through the gap - half of the output frames were repeats, 0.5-1 s
+# freezes several times in 10 s. Now only the FIRST frame of a lens takes the wall clock (the
+# common zero that keeps the lenses together); after it each frame advances by the camera's
+# own interval and is pulled 1 % per frame towards the wall clock (time constant ~7 s), which
+# absorbs the bursts and still closes any offset left by the start-up burst or by drift.
+# A timestamp that goes back or jumps > 5 s (source reconnected) takes the wall clock again.
+# Measured on one lens, 20 s: max gap 1.14 s / 24 glued frames before, 0.11 s / 0 after.
+W="(RTCTIME-RTCSTART)/(TB*1000000)"
+T="(PREV_OUTPTS+PTS-PREV_INPTS)"
+NOW="setpts='if(eq(N,0)+lte(PTS,PREV_INPTS)+gt(PTS-PREV_INPTS,5/TB),max($W,if(eq(N,0),0,PREV_OUTPTS+1)),$T+0.01*clip($W-$T,-3/TB,3/TB))'"
 "$F" -hide_banner -loglevel warning -nostdin \
   -init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va \
   $IN -i rtsp://127.0.0.1:8554/canteiro_fixa \
