@@ -335,6 +335,43 @@ MONTHS_PT = {"janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "abril": 4, 
              "agosto": 8, "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12}
 
 
+def _grade_plano(gc, sheet_id: str, tab: str) -> list[list[dict]]:
+    """The PlanejadoRealizado tab WITH its formatting: rows of cells {"v": text, "itens": [{"t", "x"}]}.
+    `x` = the line is struck through. Ênio copies the plan into "Realizado" and strikes the lines that
+    were NOT executed (the struck lines of week 19 are back in the plan of week 20) - a plain
+    get_all_values() returns the text only and every struck line read as done (until 2026-11-15)."""
+    meta = gc.open_by_key(sheet_id).fetch_sheet_metadata(params={
+        "ranges": [f"'{tab}'!A1:D200"], "includeGridData": "true",
+        "fields": "sheets.data.rowData.values(formattedValue,effectiveFormat.textFormat.strikethrough,"
+                  "textFormatRuns(startIndex,format.strikethrough))"})
+    out = []
+    for r in meta["sheets"][0]["data"][0].get("rowData", []):
+        cells = []
+        for c in r.get("values", []):
+            txt = c.get("formattedValue", "") or ""
+            base = bool(c.get("effectiveFormat", {}).get("textFormat", {}).get("strikethrough"))
+            runs = c.get("textFormatRuns") or []
+            if runs:
+                risc = [False] * len(txt)
+                for i, run in enumerate(runs):
+                    a = run.get("startIndex", 0)
+                    b = runs[i + 1].get("startIndex", len(txt)) if i + 1 < len(runs) else len(txt)
+                    if run.get("format", {}).get("strikethrough"):
+                        risc[a:b] = [True] * (min(b, len(txt)) - a)
+            else:
+                risc = [base] * len(txt)
+            itens, pos = [], 0
+            for ln in txt.split("\n"):
+                marcas = [risc[pos + i] for i, ch in enumerate(ln) if not ch.isspace() and ch not in "-–•*"]
+                limpo = re.sub(r"^[\s\-–•*\d.)]+", "", ln).strip()
+                if limpo:
+                    itens.append({"t": limpo, "x": bool(marcas) and sum(marcas) * 2 > len(marcas)})
+                pos += len(ln) + 1
+            cells.append({"v": txt, "itens": itens})
+        out.append(cells)
+    return out
+
+
 def collect_plan(d: dt.date, pack: Path) -> dict:
     """PlanejadoRealizado row whose date range contains d. Week 1 = 6–12 Jul 2026; ranges carry no year."""
     if not SHEET_ID or not Path(GSA_KEYFILE).exists():
@@ -343,11 +380,12 @@ def collect_plan(d: dt.date, pack: Path) -> dict:
     try:
         import gspread  # noqa: WPS433
         gc = gspread.service_account(filename=GSA_KEYFILE)
-        rows = gc.open_by_key(SHEET_ID).worksheet(SHEET_TAB).get_all_values()
+        grade = _grade_plano(gc, SHEET_ID, SHEET_TAB)
+        rows = [[c["v"] for c in g] for g in grade]
         year = 2026
         prev_month = 0
         weeks = []
-        for r in rows[2:]:
+        for g, r in list(zip(grade, rows))[2:]:
             if len(r) < 2 or not r[0].strip().isdigit():
                 continue
             m = re.match(r"\s*(\d+)\s+(\w+)\s*-\s*(\d+)\s+(\w+)", r[1].strip(), re.I)
@@ -360,7 +398,11 @@ def collect_plan(d: dt.date, pack: Path) -> dict:
             y2 = year + 1 if (m2 and m2 < m1) else year
             start, end = dt.date(year, m1, d1), dt.date(y2, m2, d2)
             weeks.append({"week": int(r[0]), "range": r[1].strip(), "start": start.isoformat(), "end": end.isoformat(),
-                          "planned": r[2] if len(r) > 2 else "", "realized": r[3] if len(r) > 3 else ""})
+                          "planned": r[2] if len(r) > 2 else "", "realized": r[3] if len(r) > 3 else "",
+                          # line by line, with the strikethrough Ênio uses in "Realizado" for what was
+                          # NOT executed (riscado = true) - `realized` alone reads every line as done
+                          "realized_itens": [{"texto": i["t"], "riscado": i["x"]} for i in (g[3]["itens"] if len(g) > 3 else [])],
+                          "planned_itens": [{"texto": i["t"], "riscado": i["x"]} for i in (g[2]["itens"] if len(g) > 2 else [])]})
         found = None
         for i, w in enumerate(weeks):
             if w["start"] <= d.isoformat() <= w["end"]:

@@ -249,15 +249,53 @@ def _plain(v) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", str(v or ""))).strip()
 
 
+def _grade_plano(gc, sheet_id: str, tab: str) -> list[list[dict]]:
+    """The PlanejadoRealizado tab WITH its formatting: rows of cells {"v": text, "itens": [{"t", "x"}]}.
+    `x` = the line is struck through. Ênio copies the plan into "Realizado" and strikes the lines that
+    were NOT executed (the struck lines of week 19 are back in the plan of week 20) - a plain
+    get_all_values() returns the text only and every struck line read as done (until 2026-11-15)."""
+    meta = gc.open_by_key(sheet_id).fetch_sheet_metadata(params={
+        "ranges": [f"'{tab}'!A1:D200"], "includeGridData": "true",
+        "fields": "sheets.data.rowData.values(formattedValue,effectiveFormat.textFormat.strikethrough,"
+                  "textFormatRuns(startIndex,format.strikethrough))"})
+    out = []
+    for r in meta["sheets"][0]["data"][0].get("rowData", []):
+        cells = []
+        for c in r.get("values", []):
+            txt = c.get("formattedValue", "") or ""
+            base = bool(c.get("effectiveFormat", {}).get("textFormat", {}).get("strikethrough"))
+            runs = c.get("textFormatRuns") or []
+            if runs:
+                risc = [False] * len(txt)
+                for i, run in enumerate(runs):
+                    a = run.get("startIndex", 0)
+                    b = runs[i + 1].get("startIndex", len(txt)) if i + 1 < len(runs) else len(txt)
+                    if run.get("format", {}).get("strikethrough"):
+                        risc[a:b] = [True] * (min(b, len(txt)) - a)
+            else:
+                risc = [base] * len(txt)
+            itens, pos = [], 0
+            for ln in txt.split("\n"):
+                marcas = [risc[pos + i] for i, ch in enumerate(ln) if not ch.isspace() and ch not in "-–•*"]
+                limpo = re.sub(r"^[\s\-–•*\d.)]+", "", ln).strip()
+                if limpo:
+                    itens.append({"t": limpo, "x": bool(marcas) and sum(marcas) * 2 > len(marcas)})
+                pos += len(ln) + 1
+            cells.append({"v": txt, "itens": itens})
+        out.append(cells)
+    return out
+
+
 def src_plano() -> dict:
     """PlanejadoRealizado row whose range contains today (same parsing as canteiro-diario.collect_plan)."""
     if not SHEET_ID or not Path(GSA_KEYFILE).exists():
         raise RuntimeError("sheet not configured")
     import gspread  # noqa: WPS433
-    rows = gspread.service_account(filename=GSA_KEYFILE).open_by_key(SHEET_ID).worksheet(SHEET_TAB).get_all_values()
+    grade = _grade_plano(gspread.service_account(filename=GSA_KEYFILE), SHEET_ID, SHEET_TAB)
+    rows = [[c["v"] for c in g] for g in grade]
     today = dt.datetime.now(TZ).date().isoformat()
     year, prev_month, weeks = 2026, 0, []
-    for r in rows[2:]:
+    for g, r in list(zip(grade, rows))[2:]:
         if len(r) < 2 or not r[0].strip().isdigit():
             continue
         m = re.match(r"\s*(\d+)\s+(\w+)\s*-\s*(\d+)\s+(\w+)", r[1].strip(), re.I)
@@ -266,16 +304,17 @@ def src_plano() -> dict:
         d1, m1, d2, m2 = int(m.group(1)), MONTHS_PT.get(m.group(2).lower(), 0), int(m.group(3)), MONTHS_PT.get(m.group(4).lower(), 0)
         if not m1 or not m2:
             continue
+        real = g[3]["itens"] if len(g) > 3 else []
         if m1 < prev_month:
             year += 1
         prev_month = m1
         y2 = year + 1 if m2 < m1 else year
         weeks.append({"week": int(r[0]), "range": r[1].strip(), "start": dt.date(year, m1, d1).isoformat(),
-                      "end": dt.date(y2, m2, d2).isoformat(), "planned": r[2] if len(r) > 2 else ""})
+                      "end": dt.date(y2, m2, d2).isoformat(), "planned": r[2] if len(r) > 2 else "", "real": real})
     for i, w in enumerate(weeks):
         if w["start"] <= today <= w["end"]:
             nxt = weeks[i + 1] if i + 1 < len(weeks) and weeks[i + 1]["planned"].strip() else None
-            return {"week": w["week"], "range": w["range"], "itens": _itens(w["planned"]),
+            return {"week": w["week"], "range": w["range"], "itens": _itens(w["planned"]), "real": w["real"],
                     "proxima": ({"week": nxt["week"], "range": nxt["range"], "itens": _itens(nxt["planned"])} if nxt else None)}
     raise RuntimeError("no week row contains today")
 
@@ -808,10 +847,24 @@ def render() -> Image.Image:
             marks = dj["plano"]
         col = {"ok": GREEN, "part": AMBER, "no": RED, "na": DIM}
         itens = pl["itens"] or ["(semana sem plano na planilha)"]
+        # Ênio's own "Realizado" column decides when it is filled: a line he struck through there
+        # was NOT executed; an unstruck one was. The Diário's marks only fill what he left out.
+        real = [dict(r, item=r["t"]) for r in (pl.get("real") or [])]
+        usados: set[int] = set()
         for it in itens:
             if y + 30 > ye:
                 break
-            m = _match(it, marks)
+            rm = _match(it, real) if real else None
+            if rm:
+                usados.add(id(rm))
+            if rm and rm["x"]:
+                dr.ellipse((xa, y + 9, xa + 14, y + 23), fill=None, outline=RED, width=2)
+                txt = fit(dr, it, f_b, int(xb - xa - 24))
+                dr.text((xa + 24, y), txt, font=f_b, fill=DIM)
+                dr.line((xa + 24, y + 17, xa + 24 + dr.textlength(txt, font=f_b), y + 17), fill=DIM, width=2)
+                y += 30
+                continue
+            m = {"status": "ok", "status_label": ""} if rm else _match(it, marks)
             c = col.get(m["status"], DIM) if m else LINE
             dr.ellipse((xa, y + 9, xa + 14, y + 23), fill=c if m else None, outline=c if m else DIM, width=2)
             st = m["status_label"] if m and m["status"] != "ok" else ""   # green dot says "concluído"
@@ -820,6 +873,11 @@ def render() -> Image.Image:
                 dr.text((xb - sw, y + 3), st, font=f_bs, fill=c)
             dr.text((xa + 24, y), fit(dr, it, f_b, int(xb - xa - 24 - sw - (14 if st else 0))), font=f_b, fill=FG)
             y += 30
+        extras = [r for r in real if id(r) not in usados and not r["x"]]
+        if extras and y + 26 < ye:
+            dr.text((xa + 24, y), fit(dr, f"+ {len(extras)} além do plano: " + "; ".join(r["t"] for r in extras), f_bs,
+                                      int(xb - xa - 24)), font=f_bs, fill=DIM)
+            y += 26
         nx = pl.get("proxima")
         if nx and y + 60 < ye:
             y += 6
