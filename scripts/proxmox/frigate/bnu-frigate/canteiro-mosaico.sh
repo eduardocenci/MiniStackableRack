@@ -104,12 +104,22 @@ painel_loop() {
 painel_loop &
 LOOP=$!
 IN="-hwaccel vaapi -hwaccel_device va -rtsp_transport tcp -timeout 15000000 -analyzeduration 1000000"
+# Each lens is stamped with the wall clock as its frames leave the decoder ($NOW), not with
+# its stream's own clock. hstack pairs frames by timestamp and ffmpeg zeroes each input at ITS
+# first frame, so a lens that connects N seconds after the other stayed N seconds ahead for the
+# life of the process - the other half was shown N seconds late and N seconds of its frames sat
+# in memory ("100 buffers queued"). The lag was whatever the start-up race gave: ~2 s on a calm
+# start, 14 s on 2026-11-15 20:11 BRT, when the composer came back right after canteiro-hls
+# (which the fixed lens depends on) restarted. Measured with a 12 s staggered start on the sub
+# streams: 15 s apart without this, same second with it. (The demuxer-level
+# -use_wallclock_as_timestamps is NOT the same thing - see above.)
+NOW="setpts=(RTCTIME-RTCSTART)/(TB*1000000)"
 "$F" -hide_banner -loglevel warning -nostdin \
   -init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va \
   $IN -i rtsp://127.0.0.1:8554/canteiro_fixa \
   $IN -i rtsp://127.0.0.1:8554/canteiro \
   -re -f image2 -loop 1 -framerate 1 -i "$PAINEL" \
-  -filter_complex "[0:v]fps=15,scale=1280:720[l];[1:v]fps=15,scale=1280:720[r];[l][r]hstack=inputs=2,split=2[a][b];[a]format=nv12,hwupload[v];[b]scale=1920:540,format=yuv420p[m];[2:v]fps=15,scale=1920:540,format=yuv420p[p];[m][p]vstack=inputs=2,format=nv12,hwupload[t]" \
+  -filter_complex "[0:v]$NOW,fps=15,scale=1280:720[l];[1:v]$NOW,fps=15,scale=1280:720[r];[l][r]hstack=inputs=2,split=2[a][b];[a]format=nv12,hwupload[v];[b]scale=1920:540,format=yuv420p[m];[2:v]fps=15,scale=1920:540,format=yuv420p[p];[m][p]vstack=inputs=2,format=nv12,hwupload[t]" \
   -map "[v]" -c:v h264_vaapi -profile:v high -b:v 3M -maxrate 4M -g 30 -an \
   -rtsp_transport tcp -f rtsp rtsp://10.1.1.123:8555/mosaico \
   -map "[t]" -c:v h264_vaapi -profile:v high -b:v 3M -maxrate 4M -g 30 -an \

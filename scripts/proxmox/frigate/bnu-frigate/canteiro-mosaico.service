@@ -11,6 +11,9 @@ Wants=network-online.target
 ExecStart=/usr/local/bin/canteiro-mosaico.sh
 Restart=always
 RestartSec=5
+# A stop that hangs must not keep the stream down: on 2026-11-15 a restart waited the default
+# 90 s for SIGTERM before systemd killed ffmpeg.
+TimeoutStopSec=10
 # Steady state is ~0.8 GB. With its outputs dead ffmpeg grew 25 MB/s (2026-11-15) and the
 # LXC-wide OOM killer may pick a Frigate process instead: keep the damage in this unit.
 MemoryMax=1200M
