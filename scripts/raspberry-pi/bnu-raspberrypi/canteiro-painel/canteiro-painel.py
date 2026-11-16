@@ -111,6 +111,7 @@ def src_rede() -> dict:
     if isinstance(devs, dict):
         devs = devs.get("devices", [])
     pessoas, fixos_on, fixos_total, saidas = [], 0, 0, []
+    agora = time.time()
     for d in devs:
         name = (d.get("display_name") or d.get("nickname") or d.get("hostname") or d.get("ip") or "?").strip()
         fixed = name.lower() in FIXED
@@ -124,7 +125,9 @@ def src_rede() -> dict:
             saidas.append({"nome": name, "saiu": since})
     pessoas.sort(key=lambda x: x["desde"] or 0)
     saidas.sort(key=lambda x: -x["saiu"])
-    return {"pessoas": pessoas, "fixos_on": fixos_on, "fixos_total": fixos_total, "saidas": saidas[:4]}
+    # people's devices seen in the last hour: on the network now, or gone less than an hour ago
+    hora = len(pessoas) + sum(1 for x in saidas if agora - x["saiu"] <= 3600)
+    return {"pessoas": pessoas, "fixos_on": fixos_on, "fixos_total": fixos_total, "saidas": saidas[:4], "hora": hora}
 
 
 def _utc(s: str | None) -> float | None:
@@ -426,8 +429,12 @@ def render() -> Image.Image:
         dr.text((xa, y - 8), str(n), font=f_n, fill=GREEN if n else DIM)
         nw = dr.textlength(str(n), font=f_n)
         dr.text((xa + nw + 12, y), "aparelho" + ("" if n == 1 else "s") + " de pessoas", font=f_b, fill=FG)
-        dr.text((xa + nw + 12, y + 28), f"fixos: {d['fixos_on']}/{d['fixos_total']} no ar", font=f_bs,
-                fill=DIM if d["fixos_on"] == d["fixos_total"] else RED)
+        h1 = d.get("hora", n)
+        t1 = f"{h1} na última hora"
+        dr.text((xa + nw + 12, y + 28), t1, font=f_bs, fill=DIM)
+        if d["fixos_on"] != d["fixos_total"]:   # the site's own gear (camera, Pi...) only shows up when one is down
+            dr.text((xa + nw + 12 + dr.textlength(t1 + " · ", font=f_bs), y + 28),
+                    f"fixos {d['fixos_on']}/{d['fixos_total']}", font=f_bs, fill=RED)
         y += 62
         if n:
             names = ", ".join(p["nome"] for p in d["pessoas"])
@@ -498,24 +505,43 @@ def render() -> Image.Image:
             dr.text((xa, y), fit(dr, f"{quando} · {t['o_que']}", f_bs, int(xb - xa - sw - 34)), font=f_bs, fill=DIM)
             y += 29
 
-        for titulo, lista, late in (("A VENCER", avencer, False), (f"VENCIDOS SEM BAIXA — ÚLTIMOS {VENC_ATRAS} DIAS", vencidos, True)):
+        # What needs someone's attention comes first: overdue without a payment scheduled (red),
+        # then falling due without one (amber). A title already scheduled (green) is drawn only
+        # in the room the others leave - hidden ones are counted in the section's "+ N" line.
+        secs = [("A VENCER", avencer, False), (f"VENCIDOS SEM BAIXA — ÚLTIMOS {VENC_ATRAS} DIAS", vencidos, True)]
+        pick: list[set[int]] = [set(), set()]
+
+        def altura(sel: list[set[int]]) -> int:
+            h = 0
+            for (_, lista, late), k in zip(secs, sel):
+                if not lista and late:
+                    continue
+                h += 27 + (57 * len(k) + (26 if len(k) < len(lista) else 0) if lista else 30) + 4
+            return h
+
+        fila = ([(1, i) for i, t in enumerate(vencidos) if not t["agendado"]]
+                + [(0, i) for i, t in enumerate(avencer) if not t["agendado"]]
+                + [(0, i) for i, t in enumerate(avencer) if t["agendado"]]
+                + [(1, i) for i, t in enumerate(vencidos) if t["agendado"]])
+        for si, i in fila:
+            pick[si].add(i)
+            if altura(pick) > ye - y:
+                pick[si].discard(i)
+        for (titulo, lista, late), k in zip(secs, pick):
             if not lista and late:
                 continue
-            if y + 26 + 57 > ye:
+            if y + 27 + 26 > ye:
                 break
             dr.text((xa, y), titulo, font=f_s, fill=RED if late else DIM)
             y += 27
             if not lista:
                 dr.text((xa, y), "nenhum título nos próximos dias", font=f_bs, fill=DIM)
                 y += 30
-            shown = 0
-            for t in lista:
-                if y + 57 > ye - (24 if len(lista) - shown > 1 else 0):
-                    break
-                linha(t, late)
-                shown += 1
-            if len(lista) > shown:
-                resto = lista[shown:]
+            for i, t in enumerate(lista):
+                if i in k:
+                    linha(t, late)
+            resto = [t for i, t in enumerate(lista) if i not in k]
+            if resto:
                 ag = sum(1 for x in resto if x["agendado"])
                 dr.text((xa, y), f"+ {len(resto)}" + (f" ({ag} agendado{'s' if ag > 1 else ''})" if ag else "")
                         + f" · R$ {brl(sum(x['valor'] for x in resto))}", font=f_bs, fill=DIM)
@@ -542,9 +568,19 @@ def render() -> Image.Image:
             lines = wrap(dr, e["o_que"], f_b, tw)
             if len(lines) > maxl:
                 lines = lines[:maxl - 1] + [fit(dr, " ".join(lines[maxl - 1:]), f_b, tw)]
-            st = e["status_label"]
-            det = " · ".join(t for t in (re.sub(r"^CON-\d+\w?\s*", "", e["contrato"]), e["previsto"])
-                             if t and t.strip("—-– ") and _key(t) != _key(st))
+            # The Diário writes from its own day ("executada ontem"): on the panel, days later, that
+            # reads wrong - relative words become that day's date. And it often says the same thing
+            # twice ("no canteiro até 19/11" / "no canteiro"): a received item shows it ONCE, in
+            # green on the right, in its fuller form; the grey line keeps only the vendor.
+            st, prev = _abs_dia(e["status_label"], dd, now.date()), _abs_dia(e["previsto"], dd, now.date())
+            if not prev.strip("—-– "):
+                prev = ""
+            if done and prev and (RECEBIDO_RE.search(prev) or not RECEBIDO_RE.search(st)):
+                if RECEBIDO_RE.search(prev):
+                    st, prev = prev, ""
+            elif prev and (_key(prev) == _key(st) or _key(st) in _key(prev)):
+                st, prev = prev, ""
+            det = " · ".join(t for t in (re.sub(r"^CON-\d+\w?\s*", "", e["contrato"]).strip("—-– "), prev) if t)
             sw = dr.textlength(st, font=f_bs)
             dl = wrap(dr, det, f_bs, int(tw - sw - 14))[:2] if det else []
             if len(dl) == 2:
@@ -631,6 +667,20 @@ def _recebido(e: dict) -> bool:
     if e["status"] in ("no", "part"):
         return False
     return bool(RECEBIDO_RE.search(e["status_label"]) or RECEBIDO_RE.search(e["previsto"]))
+
+
+REL_DIA = {"anteontem": -2, "ontem": -1, "hoje": 0, "amanhã": 1, "amanha": 1}
+
+
+def _abs_dia(txt: str, ref: dt.date, today: dt.date) -> str:
+    """"executada ontem" in the Diário of Fri 13/11, read on Sunday -> "executada qui 12/11"."""
+    if ref == today:
+        return txt
+
+    def sub(m: re.Match) -> str:
+        d = ref + dt.timedelta(days=REL_DIA[m.group(0).lower()])
+        return f"{WD_PT[d.weekday()]} {d:%d/%m}"
+    return re.sub(r"\b(anteontem|ontem|hoje|amanh[ãa])\b", sub, txt, flags=re.I)
 
 
 def _filler(e: dict) -> bool:
