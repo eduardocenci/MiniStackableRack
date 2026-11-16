@@ -673,17 +673,22 @@ def render() -> Image.Image:
         # behind the text: the day's curve of "devices in the last hour" over the working hours,
         # across the whole card (pedido Eduardo 16/11/2026). Dim on purpose - the text stays on top.
         h0, h1x = SERIE_H
-        base, topo = ye + 4, y + 14
+        base, topo = ye + 4, y + 28
         px = lambda mm: xa + (xb - xa) * (mm - h0 * 60) / ((h1x - h0) * 60)
         serie = [(mm, v) for mm, v in d.get("serie") or [] if h0 * 60 <= mm <= h1x * 60]
-        if serie:
-            vmax = max(4, max(v for _, v in serie))
+        f_ax = font(F_BODY, 15)
+        if serie and max(v for _, v in serie) > 0:
+            vmax = max(v for _, v in serie)   # the day's peak sits on the top line - the Y axis' only tick
             pts = [(px(mm), base - (base - topo) * v / vmax) for mm, v in serie]
             if len(pts) == 1:
                 pts.append((pts[0][0] + 3, pts[0][1]))
             dr.polygon([(pts[0][0], base)] + pts + [(pts[-1][0], base)], fill=(26, 50, 40))
             dr.line(pts, fill=(52, 104, 70), width=2)
-        f_ax = font(F_BODY, 15)
+            for x in range(int(xa), int(xb), 10):          # dashed line at the peak, across the card
+                dr.line((x, topo, min(x + 5, xb), topo), fill=(70, 82, 98), width=1)
+            f_mx = font(F_SEMI, 18)
+            lab = f"máx. {vmax}"
+            dr.text((xb - dr.textlength(lab, font=f_mx), topo + 3), lab, font=f_mx, fill=DIM)
         for hh in range(h0, h1x + 1):
             x = px(hh * 60)
             dr.line((x, base - (7 if hh % 2 else 4), x, base), fill=LINE, width=1)
