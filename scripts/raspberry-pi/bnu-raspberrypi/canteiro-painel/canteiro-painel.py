@@ -642,12 +642,14 @@ def render() -> Image.Image:
     xa, y, xb, ye = head("rede", "NA REDE AGORA", f"{now:%H:%M}", "rede")
     d = CACHE["rede"]["data"]
     if d:
+        # big = unique people's devices seen in the last hour; small = on the network right now
+        # (pedido Eduardo 16/11/2026 - the instant count flickers with phones that sleep)
         n = len(d["pessoas"])
-        dr.text((xa, y - 8), str(n), font=f_n, fill=GREEN if n else DIM)
-        nw = dr.textlength(str(n), font=f_n)
-        dr.text((xa + nw + 12, y), "aparelho" + ("" if n == 1 else "s") + " de pessoas", font=f_b, fill=FG)
         h1 = d.get("hora", n)
-        t1 = f"{h1} na última hora"
+        dr.text((xa, y - 8), str(h1), font=f_n, fill=GREEN if h1 else DIM)
+        nw = dr.textlength(str(h1), font=f_n)
+        dr.text((xa + nw + 12, y), "aparelho" + ("" if h1 == 1 else "s") + " na última hora", font=f_b, fill=FG)
+        t1 = f"{n} agora"
         dr.text((xa + nw + 12, y + 28), t1, font=f_bs, fill=DIM)
         if d["fixos_on"] != d["fixos_total"]:   # the site's own gear (camera, Pi...) only shows up when one is down
             dr.text((xa + nw + 12 + dr.textlength(t1 + " · ", font=f_bs), y + 28),
