@@ -76,7 +76,7 @@ LISTENER_URL, LISTENER_TOKEN, OBRA_JID = E("LISTENER_URL").rstrip("/"), E("LISTE
 # site Wi-Fi in the day, one WhatsApp message. off = never send; teste = to TEST_JID (Casa
 # SmokeTests); live = to the obra group (OBRA_CHAT_JID, "Cenci Céu Azul Casa-Hangar").
 REDE_AVISO = E("REDE_AVISO", "off").lower()
-REDE_AVISO_FORA = {t.strip().lower() for t in E("REDE_AVISO_FORA", "Eduardo,Jorge,Ênio").split(",") if t.strip()}
+REDE_AVISO_FORA = {t.strip().lower() for t in E("REDE_AVISO_FORA", "Eduardo,Jorge,Ênio,Ariane").split(",") if t.strip()}
 WAHA_URL, WAHA_KEY, WAHA_SESSION, TEST_JID = E("WAHA_URL").rstrip("/"), E("WAHA_KEY"), E("WAHA_SESSION", "default"), E("TEST_JID")
 HOJE_DIA = E("PAINEL_HOJE")            # YYYY-MM-DD: read that day's trucks instead of today's (tests)
 HOJE_CONF = int(E("HOJE_CONF", "60"))  # below this Claudinho's answer is "provável" and gives no automatic baixa
