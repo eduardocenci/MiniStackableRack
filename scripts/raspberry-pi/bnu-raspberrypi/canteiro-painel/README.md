@@ -57,3 +57,22 @@ Device names, who passed the gate and what is owed to whom: home LAN (two client
 this picture to a WhatsApp group.
 
 Runbook: globalnet `docs/runbooks/canteiro-painel.md`.
+
+## Supplier-on-the-network notice (added 2026-11-15)
+
+Besides drawing, the panel sends ONE WhatsApp message the first time a tag shows up on the site
+Wi-Fi in the day (a device of that tag online now, tag not announced today):
+
+    📶 *IBEV no canteiro* — 10:05
+    _Aviso automático · 2 aparelhos da IBEV na rede Wi-Fi da obra_
+
+- `REDE_AVISO` (compose): `off` · `teste` (to `TEST_JID`, Casa SmokeTests) · `live` (to
+  `OBRA_CHAT_JID`, the obra group "Cenci Céu Azul Casa-Hangar"). In `teste` since 2026-11-15;
+  `live` only on Eduardo's word.
+- `REDE_AVISO_FORA` (default `Eduardo,Jorge,Ênio`): tags that never announce (owners, manager).
+- Once per tag per day: the announced tags live in `STATE_DIR/rede-hoje.json` (`avisados`), so a
+  restart does not repeat; a send that fails is retried on the next read (60 s).
+- A tag is the text in the last parentheses of the device nickname in the ara netoverview —
+  renaming a device there is all it takes to make it announce.
+- Sent through WAHA `sendText` (`WAHA_URL`/`WAHA_KEY`/`WAHA_SESSION` from the env file).
+

@@ -134,6 +134,8 @@ services:
       RCLONE_CONFIG: /config/rclone/rclone.conf
       GSA_KEYFILE: /config/gsa.json
       STATE_DIR: /var/lib/canteiro-painel
+      # supplier-on-the-network notice: off | teste (Casa SmokeTests) | live (obra group)
+      REDE_AVISO: teste
       HOME: /tmp
     volumes:
       - /home/eduardocenci/.config/rclone:/config/rclone
