@@ -72,6 +72,12 @@ RENDER_S = int(E("RENDER_S", "60"))
 TTL = {"rede": 60, "tags": int(E("TAGS_S", "60")), "diario": int(E("DIARIO_S", "1800")),
        "plano": int(E("PLANO_S", "1800")), "venc": int(E("VENC_S", "900")), "hoje": 60}
 LISTENER_URL, LISTENER_TOKEN, OBRA_JID = E("LISTENER_URL").rstrip("/"), E("LISTENER_TOKEN"), E("OBRA_CHAT_JID")
+# Supplier-on-the-network notice (pedido Eduardo 15/11/2026): the first time a TAG shows up on the
+# site Wi-Fi in the day, one WhatsApp message. off = never send; teste = to TEST_JID (Casa
+# SmokeTests); live = to the obra group (OBRA_CHAT_JID, "Cenci Céu Azul Casa-Hangar").
+REDE_AVISO = E("REDE_AVISO", "off").lower()
+REDE_AVISO_FORA = {t.strip().lower() for t in E("REDE_AVISO_FORA", "Eduardo,Jorge,Ênio,Ariane").split(",") if t.strip()}
+WAHA_URL, WAHA_KEY, WAHA_SESSION, TEST_JID = E("WAHA_URL").rstrip("/"), E("WAHA_KEY"), E("WAHA_SESSION", "default"), E("TEST_JID")
 HOJE_DIA = E("PAINEL_HOJE")            # YYYY-MM-DD: read that day's trucks instead of today's (tests)
 HOJE_CONF = int(E("HOJE_CONF", "60"))  # below this Claudinho's answer is "provável" and gives no automatic baixa
 FIN_TAB = E("FIN_TAB", "Financeiro")
@@ -133,7 +139,7 @@ def src_rede() -> dict:
             # the tag is what the nickname carries in its last parentheses: "moto-g14 (Ariane)"
             visto = agora if d.get("online") else (_utc(d.get("last_seen_utc")) or 0)
             if visto >= meia_noite:
-                novos[(d.get("mac") or name).lower()] = {"nome": name, "ts": visto}
+                novos[(d.get("mac") or name).lower()] = {"nome": name, "ts": visto, "on": bool(d.get("online"))}
     pessoas.sort(key=lambda x: x["desde"] or 0)
     saidas.sort(key=lambda x: -x["saiu"])
     # netoverview drops an offline device from /api/devices once it is more than 30 days old
@@ -141,6 +147,10 @@ def src_rede() -> dict:
     # answer: the panel sees every device while it is online (one read a minute) and keeps the
     # day's list itself.
     vistos = _rede_hoje(dt.datetime.now(TZ).date().isoformat(), novos)
+    try:
+        _avisar_rede(dt.datetime.now(TZ), novos)
+    except Exception as ex:  # noqa: BLE001 — a notice that fails must never take the card down
+        log(f"aviso rede: {ex.__class__.__name__}: {ex}")
     tags: dict[str, bool] = {}     # tag -> seen in the last hour (else: earlier today)
     sem_tag = hora = 0
     for v in vistos.values():
@@ -171,11 +181,60 @@ def _rede_hoje(dia: str, novos: dict[str, dict]) -> dict[str, dict]:
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         tmp = f.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"dia": dia, "vistos": vistos}, ensure_ascii=False), encoding="utf-8")
+        tmp.write_text(json.dumps({"dia": dia, "vistos": vistos,
+                                   "avisados": st.get("avisados", []) if st.get("dia") == dia else []},
+                                  ensure_ascii=False), encoding="utf-8")
         tmp.replace(f)
     except OSError as ex:
         log(f"rede-hoje: {ex}")
     return vistos
+
+
+def _tag(nome: str) -> str:
+    m = re.search(r"\(([^()]+)\)\s*$", nome)
+    return m.group(1).strip() if m else ""
+
+
+def aviso_texto(tag: str, hora: str, n: int) -> str:
+    return (f"\U0001F4F6 *{tag} no canteiro* — {hora}\n"
+            f"_Aviso automático · {'aparelho' if n == 1 else f'{n} aparelhos'} da {tag} na rede Wi-Fi da obra_")
+
+
+def _avisar_rede(agora: dt.datetime, novos: dict[str, dict]) -> list[str]:
+    """One message per tag per day, when one of its devices is ONLINE now and the tag was not
+    announced today. Tags in REDE_AVISO_FORA (owners, manager) never announce. The list of the
+    day lives next to the sightings (rede-hoje.json), so a restart does not repeat a notice;
+    a notice that could not be sent is tried again on the next read."""
+    if REDE_AVISO not in ("teste", "live"):
+        return []
+    chat = TEST_JID if REDE_AVISO == "teste" else OBRA_JID
+    if not (WAHA_URL and WAHA_KEY and chat):
+        raise RuntimeError("WAHA_URL / WAHA_KEY / chat not set")
+    f = STATE_DIR / "rede-hoje.json"
+    st = json.loads(f.read_text(encoding="utf-8"))
+    if st.get("dia") != agora.date().isoformat():
+        return []
+    presentes: dict[str, int] = {}
+    for v in novos.values():
+        t = _tag(v["nome"])
+        if t and v.get("on") and t.lower() not in REDE_AVISO_FORA:
+            presentes[t] = presentes.get(t, 0) + 1
+    enviados = []
+    for t, n in sorted(presentes.items()):
+        if t in st.get("avisados", []):
+            continue
+        body = json.dumps({"session": WAHA_SESSION, "chatId": chat, "text": aviso_texto(t, f"{agora:%H:%M}", n)}).encode()
+        req = urllib.request.Request(f"{WAHA_URL}/api/sendText", data=body,
+                                     headers={"Content-Type": "application/json", "X-Api-Key": WAHA_KEY})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            r.read()
+        st.setdefault("avisados", []).append(t)
+        tmp = f.with_suffix(".tmp")
+        tmp.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(f)
+        enviados.append(t)
+        log(f"aviso rede ({REDE_AVISO}): {t} {agora:%H:%M}")
+    return enviados
 
 
 def _utc(s: str | None) -> float | None:

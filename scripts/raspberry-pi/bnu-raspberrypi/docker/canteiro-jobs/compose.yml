@@ -134,6 +134,10 @@ services:
       RCLONE_CONFIG: /config/rclone/rclone.conf
       GSA_KEYFILE: /config/gsa.json
       STATE_DIR: /var/lib/canteiro-painel
+      # supplier-on-the-network notice: off | teste (Casa SmokeTests) | live (obra group).
+      # live since 2026-11-15 (Eduardo: "ligar sem a Ariane" - the daily crew does not announce).
+      REDE_AVISO: live
+      REDE_AVISO_FORA: "Eduardo,Jorge,Ênio,Ariane"
       HOME: /tmp
     volumes:
       - /home/eduardocenci/.config/rclone:/config/rclone
