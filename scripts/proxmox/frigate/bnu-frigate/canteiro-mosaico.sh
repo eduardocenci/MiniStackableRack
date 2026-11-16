@@ -123,10 +123,15 @@ IN="-hwaccel vaapi -hwaccel_device va -rtsp_transport tcp -timeout 15000000 -ana
 # own interval and is pulled 1 % per frame towards the wall clock (time constant ~7 s), which
 # absorbs the bursts and still closes any offset left by the start-up burst or by drift.
 # A timestamp that goes back or jumps > 5 s (source reconnected) takes the wall clock again.
+# So does a lens that got more than 2 s away from the wall clock: on 2026-11-16 the PT lens
+# started with a 30 s backlog on the site uplink and the slow pull took a minute to close it,
+# with 30 s of the other lens' frames held in memory meanwhile. Above 2 s the lens snaps
+# (forward: the gap shows as a freeze of that half; behind: its frames are dropped until the
+# clock catches up), so the halves are never more than ~2 s apart.
 # Measured on one lens, 20 s: max gap 1.14 s / 24 glued frames before, 0.11 s / 0 after.
 W="(RTCTIME-RTCSTART)/(TB*1000000)"
 T="(PREV_OUTPTS+PTS-PREV_INPTS)"
-NOW="setpts='if(eq(N,0)+lte(PTS,PREV_INPTS)+gt(PTS-PREV_INPTS,5/TB),max($W,if(eq(N,0),0,PREV_OUTPTS+1)),$T+0.01*clip($W-$T,-3/TB,3/TB))'"
+NOW="setpts='if(eq(N,0)+lte(PTS,PREV_INPTS)+gt(PTS-PREV_INPTS,5/TB)+gt(abs($W-$T),2/TB),max($W,if(eq(N,0),0,PREV_OUTPTS+1)),$T+0.01*($W-$T))'"
 "$F" -hide_banner -loglevel warning -nostdin \
   -init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va \
   $IN -i rtsp://127.0.0.1:8554/canteiro_fixa \
