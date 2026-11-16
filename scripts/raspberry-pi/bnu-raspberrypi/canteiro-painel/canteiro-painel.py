@@ -162,6 +162,7 @@ def src_rede() -> dict:
         else:
             sem_tag += 1
     return {"pessoas": pessoas, "fixos_on": fixos_on, "fixos_total": fixos_total, "saidas": saidas[:4], "hora": hora,
+            "serie": _rede_serie(dt.datetime.now(TZ), hora),
             "tags": [{"tag": k, "on": v} for k, v in sorted(tags.items(), key=lambda kv: (not kv[1], kv[0].lower()))],
             "sem_tag": sem_tag}
 
@@ -188,6 +189,33 @@ def _rede_hoje(dia: str, novos: dict[str, dict]) -> dict[str, dict]:
     except OSError as ex:
         log(f"rede-hoje: {ex}")
     return vistos
+
+
+SERIE_H = (7, 18)   # the chart's X axis: the site's working hours (07:00-18:00)
+
+
+def _rede_serie(agora: dt.datetime, hora: int) -> list[list[int]]:
+    """The day's curve of "devices in the last hour": one point per 5 minutes ([minute of the
+    day, count]), kept in STATE_DIR/rede-serie.json. It starts when the container first reads
+    the network that day - there is no backfill."""
+    f = STATE_DIR / "rede-serie.json"
+    dia = agora.date().isoformat()
+    try:
+        st = json.loads(f.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        st = {}
+    pts = st.get("pts", {}) if st.get("dia") == dia else {}
+    m = agora.hour * 60 + agora.minute
+    if SERIE_H[0] * 60 <= m <= SERIE_H[1] * 60:
+        pts[str(m - m % 5)] = hora
+        try:
+            STATE_DIR.mkdir(parents=True, exist_ok=True)
+            tmp = f.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"dia": dia, "pts": pts}), encoding="utf-8")
+            tmp.replace(f)
+        except OSError as ex:
+            log(f"rede-serie: {ex}")
+    return sorted([int(k), int(v)] for k, v in pts.items())
 
 
 def _tag(nome: str) -> str:
@@ -642,6 +670,28 @@ def render() -> Image.Image:
     xa, y, xb, ye = head("rede", "NA REDE AGORA", f"{now:%H:%M}", "rede")
     d = CACHE["rede"]["data"]
     if d:
+        # behind the text: the day's curve of "devices in the last hour" over the working hours,
+        # across the whole card (pedido Eduardo 16/11/2026). Dim on purpose - the text stays on top.
+        h0, h1x = SERIE_H
+        base, topo = ye + 4, y + 14
+        px = lambda mm: xa + (xb - xa) * (mm - h0 * 60) / ((h1x - h0) * 60)
+        serie = [(mm, v) for mm, v in d.get("serie") or [] if h0 * 60 <= mm <= h1x * 60]
+        if serie:
+            vmax = max(4, max(v for _, v in serie))
+            pts = [(px(mm), base - (base - topo) * v / vmax) for mm, v in serie]
+            if len(pts) == 1:
+                pts.append((pts[0][0] + 3, pts[0][1]))
+            dr.polygon([(pts[0][0], base)] + pts + [(pts[-1][0], base)], fill=(26, 50, 40))
+            dr.line(pts, fill=(52, 104, 70), width=2)
+        f_ax = font(F_BODY, 15)
+        for hh in range(h0, h1x + 1):
+            x = px(hh * 60)
+            dr.line((x, base - (7 if hh % 2 else 4), x, base), fill=LINE, width=1)
+            if hh % 2:
+                lab = f"{hh}h"
+                tx = min(max(x - dr.textlength(lab, font=f_ax) / 2, xa), xb - dr.textlength(lab, font=f_ax))
+                dr.text((tx, base - 25), lab, font=f_ax, fill=(84, 94, 110))
+        dr.line((xa, base, xb, base), fill=LINE, width=1)
         # big = unique people's devices seen in the last hour; small = on the network right now
         # (pedido Eduardo 16/11/2026 - the instant count flickers with phones that sleep)
         n = len(d["pessoas"])
