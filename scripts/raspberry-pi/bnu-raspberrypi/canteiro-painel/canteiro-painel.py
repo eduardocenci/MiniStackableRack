@@ -116,6 +116,9 @@ def src_rede() -> dict:
         devs = devs.get("devices", [])
     pessoas, fixos_on, fixos_total, saidas = [], 0, 0, []
     agora = time.time()
+    meia_noite = dt.datetime.combine(dt.datetime.now(TZ).date(), dt.time(), TZ).timestamp()
+    tags: dict[str, bool] = {}     # tag -> seen in the last hour (else: earlier today)
+    sem_tag = 0
     for d in devs:
         name = (d.get("display_name") or d.get("nickname") or d.get("hostname") or d.get("ip") or "?").strip()
         fixed = name.lower() in FIXED
@@ -127,11 +130,22 @@ def src_rede() -> dict:
             pessoas.append({"nome": name, "desde": since})
         elif since:
             saidas.append({"nome": name, "saiu": since})
+        if not fixed:
+            # the tag is what the nickname carries in its last parentheses: "moto-g14 (Ariane)"
+            visto = agora if d.get("online") else (_utc(d.get("last_seen_utc")) or 0)
+            if visto >= meia_noite:
+                tg = re.search(r"\(([^()]+)\)\s*$", name)
+                if tg:
+                    tags[tg.group(1).strip()] = tags.get(tg.group(1).strip(), False) or agora - visto <= 3600
+                else:
+                    sem_tag += 1
     pessoas.sort(key=lambda x: x["desde"] or 0)
     saidas.sort(key=lambda x: -x["saiu"])
     # people's devices seen in the last hour: on the network now, or gone less than an hour ago
     hora = len(pessoas) + sum(1 for x in saidas if agora - x["saiu"] <= 3600)
-    return {"pessoas": pessoas, "fixos_on": fixos_on, "fixos_total": fixos_total, "saidas": saidas[:4], "hora": hora}
+    return {"pessoas": pessoas, "fixos_on": fixos_on, "fixos_total": fixos_total, "saidas": saidas[:4], "hora": hora,
+            "tags": [{"tag": k, "on": v} for k, v in sorted(tags.items(), key=lambda kv: (not kv[1], kv[0].lower()))],
+            "sem_tag": sem_tag}
 
 
 def _utc(s: str | None) -> float | None:
@@ -475,7 +489,7 @@ def render() -> Image.Image:
     x2 = pad + w1 + gap
     x3 = x2 + w2 + gap
     x4 = x3 + w3 + gap
-    rede_h = 176
+    rede_h = 208   # room for two rows of tag pills
     boxes = {"rede": (pad, top, pad + w1, top + rede_h),
              "tags": (pad, top + rede_h + gap, pad + w1, bot),
              "venc": (x2, top, x2 + w2, bot),
@@ -510,15 +524,30 @@ def render() -> Image.Image:
         if d["fixos_on"] != d["fixos_total"]:   # the site's own gear (camera, Pi...) only shows up when one is down
             dr.text((xa + nw + 12 + dr.textlength(t1 + " · ", font=f_bs), y + 28),
                     f"fixos {d['fixos_on']}/{d['fixos_total']}", font=f_bs, fill=RED)
-        y += 62
-        if n:
-            names = ", ".join(p["nome"] for p in d["pessoas"])
-            for ln in wrap(dr, names, f_bs, int(xb - xa))[:2]:
-                dr.text((xa, y), ln, font=f_bs, fill=FG)
-                y += 25
-        elif d["saidas"]:
-            s = d["saidas"][0]
-            dr.text((xa, y), fit(dr, f"último a sair: {s['nome']} · {hhmm(s['saiu'])}", f_bs, int(xb - xa)), font=f_bs, fill=DIM)
+        y += 60
+        # Hoje: one pill per tag (company/person in the nickname's parentheses) seen today -
+        # lit while one of its devices was on the network in the last hour, greyed out after.
+        dr.text((xa, y + 3), "Hoje:", font=f_bs, fill=DIM)
+        x = x0p = xa + dr.textlength("Hoje:", font=f_bs) + 10
+        tags = d.get("tags") or []
+        resto = d.get("sem_tag", 0)
+        if not tags and not resto:
+            dr.text((x, y + 3), "ninguém na rede", font=f_bs, fill=DIM)
+        for i, t in enumerate(tags):
+            w = int(dr.textlength(t["tag"], font=f_bs)) + 20
+            if x + w > xb and x > x0p:
+                x, y = xa, y + 31
+            if y + 27 > ye + 8:
+                resto += len(tags) - i
+                break
+            if t["on"]:
+                dr.rounded_rectangle((x, y, x + w, y + 27), radius=13, fill=(30, 74, 48), outline=GREEN, width=2)
+            else:
+                dr.rounded_rectangle((x, y, x + w, y + 27), radius=13, fill=None, outline=LINE, width=2)
+            dr.text((x + 10, y + 2), t["tag"], font=f_bs, fill=FG if t["on"] else (104, 112, 126))
+            x += w + 8
+        if resto and (tags or d.get("sem_tag")):
+            dr.text((x, y + 3), f"+ {resto} sem tag" if resto == d.get("sem_tag", 0) else f"+ {resto}", font=f_bs, fill=DIM)
 
     # 1b — gate (bottom of the first column)
     xa, y, xb, ye = head("tags", "PORTÃO — TAGS", "últimas", "tags")
