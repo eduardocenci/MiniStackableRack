@@ -249,9 +249,25 @@ enabled). One Python process:
 - **recorder** — `ffmpeg -c copy` of `rtsp://10.1.1.123:8555/mosaico` (what `canteiro-mosaico`
   publishes) into 10 s MPEG-TS segments `/var/lib/canteiro-clipe/<epoch>.ts`; the last 60 min
   are kept (~1,4 GB). No decode — negligible CPU.
+- **sub recorders** (added 2026-11-16) — one more `ffmpeg -c copy` per lens, of the SUB streams
+  Frigate detects on (`rtsp://127.0.0.1:8554/canteiro_fixa_sub` and `…/canteiro_sub`, Frigate's
+  own go2rtc — no extra pull from the site), into `/var/lib/canteiro-clipe/sub-fixa/` and
+  `sub-pt/`, same 60 min (~0,5 Mbps each, ~450 MB for the two).
 - **HTTP `:8556`** (clients `127.0.0.1` and `10.1.1.123` only) —
   `GET /clip.mp4?start=<epoch>&end=<epoch>` trims and re-encodes on the GPU to H.264 1920×540,
-  bitrate chosen to stay ≤ 14 MB (30 s → 4,5 MB in 3,6 s, measured); `GET /health`.
+  bitrate chosen to stay ≤ 14 MB (30 s → 4,5 MB in 3,6 s, measured); `GET /health` (mosaic
+  buffer + `sub` per lens).
+- **Fallbacks** (2026-11-16) — when the mosaic clip covers less than 85 % of the window
+  (`COVER_MIN`), the same window is cut from the lenses' Frigate recordings (main streams) or
+  from the sub buffers, in the mosaic layout [fixed | PT]. Coverage counts per lens: the first
+  source where both lenses cover the window goes out, otherwise the one with most lens-seconds.
+  The response says what was sent — `X-Clip-Fonte` (`mosaico` · `gravacao` · `sub`),
+  `X-Clip-Lentes`, `X-Clip-Segundos` (real length), `X-Clip-Pedido` — and the vigia writes the
+  caption from it. Why: on 2026-11-15 12:06 BRT the fixed lens' main stream lost its video one
+  second into an event (audio kept coming), the composer stalled and exited, and a 92 s request
+  became a 4 s video captioned "1 min 32 s"; Frigate's recording of that lens had the same hole,
+  only the sub stream kept running. One clip by hand, without the server:
+  `python3 /usr/local/bin/canteiro-clipe.py --clip <start> <end> /tmp/x.mp4`.
 
 **Consumer:** `canteiro-vigia` on bnu-raspberrypi (video of each detection stretch —
 [`../../../raspberry-pi/bnu-raspberrypi/canteiro-vigia/README.md`](../../../raspberry-pi/bnu-raspberrypi/canteiro-vigia/README.md)).
