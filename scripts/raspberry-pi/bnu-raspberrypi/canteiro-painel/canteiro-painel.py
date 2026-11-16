@@ -873,11 +873,25 @@ def render() -> Image.Image:
                 dr.text((xb - sw, y + 3), st, font=f_bs, fill=c)
             dr.text((xa + 24, y), fit(dr, it, f_b, int(xb - xa - 24 - sw - (14 if st else 0))), font=f_b, fill=FG)
             y += 30
+        # What was done beyond the plan is listed in full, under its own heading - it comes before
+        # next week's plan, which only gets the room that is left (pedido Eduardo 15/11/2026).
         extras = [r for r in real if id(r) not in usados and not r["x"]]
-        if extras and y + 26 < ye:
-            dr.text((xa + 24, y), fit(dr, f"+ {len(extras)} além do plano: " + "; ".join(r["t"] for r in extras), f_bs,
-                                      int(xb - xa - 24)), font=f_bs, fill=DIM)
-            y += 26
+        if extras and y + 28 + 28 <= ye:
+            y += 4
+            dr.text((xa, y), f"ALÉM DO PLANO — {len(extras)} FEITO{'S' if len(extras) > 1 else ''}", font=f_s, fill=GREEN)
+            y += 28
+            for i, r in enumerate(extras):
+                if y + 28 > ye:
+                    dr.text((xa + 24, y - 2), f"+ {len(extras) - i}", font=f_bs, fill=DIM)
+                    break
+                lns = wrap(dr, r["t"], f_b, int(xb - xa - 24))
+                if y + 28 * len(lns) > ye:            # no room for the whole text: one line, cut
+                    lns = [fit(dr, r["t"], f_b, int(xb - xa - 24))]
+                dr.text((xa + 1, y - 3), "+", font=f_t, fill=GREEN)
+                for ln in lns:
+                    dr.text((xa + 24, y), ln, font=f_b, fill=FG)
+                    y += 28
+                y += 1
         nx = pl.get("proxima")
         if nx and y + 60 < ye:
             y += 6
