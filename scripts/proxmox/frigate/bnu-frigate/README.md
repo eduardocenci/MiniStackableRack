@@ -12,6 +12,7 @@ listens on the LXC).
 | ⚠ Decoy config | `/opt/frigate/config/config.yml` is the dev-checkout 16-line example — **not** the active file (cost a session real time on 2026-08-26) |
 | Services | `frigate.service`, `go2rtc.service` (Frigate's internal go2rtc — its config is generated from `config.yml`'s `go2rtc:` block), `nginx.service` |
 | Logs | `/dev/shm/logs/frigate/current`, `/dev/shm/logs/go2rtc/current` |
+| Memory | **6 GB since 2026-11-16** (`pct set 105 -memory 6144` on bnu-proxmox, live; was 4 GB). At 4 GB the LXC sat on its limit all day with the 512 MB swap full, and the kernel killed the mosaic composer 21 times on 2026-11-16 (15 at the service's own 1.2 GB cap, 6 at the LXC limit) |
 | Media | `/media/frigate` on the LXC root disk — **64 GB since 2026-10-23** (`pct resize 105 rootfs +40G` on bnu-proxmox, online, no restart; was 24 GB and 80 % full). Recordings are event-gated (alerts/detections, 10 days, `mode: all`), no continuous retention — see *Recording & retention* below for what that really keeps |
 | ffmpeg | bundled at `/usr/lib/ffmpeg/7.0/bin` (not in `PATH`) |
 | Detector | CPU tflite `/models/cpu_model.tflite` — its labelmap has **no `truck`** (config warning if tracked; trucks come through as `car`); the OpenVINO CPU plugin fails to load in this LXC. **The truck TYPE on the canteiro (caçamba · munck · poliguindaste com caçamba (para retirar entulho) · carroceria · prancha · betoneira · bomba — V3 on recording frames since 29/10/2026 18:56) is not decided here** — see *Consumers* |
@@ -219,7 +220,7 @@ web UI (use Edge/Safari or export).
 - The script watches ffmpeg's two publisher connections to mediamtx (`ss -p`): fewer than two
   in 2 readings 5 s apart (after 60 s of grace; it was 30 s until 2026-11-15, when a composer
   with dead outputs grew from 0.8 to 1.4 GB in 28 s and the LXC's memory limit killed it first;
-  the unit now also has `MemoryMax=1200M`) → exit, systemd starts a fresh composer. Before, a restart
+  the unit now also has `MemoryMax`, 2000M since 2026-11-16) → exit, systemd starts a fresh composer. Before, a restart
   of `canteiro-hls` could leave ffmpeg alive publishing nothing (14 and 15/11/2026).
 - **Halves seconds apart** (fixed 2026-11-15): hstack pairs frames by timestamp and ffmpeg
   zeroes each input at its own first frame, so a lens that connected N s after the other left
