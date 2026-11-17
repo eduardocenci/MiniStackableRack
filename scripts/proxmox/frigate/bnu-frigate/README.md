@@ -220,7 +220,7 @@ web UI (use Edge/Safari or export).
 - The script watches ffmpeg's two publisher connections to mediamtx (`ss -p`): fewer than two
   in 2 readings 5 s apart (after 60 s of grace; it was 30 s until 2026-11-15, when a composer
   with dead outputs grew from 0.8 to 1.4 GB in 28 s and the LXC's memory limit killed it first;
-  the unit now also has `MemoryMax=1200M`) → exit, systemd starts a fresh composer. Before, a restart
+  the unit now also has `MemoryMax`, 2000M since 2026-11-16) → exit, systemd starts a fresh composer. Before, a restart
   of `canteiro-hls` could leave ffmpeg alive publishing nothing (14 and 15/11/2026).
 - **Halves seconds apart** (fixed 2026-11-15): hstack pairs frames by timestamp and ffmpeg
   zeroes each input at its own first frame, so a lens that connected N s after the other left

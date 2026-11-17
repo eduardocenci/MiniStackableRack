@@ -14,9 +14,11 @@ RestartSec=5
 # A stop that hangs must not keep the stream down: on 2026-11-15 a restart waited the default
 # 90 s for SIGTERM before systemd killed ffmpeg.
 TimeoutStopSec=10
-# Steady state is ~0.8 GB. With its outputs dead ffmpeg grew 25 MB/s (2026-11-15) and the
-# LXC-wide OOM killer may pick a Frigate process instead: keep the damage in this unit.
-MemoryMax=1200M
+# Steady state is ~1.1 GB (measured 2026-11-16, two outputs + band). With its outputs dead
+# ffmpeg grew 25 MB/s (2026-11-15) and the LXC-wide OOM killer may pick a Frigate process
+# instead: keep the damage in this unit. 2000M since 2026-11-16 (the LXC went to 6 GB); at
+# 1200M the cap itself killed the composer 15 times that day.
+MemoryMax=2000M
 MemorySwapMax=0
 
 [Install]
