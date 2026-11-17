@@ -915,20 +915,32 @@ def render() -> Image.Image:
                 st, prev = prev, ""
             det = " · ".join(t for t in (re.sub(r"^CON-\d+\w?\s*", "", e["contrato"]).strip("—-– "), prev) if t)
             sw = dr.textlength(st, font=f_bs)
-            dl = wrap(dr, det, f_bs, int(tw - sw - 14))[:2] if det else []
+            # A short status sits on the right of the grey line. A long one ("'marcar a
+            # concretagem' é item do plano", 16/11/2026) left the grey text no room and was drawn
+            # over it: past half of the width the status takes its own line(s) under the grey text.
+            largo = sw > tw * 0.5
+            dw = tw if largo else int(tw - sw - 14)
+            dl = wrap(dr, det, f_bs, dw)[:2] if det else []
             if len(dl) == 2:
-                dl[1] = fit(dr, " ".join(wrap(dr, det, f_bs, int(tw - sw - 14))[1:]), f_bs, tw)
+                dl[1] = fit(dr, " ".join(wrap(dr, det, f_bs, dw)[1:]), f_bs, tw)
+            sl = wrap(dr, st, f_bs, tw)[:2] if largo else []
+            if len(sl) == 2:
+                sl[1] = fit(dr, " ".join(wrap(dr, st, f_bs, tw)[1:]), f_bs, tw)
             if draw:
                 dr.ellipse((xa, y + 9, xa + 14, y + 23), fill=c)
                 yy = y
                 for ln in lines:
                     dr.text((xa + 24, yy), ln, font=f_b, fill=FG)
                     yy += 28
-                dr.text((xb - sw, yy), st, font=f_bs, fill=c)
+                if not largo:
+                    dr.text((xb - sw, yy), st, font=f_bs, fill=c)
                 for ln in dl:
                     dr.text((xa + 24, yy), ln, font=f_bs, fill=DIM)
                     yy += 25
-            return 28 * len(lines) + 25 * max(1, len(dl)) + 9
+                for ln in sl:
+                    dr.text((xa + 24, yy), ln, font=f_bs, fill=c)
+                    yy += 25
+            return 28 * len(lines) + 25 * max(1, len(dl) + len(sl)) + 9
 
         secs = [("A RECEBER", falta, False), ("JÁ RECEBIDOS", feitos, True)]
         maxl = 4   # as many lines of text per item as the card has room for
