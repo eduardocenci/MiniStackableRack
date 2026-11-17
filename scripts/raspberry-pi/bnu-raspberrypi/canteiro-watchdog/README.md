@@ -87,6 +87,21 @@ não vê nada disso; vazio = só stdout). Tunáveis no env: `GO2RTC_FRAME`, `HLS
 `HLS_FAILS_TO_HEAL` (2), `MAX_HEAL_ATTEMPTS` (2), `HEAL_CONTAINERS`
 (`go2rtc,canteiro-hls`), `DOCKER_SOCK`.
 
+**Não aumentar `HLS_FAILS_TO_HEAL`** (testado em 17/11/2026, 5 ticks por ~45 min,
+revertido). Quando o feed do canteiro tem um buraco, o `canteiro-hls` derruba o
+mosaico e o compositor (`canteiro-mosaico`, LXC do Frigate) passa a reiniciar a
+cada ~70 s sem conseguir publicar — na queda das 09:34 foram 4 ciclos, e o mosaico
+só voltou 16 s depois de o heal reiniciar go2rtc + canteiro-hls. Com 5 ticks a
+tela ficou ~5 min fora; com 2, as quedas da mesma manhã duraram de 1 a 4,5 min. O heal é
+o remédio também para o mosaico, não um agravante. O journal do compositor na
+queda das 10:33 (17/11/2026) mostra por que ele não publica nesses ciclos: o
+ffmpeg sobe, não recebe nenhum quadro das entradas (`canteiro_fixa`/`canteiro`
+no go2rtc do Frigate) — "No filtered frames for output stream", 1 s de CPU em
+65 s — e o próprio script o encerra por "0 of 2 publisher connections". Ou seja,
+o mosaico depende de as duas lentes voltarem a entregar quadros; segurar o último
+quadro (ou o painel sozinho) durante o buraco seria uma mudança de desenho do
+compositor, não feita.
+
 Heal manual (o remédio do runbook em um comando):
 
 ```bash

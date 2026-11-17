@@ -127,9 +127,24 @@ answers 302 + a `Secure` cookie the receiver cannot keep) and has NO `/hls`
 prefix on `:8888` (that prefix exists only behind `tailscale serve`). When the composer restarts, the HLS muxer is recreated and the TV keeps
 flipping `buffering`/`playing` every ~11 s until the cast is started again —
 `automation.canteiro_na_tv_retomar_apos_travar` (bnu HA, id `canteiro_na_tv_retomar`,
-created through the config API 2026-11-14) reruns `script.canteiro_na_tv` after 8 s
-straight in `buffering` (seen firing 21:26). It does not retry: if the mosaic is
-still down when it fires, the TV ends `idle` until someone presses the button.
+created through the config API 2026-11-14) puts the cast back. Rewritten three
+times in the night test of 2026-11-17 (the TV was watched for 12 h, bytes pulled
+from `:8888` included, because HA's `media_position` does not move while playing):
+triggers = the TV enters `buffering`, or sits 10 s in `idle` — both only while the
+receiver still has `mosaico-tv` loaded (stopping the cast closes the app and clears
+the content id; a TV switched off is `off` and never triggers). Action = wait up to
+30 s for 20 s of steady `playing` (a healthy rebuffer passes here and nothing
+happens); otherwise rerun `script.canteiro_na_tv` and wait again (40 s), up to 40
+times, giving up when the TV goes `off` or shows something else. Why each piece:
+03:17 the single retry fired 7 s before the mosaic was back and the TV ended
+`idle`; 06:19 the TV went `playing` → `idle` with no `buffering` at all; 06:47,
+07:28 and 07:59 the player flipped `buffering`/`playing` for 5 min pulling only
+the playlist (18 kB/10 s) and then switched itself `off`, never adding up 8 s of
+`buffering` — that mode follows a canteiro-hls restart (the watchdog heal, which
+is what brings the mosaic back: see its README). The final version recovered the
+09:34 drop by itself (8 recasts, playing 26 s after the mosaic returned). Not covered: the TV going `off` on its own
+(01:36, stream healthy, cause unknown — Samsung auto power-off or a person).
+Previous versions: `C:/Users/eduar/wt/tv-noite/retomar-antes-1117*.json` (mia-desktop).
 Do NOT restart `canteiro-mosaico` repeatedly to test: two restarts within
 minutes made the canteiro-watchdog auto-heal restart go2rtc + canteiro-hls twice
 (🔧 🔧 🚨 on WhatsApp), after which the composer sat alive without publishing
