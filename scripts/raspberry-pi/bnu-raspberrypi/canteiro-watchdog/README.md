@@ -87,6 +87,16 @@ não vê nada disso; vazio = só stdout). Tunáveis no env: `GO2RTC_FRAME`, `HLS
 `HLS_FAILS_TO_HEAL` (2), `MAX_HEAL_ATTEMPTS` (2), `HEAL_CONTAINERS`
 (`go2rtc,canteiro-hls`), `DOCKER_SOCK`.
 
+**`HLS_FAILS_TO_HEAL=5` em produção desde 17/11/2026** (`env/canteiro-watchdog.env`
+no Pi; o padrão do código segue 2). Desde que o `/live` toca o mosaico, playlist
+fora do ar quase sempre é o compositor (`canteiro-mosaico`, LXC do Frigate)
+reiniciando depois de um buraco no feed do canteiro, e ele volta sozinho em até
+~75 s. Com 2 ticks o heal reiniciava go2rtc + canteiro-hls no meio dessa
+recuperação: em 17/11, 7 heals entre 06:26 e 09:11, cada um derrubando de novo o
+mosaico recém-voltado e deixando o Cast da TV de bnu preso (só baixava a playlist)
+até desligar — um buraco de ~20 s virava 3–5 min de tela fora. Com 5 ticks um wedge
+de verdade espera ~5 min pelo heal.
+
 Heal manual (o remédio do runbook em um comando):
 
 ```bash
