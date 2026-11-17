@@ -92,7 +92,7 @@ revertido). Quando o feed do canteiro tem um buraco, o `canteiro-hls` derruba o
 mosaico e o compositor (`canteiro-mosaico`, LXC do Frigate) passa a reiniciar a
 cada ~70 s sem conseguir publicar — na queda das 09:34 foram 4 ciclos, e o mosaico
 só voltou 16 s depois de o heal reiniciar go2rtc + canteiro-hls. Com 5 ticks a
-tela ficou ~5 min fora; com 2, as quedas da mesma manhã duraram 1–3 min. O heal é
+tela ficou ~5 min fora; com 2, as quedas da mesma manhã duraram de 1 a 4,5 min. O heal é
 o remédio também para o mosaico, não um agravante. Por que o compositor não
 consegue publicar antes do reinício do `canteiro-hls` não foi investigado.
 

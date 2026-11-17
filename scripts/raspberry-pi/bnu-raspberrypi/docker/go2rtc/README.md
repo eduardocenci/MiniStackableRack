@@ -142,7 +142,7 @@ times, giving up when the TV goes `off` or shows something else. Why each piece:
 the playlist (18 kB/10 s) and then switched itself `off`, never adding up 8 s of
 `buffering` — that mode follows a canteiro-hls restart (the watchdog heal, which
 is what brings the mosaic back: see its README). The final version recovered the
-09:34 drop by itself (6 recasts, playing 6 s after the mosaic returned). Not covered: the TV going `off` on its own
+09:34 drop by itself (8 recasts, playing 26 s after the mosaic returned). Not covered: the TV going `off` on its own
 (01:36, stream healthy, cause unknown — Samsung auto power-off or a person).
 Previous versions: `C:/Users/eduar/wt/tv-noite/retomar-antes-1117*.json` (mia-desktop).
 Do NOT restart `canteiro-mosaico` repeatedly to test: two restarts within
