@@ -140,8 +140,9 @@ times, giving up when the TV goes `off` or shows something else. Why each piece:
 `idle`; 06:19 the TV went `playing` → `idle` with no `buffering` at all; 06:47,
 07:28 and 07:59 the player flipped `buffering`/`playing` for 5 min pulling only
 the playlist (18 kB/10 s) and then switched itself `off`, never adding up 8 s of
-`buffering` — that mode followed a canteiro-hls restart by the watchdog heal (see
-its README, `HLS_FAILS_TO_HEAL`). Not covered: the TV going `off` on its own
+`buffering` — that mode follows a canteiro-hls restart (the watchdog heal, which
+is what brings the mosaic back: see its README). The final version recovered the
+09:34 drop by itself (6 recasts, playing 6 s after the mosaic returned). Not covered: the TV going `off` on its own
 (01:36, stream healthy, cause unknown — Samsung auto power-off or a person).
 Previous versions: `C:/Users/eduar/wt/tv-noite/retomar-antes-1117*.json` (mia-desktop).
 Do NOT restart `canteiro-mosaico` repeatedly to test: two restarts within

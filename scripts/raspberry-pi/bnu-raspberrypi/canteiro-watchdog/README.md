@@ -87,15 +87,14 @@ não vê nada disso; vazio = só stdout). Tunáveis no env: `GO2RTC_FRAME`, `HLS
 `HLS_FAILS_TO_HEAL` (2), `MAX_HEAL_ATTEMPTS` (2), `HEAL_CONTAINERS`
 (`go2rtc,canteiro-hls`), `DOCKER_SOCK`.
 
-**`HLS_FAILS_TO_HEAL=5` em produção desde 17/11/2026** (`env/canteiro-watchdog.env`
-no Pi; o padrão do código segue 2). Desde que o `/live` toca o mosaico, playlist
-fora do ar quase sempre é o compositor (`canteiro-mosaico`, LXC do Frigate)
-reiniciando depois de um buraco no feed do canteiro, e ele volta sozinho em até
-~75 s. Com 2 ticks o heal reiniciava go2rtc + canteiro-hls no meio dessa
-recuperação: em 17/11, 7 heals entre 06:26 e 09:11, cada um derrubando de novo o
-mosaico recém-voltado e deixando o Cast da TV de bnu preso (só baixava a playlist)
-até desligar — um buraco de ~20 s virava 3–5 min de tela fora. Com 5 ticks um wedge
-de verdade espera ~5 min pelo heal.
+**Não aumentar `HLS_FAILS_TO_HEAL`** (testado em 17/11/2026, 5 ticks por ~45 min,
+revertido). Quando o feed do canteiro tem um buraco, o `canteiro-hls` derruba o
+mosaico e o compositor (`canteiro-mosaico`, LXC do Frigate) passa a reiniciar a
+cada ~70 s sem conseguir publicar — na queda das 09:34 foram 4 ciclos, e o mosaico
+só voltou 16 s depois de o heal reiniciar go2rtc + canteiro-hls. Com 5 ticks a
+tela ficou ~5 min fora; com 2, as quedas da mesma manhã duraram 1–3 min. O heal é
+o remédio também para o mosaico, não um agravante. Por que o compositor não
+consegue publicar antes do reinício do `canteiro-hls` não foi investigado.
 
 Heal manual (o remédio do runbook em um comando):
 
