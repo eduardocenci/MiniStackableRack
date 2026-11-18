@@ -866,6 +866,26 @@ so plain `ssh` works non-interactively.
 | GL-KVM | `<region>-glkvm` | SSH → web `http://<host>` | `root` | **key**, else `GLKVM_PW` | Runs **dropbear**: keys live in `/etc/dropbear/authorized_keys`, not just `~/.ssh`. SFTP may fail → devtool falls back to base64 |
 | Synology NAS | `mia-nas-ds918plus` (alias `mia-nas`) | SSH → DSM web `:5000` | `MIA_NAS_SSH_LOGIN` | **key**, else `MIA_NAS_SSH_PW` | Only at mia. Docker still needs root: `echo $PW \| sudo -S docker …`; compose is v1 at `/usr/local/bin/docker-compose` |
 
+**bnu-glkvm — what it can and cannot do (2026-11-18).** When it drops off the
+tailnet (it was off for 9 days until the rack power cycle of 2026-11-18) it is
+still alive on the LAN at `10.1.1.122` (GL.iNet OUI): hop through
+`bnu-raspberrypi` — paramiko `direct-tcpip` channel from
+`devtool.ssh_client("bnu-raspberrypi")` to `10.1.1.122:22`, then `root` with
+the key (dropbear) or `GLKVM_PW`. The kvmd API answers on the unix socket
+`/run/kvmd/kvmd.sock` (`curl --unix-socket … -H "X-KVMD-User: admin" -H
+"X-KVMD-Passwd: $GLKVM_PW" http://localhost/atx`, `/hid`, `/streamer`). **It
+has no ATX board** (`/atx` → `enabled: false`): it cannot press the power or
+reset button of bnu-proxmox. And when the host hangs during shutdown the USB
+gadget and the HDMI signal drop — HID writes fail and there is no video — so
+the virtual keyboard does not reach it either. **There is no remote power
+control in the bnu rack**: a host stuck at shutdown needs someone at the
+physical button. Precedent: with ~570 `ffmpeg` in uninterruptible D state on
+the amdgpu (`amdgpu_vm_init` / `dma_fence_wait`), `pct reboot 105` timed out
+with the container half-dead and holding its lock, and the host reboot then
+hung at shutdown (ping answered, 22/8006 closed) until the rack was power
+cycled by hand. With processes stuck in D on the GPU, do not reboot the LXC or
+the host by software unless someone is on site.
+
 **Rule:** use the highest-priority interface that works, and fall back down the
 list. Never open a browser unless every CLI/API option is exhausted.
 
