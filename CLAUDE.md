@@ -15,7 +15,7 @@ Root
 └── scripts/
     ├── devtool.py              THE entry point for reaching any device (see REMOTE_ACCESS.md)
     ├── proxmox/                MiniPC runs Proxmox (hypervisor)
-    │   ├── <site>-proxmox/     Host-level config (lxc/, udev/)
+    │   ├── <site>-proxmox/     Host-level config (lxc/, udev/; bnu: gpu-vigia/ — amdgpu hang watcher, systemd timer on the host)
     │   ├── homeassistant/      Home Assistant OS runs as a VM on Proxmox
     │   │   └── <site>-homeassistant/
     │   ├── docker/             Docker host on Proxmox — one folder per deployment, one subfolder per container

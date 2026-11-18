@@ -81,6 +81,10 @@ go2rtc + canteiro-hls não a traz de volta — o remédio aí é o serviço
 (`python scripts/devtool.py run bnu-proxmox "pct exec 105 -- systemctl
 status canteiro-mosaico"`; ver
 [`../../../proxmox/frigate/bnu-frigate/README.md`](../../../proxmox/frigate/bnu-frigate/README.md)).
+O caso que este watchdog não cura nem vê — a GPU do host travada, com `ffmpeg`
+empilhando em estado D (17/11/2026, `/live` ~16 h sem mosaico) — tem vigia
+próprio no host desde 18/11/2026:
+[`gpu-vigia`](../../../proxmox/bnu-proxmox/gpu-vigia/README.md).
 
 Notas de heal/escalação vão a `HEAL_JID` (**Casa SmokeTests** — a família
 não vê nada disso; vazio = só stdout). Tunáveis no env: `GO2RTC_FRAME`, `HLS_URL`,

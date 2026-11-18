@@ -291,7 +291,9 @@ canteiro-painel PNG (every 30 s) ─▶ one-shot ffmpeg ─▶ raw ────�
   `canteiro-clipe` needed) and it restarts only that lens' feeder.
 - **A child that survives SIGKILL** (the amdgpu hang of 2026-11-17: every ffmpeg that opened
   `renderD128` sat in state D, one more every 90 s): nothing is started in its place while
-  it lives; one log line every 10 min.
+  it lives; one log line every 10 min. Since 2026-11-18 the host watches for that hang
+  itself — [`gpu-vigia`](../../bnu-proxmox/gpu-vigia/README.md) stops this unit and alerts
+  the Casa SmokeTests group; the cure is still a host reboot.
 
 What still shows the mediamtx card instead of the last frame: a source that ENDS upstream
 (camera/relay EOF) — `canteiro-hls` then feeds its own "Sem sinal" card, which reaches the
