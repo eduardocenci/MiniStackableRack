@@ -328,9 +328,18 @@ D); the pump took ~7 % of a core. The "back by itself" times are the feeder's re
 pause + up to 10 s of RTSP timeout) plus the first keyframe; no watchdog, nothing restarted
 by hand.
 
-Not covered by the bench (software only): VAAPI decode/encode in three processes instead
-of one, and the memory/CPU of the real thing — measure at deploy
-(`systemctl status canteiro-mosaico`, `top`).
+**In production since 2026-11-18 12:43 BRT** (LXC 105, after the host reboot that cleared
+the hung amdgpu; previous script kept as `/usr/local/bin/canteiro-mosaico.sh.bak-20261118`,
+`canteiro-mosaico-cinza.py.bak-20261118`, `/root/canteiro-mosaico.service.bak-20261118`).
+VAAPI in three processes works: 2 publishers, 15 fps, unit memory ~410–435 MB (limit
+2000 M), ~0.5 core in all. Two provoked holes (`kill -STOP` on both feeders):
+
+| Provoked hole | What happened |
+|---|---|
+| 30 s, both lenses | both halves held + "SEM SINAL · último quadro 12:44:31" after 5 s; `frames again after 30 s` on `kill -CONT`; encoder never restarted, 2 publishers throughout |
+| 70 s asked, both lenses | the composer itself killed the mute feeders at 30 s (`feeder up 30 s without a frame - restarting it`) and the picture was back at 35 s; `mosaico` and `mosaico-tv` playlists on bnu-raspberrypi went from media sequence 35 to 66 in 125 s — one segment every ~4 s, no gap; `canteiro-watchdog` logged nothing (no heal) |
+
+Still to observe: a night of real uplink holes against the watchdog's heal count.
 
 ## canteiro-clipe — mosaic rolling buffer + clips on demand (added 2026-11-14)
 
