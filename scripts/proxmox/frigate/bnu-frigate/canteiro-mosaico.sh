@@ -1,181 +1,32 @@
 #!/bin/bash
-# canteiro-mosaico — composes THE live view of the ARA canteiro: fixed lens
-# (left, street side) | PT lens (right, parked at its rest position), side by
-# side — the "almost 180°" view (pedido Eduardo 2026-11-14).
+# canteiro-mosaico - THE live view of the ARA canteiro: fixed lens (left, street side) | PT lens
+# (right, parked at rest), side by side (pedido Eduardo 2026-11-14), plus `mosaico-tv` with the
+# canteiro-painel data band under it (2026-11-15).
 #
 # Authoritative copy: scripts/proxmox/frigate/bnu-frigate/canteiro-mosaico.sh
 # Live copy:          bnu Frigate LXC 105:/usr/local/bin/canteiro-mosaico.sh
 #                     (unit: canteiro-mosaico.service, same folder)
 #
-# Runs in the Frigate LXC because that is where the GPU is (Ryzen 6800H,
-# VAAPI) and where both HEVC mains already arrive for `record` — it reads
-# Frigate's own go2rtc producers, so the canteiro's Starlink carries nothing
-# extra. Decodes 2x HEVC 2304x1296 on the GPU, scales + hstacks on the CPU
-# and encodes H.264 2560x720 15 fps ~3 Mbps on the GPU: ~27 % of one core
-# (measured). The all-GPU graph (scale_vaapi + hstack_vaapi) runs out of
-# surfaces on this Mesa 22.3 ("Cannot allocate memory" after 11 frames).
-# Timestamps are the streams' own (each RTSP input starts at 0 when opened), NOT
-# -use_wallclock_as_timestamps: ffmpeg 7 chokes the demuxer whose timestamps run
-# ahead, and with read-time stamps every choke became latency that never drained
-# (left half 15-30 s behind the right one, measured 2026-11-14). With the real
-# clocks the halves stay a constant ~1-3 s apart (the time input 1 takes to open).
+# Since 2026-11-18 the composer itself is canteiro-mosaico.py (same folder; design and reasons in
+# its docstring and in the README): one feeder ffmpeg per lens, a 15 fps pump that repeats the
+# last frame of a lens that stopped, and an encoder ffmpeg with no network input - so a hole in
+# the canteiro feed no longer takes the picture down. Until then this file WAS the composer: one
+# ffmpeg with both lenses in one filter graph, which stops emitting when either input stops
+# (git log has it, with the history of its fixes).
 #
-# Publishes to canteiro-hls (mediamtx) on bnu-raspberrypi, path `mosaico` —
-# a publisher, not a go2rtc `exec:` source, for two reasons: Frigate refuses
-# exec sources unless GO2RTC_ALLOW_ARBITRARY_EXEC is set (left alone), and a
-# publisher that dies is a clean EOF for mediamtx's readers instead of the
-# timestamp jump go2rtc hands its consumers when it swaps a producer.
-# Second output, path `mosaico-tv`: the same picture at 1920x540 ~2 Mbps for the
-# TV cast — the Neo QLED's Google Cast receiver refuses H.264 2560 px wide
-# (2026-11-14, seen on the physical TV: player `idle`, no request made).
-# Since 2026-11-15 `mosaico-tv` is 16:9: the mosaic on top and, under it, the live
-# data band of canteiro-painel (bnu-raspberrypi :8557 — Wi-Fi devices, gate tags,
-# deliveries, week plan; pedido Eduardo 15/11/2026) -> 1920x1080. A shell loop
-# fetches the PNG every 30 s into /run (atomic rename, only a complete PNG
-# replaces the last good one); ffmpeg reads it as a third input with
-# `-re -f image2 -loop 1`, which re-opens the file for every frame (without -re
-# the demuxer reads far ahead and the picture never changes — measured). Panel
-# unreachable = the last good picture stays; never fetched = a black band.
-# `mosaico` (the /live video, watchdog frame, canteiro-clipe) stays 2560x720.
-# Any input EOF/stall (15 s) ends ffmpeg; systemd restarts it 5 s later.
-# A dead OUTPUT does not: with two outputs, ffmpeg 7 logs "Broken pipe" on both
-# muxers and stays alive publishing nothing (seen 2026-11-14 and 15, every time
-# the watchdog's auto-heal restarted canteiro-hls: mosaic down until a manual
-# restart). So ffmpeg runs in the background and this script watches its two
-# publisher connections to mediamtx: fewer than two in 2 readings 5 s apart
-# (after 60 s of start-up grace) = kill it and let systemd start a fresh one.
-# It was 30 s until 2026-11-15: that day at 14:15 BRT ffmpeg DID see the broken
-# pipes, ended its two muxer threads and kept decoding and compositing into a
-# queue nobody drained - 0.8 -> 1.4 GB in 28 s, and the LXC's 4 GB memory limit
-# (Frigate alone keeps it at ~3.9 GB) killed it before the watch got there.
-# ffmpeg never reconnects an RTSP output, so waiting buys nothing. The unit also
-# carries MemoryMax, so a runaway composer is killed inside its own cgroup and
-# the kernel never has to pick a Frigate process instead.
-# A GREY HALF does not end it either: when the VAAPI HEVC decoder loses its
-# reference frames (it happened right after two restarts in a row, 2026-11-15
-# 06:34 and 12:07 BRT) it paints most of that lens as a flat mid-grey slab and
-# never recovers — keyframes included; a separate software decode of the same
-# stream was whole. The picture stayed like that for 2 h and for 1 h 15 until
-# someone looked. So every 30 s the watch also decodes ONE frame of the newest
-# complete segment canteiro-clipe keeps of `mosaico` (local file, software, a few
-# ms of CPU) and hands it to canteiro-mosaico-cinza.py: a half with >= 30 % of
-# flat neutral-grey cells in 3 checks in a row (90 s) = exit and let systemd start
-# a fresh decoder. At most 3 such restarts per hour (epochs in /run) — beyond
-# that it only logs, because a restart storm takes the stream down for the
-# watchdog (auto-heal cascade, 2026-11-14). No segment / same segment / clipe
-# down = no verdict, nothing counted. `canteiro-mosaico.sh --cinza` runs the
-# check once against the live buffer and prints the shares (diagnosis).
-F=/usr/lib/ffmpeg/7.0/bin/ffmpeg
+# This wrapper only keeps the unit's ExecStart and the diagnosis below stable:
+#   canteiro-mosaico.sh --cinza   one grey-half check against what is being PUBLISHED (the newest
+#                                 complete segment canteiro-clipe keeps of `mosaico`); prints the
+#                                 shares, exit 1 = a half is grey, 2 = no verdict. The running
+#                                 composer checks each lens on its own frames, without clipe.
+F=${FFMPEG:-/usr/lib/ffmpeg/7.0/bin/ffmpeg}
 CLIPE=${CLIPE_DIR:-/var/lib/canteiro-clipe}
 CINZA=${CINZA:-/usr/local/bin/canteiro-mosaico-cinza.py}
-GREY_LOG=/run/canteiro-painel/cinza-restarts
-GREY_MAX=${GREY_MAX:-3}
-START=$(date +%s)
-LAST_SEG=
-grey_check() {   # 0 healthy, 1 a half is grey, 2 no verdict; message in GREY_MSG
-  local seg ts
-  seg=$(ls -1 "$CLIPE"/*.ts 2>/dev/null | tail -n 2 | head -n 1)
-  [ -n "$seg" ] && [ "$seg" != "$LAST_SEG" ] || return 2
-  ts=$(basename "$seg" .ts)
-  [ "$ts" -gt $((START + 30)) ] 2>/dev/null || return 2
-  LAST_SEG=$seg
-  GREY_MSG=$("$F" -v error -i "$seg" -frames:v 1 -vf scale=640:180 -pix_fmt yuv444p -f rawvideo - 2>/dev/null | python3 "$CINZA")
-}
 if [ "$1" = "--cinza" ]; then
-  START=0
-  grey_check; rc=$?
-  echo "${GREY_MSG:-cinza: no verdict} (segment $(basename "${LAST_SEG:-none}"), rc=$rc)"
+  seg=$(ls -1 "$CLIPE"/*.ts 2>/dev/null | tail -n 2 | head -n 1)
+  [ -n "$seg" ] || { echo "cinza: no verdict (no segment in $CLIPE)"; exit 2; }
+  msg=$("$F" -v error -i "$seg" -frames:v 1 -vf scale=640:180 -pix_fmt yuv444p -f rawvideo - 2>/dev/null | python3 "$CINZA"); rc=$?
+  echo "${msg:-cinza: no verdict} (segment $(basename "$seg"), rc=$rc)"
   exit $rc
 fi
-PAINEL_URL=${PAINEL_URL:-http://10.1.1.123:8557/painel.png}
-PAINEL=/run/canteiro-painel/painel.png
-mkdir -p /run/canteiro-painel
-[ -s "$PAINEL" ] || "$F" -hide_banner -loglevel error -f lavfi -i color=black:s=1920x540 -frames:v 1 -y "$PAINEL"
-painel_loop() {
-  while true; do
-    if curl -fsS -m 10 -o "$PAINEL.tmp" "$PAINEL_URL" 2>/dev/null \
-       && [ "$(head -c 4 "$PAINEL.tmp" | od -An -tx1 | tr -d ' ')" = 89504e47 ] \
-       && [ "$(tail -c 8 "$PAINEL.tmp" | od -An -tx1 | tr -d ' ')" = 49454e44ae426082 ]; then
-      mv -f "$PAINEL.tmp" "$PAINEL"
-    fi
-    sleep 30
-  done
-}
-painel_loop &
-LOOP=$!
-IN="-hwaccel vaapi -hwaccel_device va -rtsp_transport tcp -timeout 15000000 -analyzeduration 1000000"
-# Each lens is put on the wall clock as its frames leave the decoder ($NOW), not on
-# its stream's own clock. hstack pairs frames by timestamp and ffmpeg zeroes each input at ITS
-# first frame, so a lens that connects N seconds after the other stayed N seconds ahead for the
-# life of the process - the other half was shown N seconds late and N seconds of its frames sat
-# in memory ("100 buffers queued"). The lag was whatever the start-up race gave: ~2 s on a calm
-# start, 14 s on 2026-11-15 20:11 BRT, when the composer came back right after canteiro-hls
-# (which the fixed lens depends on) restarted. Measured with a 12 s staggered start on the sub
-# streams: 15 s apart without this, same second with it. (The demuxer-level
-# -use_wallclock_as_timestamps is NOT the same thing - see above.)
-#
-# 2026-11-16: stamping EVERY frame with the wall clock froze the picture. The lenses reach this
-# host in bursts (the site uplink: measured gaps of up to 1.1 s, then 15-25 frames glued
-# together), so the frames of a burst got the same instant and fps=15 threw them away, then
-# repeated the last one through the gap - half of the output frames were repeats, 0.5-1 s
-# freezes several times in 10 s. Now only the FIRST frame of a lens takes the wall clock (the
-# common zero that keeps the lenses together); after it each frame advances by the camera's
-# own interval and is pulled 1 % per frame towards the wall clock (time constant ~7 s), which
-# absorbs the bursts and still closes any offset left by the start-up burst or by drift.
-# A timestamp that goes back or jumps > 5 s (source reconnected) takes the wall clock again.
-# So does a lens that got more than 5 s away from the wall clock: on 2026-11-16 the PT lens
-# started with a 30 s backlog on the site uplink and the slow pull took a minute to close it,
-# with 30 s of the other lens' frames held in memory meanwhile. Above 5 s the lens snaps
-# (forward: the gap shows as a freeze of that half; behind: its frames are dropped until the
-# clock catches up), so the halves are never more than ~5 s apart. The limit was 2 s for a
-# few hours that day: in 15 min the lenses had 190 pauses >= 1 s on the way from the site, 30
-# of them over 2 s (1 over 4 s), and each of those 30 snapped and froze its half 0.5-0.7 s.
-# Measured on one lens, 20 s: max gap 1.14 s / 24 glued frames before, 0.11 s / 0 after.
-W="(RTCTIME-RTCSTART)/(TB*1000000)"
-T="(PREV_OUTPTS+PTS-PREV_INPTS)"
-NOW="setpts='if(eq(N,0)+lte(PTS,PREV_INPTS)+gt(PTS-PREV_INPTS,5/TB)+gt(abs($W-$T),5/TB),max($W,if(eq(N,0),0,PREV_OUTPTS+1)),$T+0.01*($W-$T))'"
-"$F" -hide_banner -loglevel warning -nostdin \
-  -init_hw_device vaapi=va:/dev/dri/renderD128 -filter_hw_device va \
-  $IN -i rtsp://127.0.0.1:8554/canteiro_fixa \
-  $IN -i rtsp://127.0.0.1:8554/canteiro \
-  -re -f image2 -loop 1 -framerate 1 -i "$PAINEL" \
-  -filter_complex "[0:v]$NOW,fps=15,scale=1280:720[l];[1:v]$NOW,fps=15,scale=1280:720[r];[l][r]hstack=inputs=2,split=2[a][b];[a]format=nv12,hwupload[v];[b]scale=1920:540,format=yuv420p[m];[2:v]fps=15,scale=1920:540,format=yuv420p[p];[m][p]vstack=inputs=2,format=nv12,hwupload[t]" \
-  -map "[v]" -c:v h264_vaapi -profile:v high -b:v 3M -maxrate 4M -g 30 -an \
-  -rtsp_transport tcp -f rtsp rtsp://10.1.1.123:8555/mosaico \
-  -map "[t]" -c:v h264_vaapi -profile:v high -b:v 3M -maxrate 4M -g 30 -an \
-  -rtsp_transport tcp -f rtsp rtsp://10.1.1.123:8555/mosaico-tv &
-PID=$!
-trap 'kill $PID $LOOP 2>/dev/null' EXIT TERM INT
-sleep 60 & wait -n $PID $! && true
-bad=0
-grey=0
-tick=0
-while kill -0 $PID 2>/dev/null; do
-  n=$(ss -Htnp state established dst 10.1.1.123:8555 2>/dev/null | grep -c "pid=$PID,")
-  if [ "$n" -ge 2 ]; then bad=0; else bad=$((bad + 1)); fi
-  if [ "$bad" -ge 2 ]; then
-    echo "canteiro-mosaico: $n of 2 publisher connections for 10 s - restarting" >&2
-    exit 1
-  fi
-  tick=$((tick + 1))
-  if [ $((tick % 6)) -eq 0 ]; then
-    grey_check
-    case $? in
-      0) grey=0 ;;
-      1) grey=$((grey + 1)) ;;
-    esac
-    if [ "$grey" -ge 3 ]; then
-      now=$(date +%s)
-      recent=$(awk -v t=$((now - 3600)) '$1 > t' "$GREY_LOG" 2>/dev/null)
-      if [ "$(printf '%s' "$recent" | grep -c .)" -lt "$GREY_MAX" ]; then
-        { [ -n "$recent" ] && printf '%s' "$recent" && echo; echo "$now"; } > "$GREY_LOG"
-        echo "canteiro-mosaico: grey half for 90 s ($GREY_MSG) - restarting" >&2
-        exit 1
-      fi
-      [ "$grey" -eq 3 ] && echo "canteiro-mosaico: grey half ($GREY_MSG) but $GREY_MAX restarts in the last hour - leaving it" >&2
-    fi
-  fi
-  sleep 5 & wait -n $PID $! && true
-done
-wait $PID
-exit 1
+exec /usr/bin/python3 "${MOSAICO_PY:-/usr/local/bin/canteiro-mosaico.py}"

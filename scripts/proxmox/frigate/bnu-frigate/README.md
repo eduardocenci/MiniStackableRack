@@ -132,14 +132,13 @@ both HEVC 2304×1296 mains already arrive for `record`: it reads Frigate's
 own go2rtc (`rtsp://127.0.0.1:8554/canteiro_fixa` and `/canteiro`), so the
 canteiro's Starlink carries nothing extra.
 
-- **Pipeline** ([`canteiro-mosaico.sh`](canteiro-mosaico.sh), rationale in its
-  header): VAAPI decode of both mains → CPU `fps=15,scale=1280:720` +
-  `hstack` → `h264_vaapi` → **H.264 2560×720, 15 fps, ~3 Mbps**, no audio;
-  ~27 % of one core (measured). The all-GPU graph (`scale_vaapi` +
-  `hstack_vaapi`) ran out of VAAPI surfaces on this Mesa 22.3. Timestamps
-  are the streams' own clocks, not `-use_wallclock_as_timestamps` (ffmpeg 7
-  choked the demuxer and one half fell 15–30 s behind) — the halves stay a
-  constant ~1–3 s apart.
+- **Pipeline** — since 2026-11-18 [`canteiro-mosaico.py`](canteiro-mosaico.py), three ffmpeg
+  processes around a 15 fps pump (see *canteiro-mosaico: holds the last frame* below). Per
+  lens: VAAPI decode of the main → CPU `fps=15,scale=1280:720` → raw frames; the encoder
+  stacks them and encodes with `h264_vaapi` → **H.264 2560×720, 15 fps, ~3 Mbps**, no audio.
+  The all-GPU graph (`scale_vaapi` + `hstack_vaapi`) ran out of VAAPI surfaces on this Mesa
+  22.3. (Until 2026-11-18: one ffmpeg, both lenses in one filter graph —
+  `canteiro-mosaico.sh`, in the git history.)
 - **Output**: published over RTSP to `canteiro-hls` (mediamtx) on
   bnu-raspberrypi, `rtsp://10.1.1.123:8555/mosaico` — from there the `/live`
   page (`/hls/mosaico`), go2rtc `canteiro_mosaico` (TV cast, watchdog frame).
@@ -148,12 +147,14 @@ canteiro's Starlink carries nothing extra.
   `exec:` sources unless `GO2RTC_ALLOW_ARBITRARY_EXEC` is set (left alone),
   and a publisher that dies is a clean EOF for mediamtx's readers.
   **`config.yml` is unchanged** by the mosaic.
-- **Failure mode**: any input EOF or 15 s stall ends ffmpeg; systemd restarts
-  it 5 s later (`Restart=always`).
+- **Failure mode**: a lens that stops (EOF, or 10 s without packets) only restarts its own
+  feeder; the picture keeps going out with that half held on its last frame. The whole unit
+  restarts only if the pump itself dies (`Restart=always`, 5 s).
 
 | File | Live copy (LXC 105) |
 |---|---|
-| [`canteiro-mosaico.sh`](canteiro-mosaico.sh) | `/usr/local/bin/canteiro-mosaico.sh` (755) |
+| [`canteiro-mosaico.sh`](canteiro-mosaico.sh) | `/usr/local/bin/canteiro-mosaico.sh` (755) — the unit's `ExecStart`: starts the `.py`; `--cinza` = diagnosis |
+| [`canteiro-mosaico.py`](canteiro-mosaico.py) | `/usr/local/bin/canteiro-mosaico.py` (755) — the composer since 2026-11-18 |
 | [`canteiro-mosaico-cinza.py`](canteiro-mosaico-cinza.py) | `/usr/local/bin/canteiro-mosaico-cinza.py` (755) |
 | [`canteiro-mosaico.service`](canteiro-mosaico.service) | `/etc/systemd/system/canteiro-mosaico.service` (enabled; `After=go2rtc.service`) |
 
@@ -240,6 +241,96 @@ web UI (use Edge/Safari or export).
   0.67–0.82 on every sample of an hour of buffer, healthy halves 0.00 (daylight; night not
   yet sampled). Check by hand: `canteiro-mosaico.sh --cinza` (prints the shares; exit 1 = grey).
   It needs `canteiro-clipe` running — no segment = no verdict.
+
+## canteiro-mosaico: holds the last frame (2026-11-18)
+
+**The problem.** On the night of 16–17/11/2026 the mosaic on the bnu TV dropped 20 times in
+15 h. Every drop was a hole in the canteiro feed (Starlink uplink, camera off its LAN): the
+single ffmpeg had both lenses in one filter graph, and a graph only emits a frame when every
+input has one — so the output stopped with the input, mediamtx closed both publisher sessions
+after 10 s without RTP ("0 of 2 publisher connections"), the restarted ffmpeg got no frame
+either ("No filtered frames for output stream", 1 s of CPU in 65 s), and the cycle repeated
+every ~70 s until the `canteiro-watchdog` healed go2rtc + canteiro-hls, 1 to 7 min later.
+`alwaysAvailable` on the lens paths does not cover it: the card only comes in when mediamtx
+sees the source END, and during a stall the source is connected and silent. No ffmpeg option
+fixes it inside one process — a stalled live input cannot be told from a slow one, and an
+input that ended is never reopened.
+
+**The design** ([`canteiro-mosaico.py`](canteiro-mosaico.py), stdlib Python; rationale in its
+docstring). The output no longer depends on any input being alive:
+
+```
+go2rtc canteiro_fixa ─▶ feeder ffmpeg (decode, fps=15, 1280×720, raw) ─pipe─┐
+go2rtc canteiro ──────▶ feeder ffmpeg (same) ───────────────────────pipe─┤
+canteiro-painel PNG (every 30 s) ─▶ one-shot ffmpeg ─▶ raw ───────────────┤
+                                                                          ▼
+                       PUMP — 15 fps clock: next frame of each lens, or its LAST one again
+                                                                          │ one raw stream, 1280×2520
+                                                                          ▼
+                       encoder ffmpeg (stdin only) ─▶ h264_vaapi ×2 ─▶ mosaico, mosaico-tv
+```
+
+- **Feeder, one per lens.** Ends on EOF or 10 s without packets; the pump starts another 3 s
+  later, for ever. Nothing else is touched.
+- **Pump.** Each lens has a small jitter queue (plays ~12 % faster above 0.5 s of backlog,
+  jumps to the newest frames above 3 s — the bursts of the site uplink). Queue empty = the
+  last frame again. After **5 s** without a new frame that half is dimmed and labelled
+  **"SEM SINAL · último quadro HH:MM:SS"** (Brasília time of the last frame; "SEM SINAL" on a
+  dark half if there was never one). The next frame clears it. No pixel work in Python: the
+  two lenses and the panel (folded to 1280 px wide) have the same width, so their planes are
+  just concatenated into one frame; the dimmed copy is made once per outage.
+- **Encoder.** One raw input on stdin, no network input, no clock of its own: every filter
+  sees the same timestamps, so there is nothing to stall or drift (the panel's
+  `-re -f image2` input and the wall-clock `setpts` of the lenses went away with the single
+  process). The label is `drawtext` reading `/run/canteiro-painel/sem-sinal-{fixa,pt}.txt`.
+  Restarted alone (5 s, nothing to reopen) when it loses its publishers (`ss`, 2 readings
+  5 s apart after 20 s of grace — what a restart of `canteiro-hls` causes), exits, or stops
+  reading its pipe for 3 s.
+- **Grey half** — same test and limits as 2026-11-15 (`canteiro-mosaico-cinza.py`, ≥ 30 % of a
+  lens' cells in 3 checks 30 s apart, max 3 restarts/h), but on the lens' own frames (no
+  `canteiro-clipe` needed) and it restarts only that lens' feeder.
+- **A child that survives SIGKILL** (the amdgpu hang of 2026-11-17: every ffmpeg that opened
+  `renderD128` sat in state D, one more every 90 s): nothing is started in its place while
+  it lives; one log line every 10 min.
+
+What still shows the mediamtx card instead of the last frame: a source that ENDS upstream
+(camera/relay EOF) — `canteiro-hls` then feeds its own "Sem sinal" card, which reaches the
+composer as ordinary frames. The held frame covers the stalls, which is what took the
+picture down.
+
+**State**: `cat /run/canteiro-painel/mosaico-estado.json` (every 5 s — per lens `live`,
+`last_frame_age_s`, `feeder_exits`, `label`; encoder `starts`, `publishers`; `painel_age_s`).
+The journal has one line per transition (`lens pt: no frame for 5 s - holding the last one
+(14:32:10 BRT)` / `lens pt: frames again after 213 s`).
+
+```bash
+python scripts/devtool.py guest bnu 105 "cat /run/canteiro-painel/mosaico-estado.json; journalctl -u canteiro-mosaico -n 20 --no-pager"
+```
+
+**Bench test** — [`teste-buraco.sh`](teste-buraco.sh): synthetic lenses, software codecs, two
+local mediamtx (one as Frigate's go2rtc, one as `canteiro-hls`, same HLS settings), away
+from production. Four phases with 75 s holes: one lens stalled (publisher SIGSTOPped —
+connection up, no packets), both ended (EOF), both stalled, then the "canteiro-hls" side
+restarted. Result of 2026-11-18 (WSL, ffmpeg 4.2 + mediamtx 1.20.1; the encoder's filter
+graph also run on ffmpeg 7.0):
+
+| Phase (75 s hole) | Picture during the hole | Back by itself |
+|---|---|---|
+| A — fixed lens stalled | fixed half held + dimmed + "SEM SINAL · último quadro 10:34:48"; PT half live | 10 s after the feed returned |
+| B — both lenses ended (EOF) | both halves held + labelled; panel live | 6 s |
+| C — both lenses stalled | both halves held + labelled; panel live | 13 s |
+| D — "canteiro-hls" restarted | — (the server itself is down) | encoder restarted alone; publishing again ~10 s after the server was back |
+
+Across A–C (351 s): **86 HLS segments of `mosaico-tv`, one every ~4 s without a gap**; the
+bytes of an RTSP reader never stood still for more than 2 s and it was **the same reader
+connection from start to end**; **the encoder was started once** (the second start is phase
+D); the pump took ~7 % of a core. The "back by itself" times are the feeder's retry (3 s
+pause + up to 10 s of RTSP timeout) plus the first keyframe; no watchdog, nothing restarted
+by hand.
+
+Not covered by the bench (software only): VAAPI decode/encode in three processes instead
+of one, and the memory/CPU of the real thing — measure at deploy
+(`systemctl status canteiro-mosaico`, `top`).
 
 ## canteiro-clipe — mosaic rolling buffer + clips on demand (added 2026-11-14)
 

@@ -102,6 +102,16 @@ o mosaico depende de as duas lentes voltarem a entregar quadros; segurar o últi
 quadro (ou o painel sozinho) durante o buraco seria uma mudança de desenho do
 compositor, não feita.
 
+**Essa mudança de desenho foi feita em 18/11/2026** (`canteiro-mosaico.py`: um
+alimentador por lente, uma bomba de 15 fps que repete o último quadro e um
+codificador sem entrada de rede — ver "holds the last frame" em
+[`../../../proxmox/frigate/bnu-frigate/README.md`](../../../proxmox/frigate/bnu-frigate/README.md)).
+Com ela no ar, um buraco no feed deixa a metade parada e marcada "SEM SINAL ·
+último quadro HH:MM:SS" e o mosaico segue sendo publicado: a playlist vigiada não
+some, e o heal deixa de ser o remédio do mosaico (continua sendo o do go2rtc e do
+canteiro-hls). Os parágrafos acima descrevem o compositor de processo único que
+rodou até essa troca.
+
 Heal manual (o remédio do runbook em um comando):
 
 ```bash
