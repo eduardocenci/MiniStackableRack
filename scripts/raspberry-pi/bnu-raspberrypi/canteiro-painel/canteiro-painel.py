@@ -7,7 +7,8 @@ missing half: a 1920x540 PNG with five blocks, redrawn every minute —
   NA REDE AGORA       who is on the site Wi-Fi (ara netoverview /api/devices; fixed devices apart)
   PORTÃO              last gate passes by tag (condfy.db in the bnu docker LXC, via bnu-proxmox)
                       (these two share the first column, one above the other — Eduardo 15/11/2026)
-  VENCIMENTOS         titles falling due in the next 7 days + the ones overdue up to 7 days and
+  VENCIMENTOS         titles falling due in the next 7 days (the ones with no payment scheduled
+                      first, item by item) + the ones overdue up to 7 days and
                       still open, each "agendado DD/MM" (a scheduling slip was filed) or "sem
                       agendamento" (sheet tab Financeiro, same spreadsheet as the plan)
   ENTREGAS            deliveries of the last Diário de Obra (Drive Diario/<date>/diario.json)
@@ -794,9 +795,11 @@ def render() -> Image.Image:
             dr.text((xa, y), fit(dr, f"{quando} · {t['o_que']}", f_bs, int(xb - xa - sw - 34)), font=f_bs, fill=DIM)
             y += 29
 
-        # What needs someone's attention comes first: overdue without a payment scheduled (red),
-        # then falling due without one (amber). A title already scheduled (green) is drawn only
-        # in the room the others leave - hidden ones are counted in the section's "+ N" line.
+        # What can still be acted on in time comes first (pedido Eduardo 18/11/2026): titles
+        # FALLING DUE without a payment scheduled (amber), item by item, soonest first - then the
+        # overdue ones without one (red), which until then took every visible row. A title already
+        # scheduled (green) is drawn only in the room the others leave. Hidden ones are counted in
+        # the section's "+ N" line, coloured when some of them have no payment scheduled.
         secs = [("A VENCER", avencer, False), (f"VENCIDOS SEM BAIXA — ÚLTIMOS {VENC_ATRAS} DIAS", vencidos, True)]
         pick: list[set[int]] = [set(), set()]
 
@@ -808,8 +811,8 @@ def render() -> Image.Image:
                 h += 27 + (57 * len(k) + (26 if len(k) < len(lista) else 0) if lista else 30) + 4
             return h
 
-        fila = ([(1, i) for i, t in enumerate(vencidos) if not t["agendado"]]
-                + [(0, i) for i, t in enumerate(avencer) if not t["agendado"]]
+        fila = ([(0, i) for i, t in enumerate(avencer) if not t["agendado"]]
+                + [(1, i) for i, t in enumerate(vencidos) if not t["agendado"]]
                 + [(0, i) for i, t in enumerate(avencer) if t["agendado"]]
                 + [(1, i) for i, t in enumerate(vencidos) if t["agendado"]])
         for si, i in fila:
@@ -822,6 +825,10 @@ def render() -> Image.Image:
             if y + 27 + 26 > ye:
                 break
             dr.text((xa, y), titulo, font=f_s, fill=RED if late else DIM)
+            sem = sum(1 for t in lista if not t["agendado"])
+            if sem and not late:           # the count that asks for action, on the section's line
+                tag = f"{sem} SEM AGENDAMENTO"
+                dr.text((xb - dr.textlength(tag, font=f_s), y), tag, font=f_s, fill=AMBER)
             y += 27
             if not lista:
                 dr.text((xa, y), "nenhum título nos próximos dias", font=f_bs, fill=DIM)
@@ -832,8 +839,11 @@ def render() -> Image.Image:
             resto = [t for i, t in enumerate(lista) if i not in k]
             if resto:
                 ag = sum(1 for x in resto if x["agendado"])
-                dr.text((xa, y), f"+ {len(resto)}" + (f" ({ag} agendado{'s' if ag > 1 else ''})" if ag else "")
-                        + f" · R$ {brl(sum(x['valor'] for x in resto))}", font=f_bs, fill=DIM)
+                sa = len(resto) - ag           # hidden AND without a payment scheduled: say it, in colour
+                nota = (f" ({sa} sem agend.)" if sa and ag else
+                        f" ({ag} agendado{'s' if ag > 1 else ''})" if ag else "")
+                dr.text((xa, y), fit(dr, f"+ {len(resto)}{nota} · R$ {brl(sum(x['valor'] for x in resto))}",
+                                     f_bs, int(xb - xa)), font=f_bs, fill=(RED if late else AMBER) if sa else DIM)
                 y += 26
             y += 4
 
