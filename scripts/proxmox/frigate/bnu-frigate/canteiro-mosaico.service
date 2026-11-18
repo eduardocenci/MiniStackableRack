@@ -14,10 +14,13 @@ RestartSec=5
 # A stop that hangs must not keep the stream down: on 2026-11-15 a restart waited the default
 # 90 s for SIGTERM before systemd killed ffmpeg.
 TimeoutStopSec=10
-# Steady state is ~1.1 GB (measured 2026-11-16, two outputs + band). With its outputs dead
-# ffmpeg grew 25 MB/s (2026-11-15) and the LXC-wide OOM killer may pick a Frigate process
-# instead: keep the damage in this unit. 2000M since 2026-11-16 (the LXC went to 6 GB); at
-# 1200M the cap itself killed the composer 15 times that day.
+# The pump (python) and its three ffmpeg children (one feeder per lens + the encoder) share this
+# cgroup; a stop or a restart takes all of them (KillMode=control-group, the default).
+# Single-process composer: ~1.1 GB steady (2026-11-16); with its outputs dead it grew 25 MB/s
+# (2026-11-15) and the LXC-wide OOM killer may pick a Frigate process instead: keep the damage
+# in this unit. 2000M since 2026-11-16 (the LXC went to 6 GB). The pump bounds its own queues
+# (<= 90 frames per lens, 125 MB) and writes to the encoder with a 3 s timeout, so nothing
+# here grows any more - the cap stays as the last line.
 MemoryMax=2000M
 MemorySwapMax=0
 

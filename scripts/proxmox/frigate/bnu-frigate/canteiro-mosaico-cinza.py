@@ -13,6 +13,8 @@ Stdlib only: it runs on the Frigate LXC's system python.
 Authoritative copy: scripts/proxmox/frigate/bnu-frigate/canteiro-mosaico-cinza.py
 Live copy:          bnu Frigate LXC 105:/usr/local/bin/canteiro-mosaico-cinza.py
 """
+from __future__ import annotations   # the bench test runs it on python 3.8
+
 import sys
 
 W, H, CW, CH = 640, 180, 32, 30
