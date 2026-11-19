@@ -1,0 +1,13 @@
+# gpu-vigia - runs the watcher every 60 s (see gpu-vigia.py).
+# Authoritative copy: scripts/proxmox/bnu-proxmox/gpu-vigia/gpu-vigia.timer
+# Live copy:          bnu-proxmox:/etc/systemd/system/gpu-vigia.timer
+[Unit]
+Description=gpu-vigia every 60 s
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

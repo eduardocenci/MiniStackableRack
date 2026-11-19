@@ -1,0 +1,17 @@
+# gpu-vigia - one tick of the amdgpu hang watcher (see gpu-vigia.py).
+# Authoritative copy: scripts/proxmox/bnu-proxmox/gpu-vigia/gpu-vigia.service
+# Live copy:          bnu-proxmox:/etc/systemd/system/gpu-vigia.service
+[Unit]
+Description=gpu-vigia (amdgpu hang watcher: stuck ffmpeg in state D -> stop the pile-up + WhatsApp)
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/gpu-vigia.env
+ExecStart=/usr/bin/python3 /usr/local/bin/gpu-vigia.py
+# One tick is ~5 s; a hung host can be slow, but a tick that never ends must not block the next.
+TimeoutStartSec=150
+Nice=-5
+# 1440 ticks a day: keep systemd's "Starting/Finished" out of the host journal. The script only
+# prints when something happened, and that goes in at notice, so it survives the filter.
+SyslogLevel=notice
+LogLevelMax=notice
