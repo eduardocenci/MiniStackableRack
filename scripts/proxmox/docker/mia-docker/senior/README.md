@@ -75,9 +75,9 @@ limit, half of it `senior-whisper` with the model loaded.
 
 ### senior-n8n
 
-- Editor: `http://192.168.2.23:5678/`. **On the first visit n8n asks for an
-  owner account** — Eduardo creates it; no password for it is stored anywhere
-  else.
+- Editor: `http://192.168.2.23:5678/`. Owner account created by Eduardo on
+  the first visit (2026-11); its login is `MIA_N8N_USER` / `MIA_N8N_PW` in the
+  repo-root `.env` only, not on the LXC.
 - `N8N_ENCRYPTION_KEY` = `MIA_SENIOR_N8N_ENCRYPTION_KEY`: the credentials are
   encrypted with it; without it they cannot be restored (it travels in the
   nightly backup).
@@ -135,6 +135,7 @@ the values.
 | `MIA_SENIOR_N8N_ENCRYPTION_KEY` | n8n credential encryption | generated on the LXC by `setup-senior.sh` |
 | `MIA_SENIOR_WEBHOOK_TOKEN` | header `X-Senior-Token`, WAHA → n8n | generated on the LXC by `setup-senior.sh` |
 | `MIA_SENIOR_ANTHROPIC_API_KEY` | `senior-agente` | created by Eduardo (own workspace, monthly limit); copied to `/opt/senior/.env` from the root `.env` on 2026-11-01 |
+| `MIA_N8N_USER`, `MIA_N8N_PW` | n8n editor login (owner) | created by Eduardo in the n8n first-visit form; repo-root `.env` only |
 
 The values generated on the LXC were created there, so if the two copies
 drift, the LXC copy wins.
