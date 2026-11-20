@@ -36,7 +36,11 @@ Fluxo (loop de POLL_S segundos):
      TEST_JID).
   5. VÍDEO (pedido Eduardo 14/11/2026): depois da foto de um episódio 🔴, cada
      TRECHO de detecção vira um vídeo no layout do mosaico [lente fixa | lente PT],
-     pedido ao canteiro-clipe (LXC do Frigate, buffer do mosaico ao vivo). Pausas
+     pedido ao canteiro-clipe (LXC do Frigate, buffer do mosaico ao vivo; quando o
+     mosaico tem buraco, o clipe sai das gravações ou do sub-stream das lentes). A
+     legenda diz o que FOI no vídeo, não o que foi pedido: duração real quando a
+     câmera não entregou a janela inteira, "baixa resolução" quando veio do
+     sub-stream (16/11/2026 — em 15/11 um vídeo de 4 s saiu como "1 min 32 s"). Pausas
      de até VIDEO_GAP_S entre detecções ficam no mesmo vídeo; passou disso, o
      trecho fecha e o vídeo sai. Um trecho que não para é cortado a cada
      VIDEO_MAX_S ("continua") e cada evento do Frigate conta no máximo
@@ -164,6 +168,18 @@ def http_json(url, timeout=20):
 def http_bytes(url, timeout=30):
     with urllib.request.urlopen(url, timeout=timeout) as r:
         return r.read()
+
+
+def http_clipe(j0, j1):
+    """(mp4, info) do canteiro-clipe para [j0, j1]; info = fonte, lentes, segundos reais (cabeçalhos X-Clip-*)."""
+    with urllib.request.urlopen(f"{CLIPE_URL}/clip.mp4?start={j0:.1f}&end={j1:.1f}", timeout=240) as r:
+        h = r.headers
+        try:
+            seg = float(h.get("X-Clip-Segundos") or 0) or None
+        except ValueError:
+            seg = None
+        return r.read(), {"fonte": h.get("X-Clip-Fonte") or "mosaico", "segundos": seg,
+                          "lentes": [x for x in (h.get("X-Clip-Lentes") or "").split(",") if x]}
 
 
 def waha_post(endpoint, payload, timeout=60):
@@ -558,6 +574,23 @@ def trecho_video(ep, agora):
     return (ini, fim, True) if quieto else None
 
 
+LENTE_NOME = {"fixa": "lente fixa", "pt": "lente PT"}
+
+
+def nota_video(pedido, info):
+    """Duração para a legenda: a REAL quando o clipe não cobre a janela pedida, e de onde veio a imagem."""
+    seg = info.get("segundos")
+    if seg is None or seg >= pedido * 0.85:
+        nota = duracao(pedido)
+    else:
+        nota = f"{duracao(seg)} de {duracao(pedido)} — a câmera não entregou o resto"
+    if info.get("fonte") == "sub":
+        nota += " · baixa resolução"
+    if len(info.get("lentes") or []) == 1:
+        nota += f" · só a {LENTE_NOME.get(info['lentes'][0], info['lentes'][0])}"
+    return nota
+
+
 def video(st, ep, agora):
     """Vídeo-mosaico do trecho de detecção que acabou de fechar (ou da parte que estourou o teto)."""
     tr = trecho_video(ep, agora)
@@ -570,28 +603,37 @@ def video(st, ep, agora):
     j1 = fim + (VIDEO_POS_S if final else 0) + VIDEO_ATRASO_S
     ep["video_ate"] = fim            # antes do envio: uma falha não repete o mesmo trecho para sempre
     ep["video_parte"] = 0 if final else parte
-    nota = duracao(j1 - j0)
-    if not final:
-        nota += f" · parte {parte}, a detecção continua"
-    elif parte > 1:
-        nota += f" · parte {parte}, fim"
-    texto = f"🎥 *Canteiro · {quando(ini)}* — vídeo da detecção ({nota})"
+    def legenda(info):
+        nota = nota_video(j1 - j0, info)
+        if not final:
+            nota += f" · parte {parte}, a detecção continua"
+        elif parte > 1:
+            nota += f" · parte {parte}, fim"
+        return f"🎥 *Canteiro · {quando(ini)}* — vídeo da detecção ({nota})"
+
+    info = {}
+    texto = legenda(info)
     st["videos"] = [x for x in st.get("videos", []) if x > agora - 3600]
     destino, motivo, tam = "nao-enviado", None, 0
     if len(st["videos"]) >= MAX_VIDEOS_HORA:
         motivo = f"teto {MAX_VIDEOS_HORA} vídeos/hora"
     else:
         try:
-            mp4 = http_bytes(f"{CLIPE_URL}/clip.mp4?start={j0:.1f}&end={j1:.1f}", timeout=240)
+            mp4, info = http_clipe(j0, j1)
             tam = len(mp4)
+            texto = legenda(info)
             destino = entregar(texto, None, mp4)
             if destino != "log":
                 st["videos"].append(agora)
         except Exception as ex:  # noqa: BLE001 — o vídeo é complemento: a foto já saiu
             motivo = f"{type(ex).__name__}: {str(ex)[:160]}"
     jsonl({"tipo": "video", "ts": agora, "t0": ep["t0"], "ini": ini, "fim": fim, "final": final,
-           "parte": parte, "bytes": tam, "destino": destino, "motivo": motivo, "mode": MODE, "texto": texto})
-    log(f"vídeo {hhmm(ini)} {duracao(j1 - j0)} parte {parte}{' final' if final else ''} "
+           "parte": parte, "bytes": tam, "pedido_s": round(j1 - j0, 1), "segundos": info.get("segundos"),
+           "fonte": info.get("fonte"), "lentes": info.get("lentes"),
+           "destino": destino, "motivo": motivo, "mode": MODE, "texto": texto})
+    log(f"vídeo {hhmm(ini)} {duracao(j1 - j0)} pedidos"
+        f"{', ' + duracao(info['segundos']) + ' reais' if info.get('segundos') else ''}"
+        f"{' (' + info['fonte'] + ')' if info.get('fonte') else ''} parte {parte}{' final' if final else ''} "
         f"{tam / 1e6:.1f} MB → {destino}{' (' + motivo + ')' if motivo else ''}")
 
 
@@ -752,9 +794,9 @@ def test_video(chat, segundos):
     agora = time.time()
     j1 = agora - 15                      # o segmento corrente do buffer ainda está sendo escrito
     j0 = j1 - segundos
-    mp4 = http_bytes(f"{CLIPE_URL}/clip.mp4?start={j0:.1f}&end={j1:.1f}", timeout=240)
-    texto = f"[TESTE] 🎥 *Canteiro · {quando(j0)}* — vídeo da detecção ({duracao(segundos)})"
-    print(f"clipe {len(mp4) / 1e6:.1f} MB → {chat}\n{texto}")
+    mp4, info = http_clipe(j0, j1)
+    texto = f"[TESTE] 🎥 *Canteiro · {quando(j0)}* — vídeo da detecção ({nota_video(segundos, info)})"
+    print(f"clipe {len(mp4) / 1e6:.1f} MB {info} → {chat}\n{texto}")
     print(f"WAHA HTTP {send(chat, texto, None, mp4)}")
     return 0
 

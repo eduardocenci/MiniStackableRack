@@ -157,9 +157,16 @@ The clip comes from **`canteiro-clipe`** in the bnu Frigate LXC 105
 (`CLIPE_URL=http://10.1.1.160:8556`, [`../../../proxmox/frigate/bnu-frigate/canteiro-clipe.py`](../../../proxmox/frigate/bnu-frigate/canteiro-clipe.py)):
 a 60 min rolling buffer of the mosaic stream, trimmed and re-encoded on the GPU to H.264
 1920×540 ≤ 14 MB in a few seconds. Not Frigate's recordings: those are kept per lens by
-motion (~2–3 h/day), so the lens that did not see the event often has nothing. No clip
-(composer down, buffer empty) = the video is skipped and logged (`tipo: video`, `motivo`),
-the photo already went.
+motion (~2–3 h/day), so the lens that did not see the event often has nothing. Since
+2026-11-16, when the mosaic buffer has a hole in the window (composer down, a lens' main
+stream stalled), `canteiro-clipe` falls back to the recordings or to its buffers of the
+lenses' sub streams (640×480), and the caption says what actually went, from the
+`X-Clip-*` response headers: `(1 min 32 s)` when the window is covered,
+`(4 s de 1 min 32 s — a câmera não entregou o resto)` when it is not, plus
+`· baixa resolução` when the image is the sub stream and `· só a lente fixa` / `· só a lente PT`
+when only one lens had footage. `vigia.jsonl` records `pedido_s`, `segundos`, `fonte`,
+`lentes`. Precedent: 2026-11-15 12:06, a 4 s video captioned "1 min 32 s". No clip at all =
+the video is skipped and logged (`tipo: video`, `motivo`), the photo already went.
 
 ```bash
 python scripts/devtool.py run bnu-raspberrypi "docker exec canteiro-vigia python3 /app/canteiro-vigia.py --test-video"   # last 30 s of the mosaic, "[TESTE]" → TEST_JID
