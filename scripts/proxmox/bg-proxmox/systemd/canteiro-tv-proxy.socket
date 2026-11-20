@@ -1,0 +1,9 @@
+[Unit]
+Description=bg LAN :1984 -> bnu-raspberrypi go2rtc (canteiro cast to the bg TV; the TV cannot reach the tailnet)
+
+[Socket]
+ListenStream=192.168.0.120:1984
+FreeBind=true
+
+[Install]
+WantedBy=sockets.target
