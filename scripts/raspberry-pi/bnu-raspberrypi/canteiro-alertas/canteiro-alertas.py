@@ -9,10 +9,13 @@ Loop a cada POLL_S segundos:
   04/11/2026, a lente FIXA `canteiro_fixa` (adendo 0010 de 04/11: apontada para a passagem
   por onde os veículos chegam e muitas vezes só passam pela PT) —, rótulos de veículo →
   evento com ≥ o gatilho da sua lente (PT 10 s, fixa 1 s) → até 3 QUADROS DA GRAVAÇÃO
-  (PT 2304×1296, fixa 640×480: ponto mais perto da trilha do evento, +3 s — +1 s num evento
-  curto —, meio; snapshot 640×480 só quando não há gravação) →
-  OpenAI Decisions API (perguntas V3 do home-ara, `detail=auto`, melhor quadro =
-  maior P(caminhão); para antes num quadro confiante ou num carro) →
+  (2304×1296 nas duas lentes; QUADRO_CRITERIO=perto: ponto mais perto da trilha do evento,
+  +3 s — +1 s num evento curto —, meio; QUADRO_CRITERIO=enquadramento, adendo 0010 de
+  20/11/2026: os pontos da trilha em que o veículo cabe INTEIRO no quadro — canteiro.quadros
+  —, e a foto do alerta é o quadro de maior nota de enquadramento, com espera de até
+  FOTO_ESPERA_S por um quadro bom; snapshot 640×480 só quando não há gravação) →
+  OpenAI Decisions API (perguntas V3 do home-ara — V4 = V3 + `inteiro`, só medido —,
+  `detail=auto`; para antes num quadro confiante ou num carro) →
   canteiro.alertas.Motor (episódios — UM por caminhão mesmo visto pelas duas lentes, regra
   2c: IoU só na mesma lente, galeria entre lentes —, horário silencioso, tetos, estado) →
   WAHA sendImage.
@@ -82,6 +85,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # /app/canteiro (cópia do home-ara)
 
+from canteiro import quadros as Q  # noqa: E402
 from canteiro.alertas import NOMES, Classif, Config, Motor, direcao_trilha, hhmm  # noqa: E402
 from canteiro.decisions import (MAX_SIDE, BudgetExceeded, Client, build_payload,  # noqa: E402
                                 data_url, estimate_image_tokens, estimate_text_tokens,
@@ -125,6 +129,15 @@ ENTRADA_LENTE = E("ENTRADA_LENTE", "canteiro_fixa")  # lente da passagem: a tril
 ENTRADA_SENTIDO = int(E("ENTRADA_SENTIDO", "-1"))    # sinal de dx de quem CHEGA (−1: x caindo = entrando, lente fixa 09/11/2026)
 DIRECAO_ESPERA_S = int(E("DIRECAO_ESPERA_S", "30"))  # evento aberto sem direção clara: espera até isto antes de avaliar
 CAM_DIAS = int(E("CAM_DIAS", "7"))                 # snapshots dos caminhões alertados guardados por N dias
+# Escolha do quadro (adendo 0010, 20/11/2026 — munck das 07:53: a foto era só a traseira na borda):
+#   perto         = como até 20/11 — ponto mais baixo da trilha + maior P(classe)
+#   enquadramento = canteiro.quadros — pontos da trilha em que a caixa cabe INTEIRA no quadro
+#                   (trilha + largura da caixa do Frigate); a foto é o quadro de maior nota
+QUADRO_CRITERIO = E("QUADRO_CRITERIO", "perto")
+FOTO_ESPERA_S = int(E("FOTO_ESPERA_S", "30"))        # teto, desde o início do evento, da espera por um quadro bom
+# lentes cuja trilha serve de referência (a PT se move rastreando quem passa: lá só os instantes fixos)
+LENTES_TRILHA = {x.strip() for x in E("LENTES_TRILHA", ENTRADA_LENTE).split(",") if x.strip()}
+ENQUADRAR = QUADRO_CRITERIO == "enquadramento"
 
 CFG = Config(thr=float(E("THR", "0.85")), min_dur_s=int(E("MIN_DUR_S", "10")),
              cap_day=int(E("CAP_DAY", "25")))
@@ -273,6 +286,9 @@ class Classifier:
             return None, f"{type(e).__name__}: {str(e)[:200]}", {}
         c = Classif.from_answers(dec.answers)
         meta = {"tokens": dec.input_tokens, "cached": dec.cached, "latency_s": dec.latency_s}
+        i = dec.answers.get("inteiro")              # só nas perguntas V4: medido, não decide (20/11/2026)
+        if i is not None and not i.refused:
+            meta["p_inteiro"] = round(i.probability, 3)
         return c, (None if c else "recusa em 'veiculo'"), meta
 
 
@@ -335,11 +351,18 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
                                      last - start, ENTRADA_SENTIDO)
             if direcao is None and not e.get("end_time") and now - start < DIRECAO_ESPERA_S:
                 continue                         # cedo demais (saída só com o evento encerrado): próxima rodada
+        box = (e.get("data") or {}).get("box")
+        cedo = not first and now + POLL_S - start <= FOTO_ESPERA_S   # a próxima rodada ainda cai dentro do teto
+        if (ENQUADRAR and cedo and cam in LENTES_TRILHA and not e.get("end_time")
+                and not Q.tem_inteiro((e.get("data") or {}).get("path_data") or [], box)):
+            continue                             # aberto e ainda cortado pela borda: próxima rodada (até o teto)
         raw_snap = snapshot(eid)
         if raw_snap is None:
             continue
-        c, err, meta, raw, fonte = classificar(e, raw_snap, classify, start, last, cam)
-        box = (e.get("data") or {}).get("box")
+        c, err, meta, raw, fonte = classificar(e, raw_snap, classify, start, last, cam,
+                                               adiar=ENQUADRAR and cedo)
+        if fonte == "adiar":
+            continue                             # a gravação ainda não tem os quadros: próxima rodada
         galeria_log: dict = {}
         msgs = motor.processar(eid, start, last, box, c, now, camera=cam, direcao=direcao,
                                mesmo_caminhao=lambda novo, cands: mesmo_caminhao(raw, cands, classify, galeria_log))
@@ -375,8 +398,8 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
 
 # ---------------------------------------------------------------- quadros da gravação (adendo 0010, 29/10/2026)
 def quadro_gravacao(ts: float, camera: str = FRIGATE_CAMERA) -> bytes | None:
-    """Quadro do stream gravado no instante ``ts`` (PT: principal 2304×1296; lente fixa: o substream
-    640×480 — a principal dela não sobe pelo Starlink 24/7); None sem gravação (404)."""
+    """Quadro do stream gravado no instante ``ts`` (principal 2304×1296 nas duas lentes — a
+    fixa desde 05/11/2026); None sem gravação (404)."""
     try:
         return http_bytes(f"{FRIGATE_URL}/api/{camera}/recordings/{ts:.3f}/snapshot.jpg", timeout=60)
     except urllib.error.HTTPError as e:
@@ -387,12 +410,17 @@ def quadro_gravacao(ts: float, camera: str = FRIGATE_CAMERA) -> bytes | None:
         return None
 
 
-def instantes(e: dict, start: float, last: float) -> list[tuple[str, float]]:
-    """Instantes a classificar: o ponto da trilha mais perto da câmera (maior y do
-    ``data.path_data``), +3 s (+1 s num evento curto já encerrado — numa passagem de 3 s pela
-    lente fixa, +3 s cairia depois de o veículo sair) e o meio do evento — sem repetições a
-    menos de 2 s."""
+def instantes(e: dict, start: float, last: float, camera: str = FRIGATE_CAMERA) -> list[tuple[str, float]]:
+    """Instantes a classificar. QUADRO_CRITERIO=enquadramento: canteiro.quadros.candidatos —
+    os pontos da trilha com o veículo INTEIRO no quadro (só nas LENTES_TRILHA), depois +3 s e
+    meio | agora. QUADRO_CRITERIO=perto (até 20/11/2026): o ponto da trilha mais perto da
+    câmera (maior y do ``data.path_data``), +3 s (+1 s num evento curto já encerrado — numa
+    passagem de 3 s pela lente fixa, +3 s cairia depois de o veículo sair) e o meio do evento
+    — sem repetições a menos de 2 s."""
     pd = (e.get("data") or {}).get("path_data") or []
+    if ENQUADRAR:
+        return Q.candidatos(pd, (e.get("data") or {}).get("box"), start, last, bool(e.get("end_time")),
+                            QUADROS, usar_trilha=camera in LENTES_TRILHA)
     cands = []
     if pd:
         try:
@@ -431,20 +459,24 @@ def agregar(frames: list) -> tuple:
     agg = Classif(probs, max(ent) if ent else None, max(con) if con else None)
     cls = agg.truck_class
     ref = max(vistos, key=lambda f: f[0].probs.get(cls) or 0.0)
-    return agg, ref
+    return agg, tuple(ref) + (None,) * (4 - len(ref))
 
 
 def classificar(e: dict, raw_snap: bytes, classify, start: float, last: float,
-                camera: str = FRIGATE_CAMERA):
+                camera: str = FRIGATE_CAMERA, adiar: bool = False):
     """Até QUADROS quadros da gravação, agregados por `agregar`; o snapshot só quando não há
     gravação. Devolve (Classif|None, erro, meta, imagem de referência, fonte). Para cedo num
     quadro confiante (P(classe) ≥ P_CONFIANTE) ou quando o 1º quadro diz que não é caminhão
-    (P < P_CARRO)."""
+    (P < P_CARRO). Com ``adiar`` (critério enquadramento, evento ainda dentro de
+    FOTO_ESPERA_S): se a gravação não tem NENHUM dos quadros, devolve fonte "adiar" sem gastar
+    chamada — em vez de cair no snapshot 640×480 — e o evento volta na próxima rodada."""
     tent = []
     frames = []
     err = None
     meta: dict = {}
-    plano = instantes(e, start, last) if QUADROS > 0 else []
+    data = e.get("data") or {}
+    usa_nota = ENQUADRAR and camera in LENTES_TRILHA
+    plano = instantes(e, start, last, camera) if QUADROS > 0 else []
     for i, (nome, ts) in enumerate(plano):
         if tent and nome != "agora" and frames and len(frames) == 1 and frames[0][0].p_truck < P_CARRO:
             continue                             # 1º quadro diz carro: só o "agora" ainda merece olhar
@@ -453,24 +485,30 @@ def classificar(e: dict, raw_snap: bytes, classify, start: float, last: float,
             tent.append({"q": nome, "t": round(ts - start, 1), "sem": True})
             continue
         c, err, m = classify(q)
-        tent.append({"q": nome, "t": round(ts - start, 1), "p": round(c.p_truck, 3) if c else None,
+        nota = Q.nota_trilha(data.get("path_data") or [], data.get("box"), ts) if usa_nota else None
+        tent.append({"q": nome, "t": round(ts - start, 1), "nota": nota, "p_inteiro": m.get("p_inteiro"),
+                     "p": round(c.p_truck, 3) if c else None,
                      "classe": c.truck_class if c else None,
                      "p_classe": round(c.probs.get(c.truck_class) or 0.0, 3) if c else None, "erro": err,
                      "probs": {k: round(v, 3) for k, v in c.probs.items() if v and v >= 0.005} if c else None})
         if c is None:
             continue
-        frames.append((c, q, nome))
+        frames.append((c, q, nome, nota))
         meta = {k: meta.get(k, 0) + v if isinstance(v, (int, float)) and not isinstance(v, bool) else v
-                for k, v in m.items()}
+                for k, v in m.items() if k != "p_inteiro"}
         if (c.probs.get(c.truck_class) or 0.0) >= P_CONFIANTE and c.p_truck >= CFG.thr:
             break
         if len(frames) == 1 and c.p_truck < P_CARRO and not any(n == "agora" for n, _ in plano[i + 1:]):
             break                                # carro no 1º quadro: para — salvo se ainda há o "agora"
     if not frames:
+        if adiar and plano and all(t.get("sem") for t in tent):
+            return None, None, {}, None, "adiar"
         c, err, m = classify(raw_snap)
+        m.pop("p_inteiro", None)
         return c, err, {**m, "quadros": tent or None}, raw_snap, "snapshot"
-    agg, (cref, q, nome) = agregar(frames)
+    agg, (cref, q, nome, _nota) = (Q.agregar if ENQUADRAR else agregar)(frames)
     meta["quadros"] = tent
+    meta["criterio"] = QUADRO_CRITERIO
     meta["agregado"] = {"classe": agg.truck_class, "p": round(agg.p_truck, 3),
                         "p_classe": round(agg.probs.get(agg.truck_class) or 0.0, 3), "n": len(frames),
                         "tipo": round(agg.share(), 3),

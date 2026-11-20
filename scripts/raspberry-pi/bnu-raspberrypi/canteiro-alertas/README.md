@@ -55,6 +55,25 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
   HEVC main is Frigate's record feed; on 2026-11-04 they were 640×480 — see
   `../docker/go2rtc/README.md`, "Two main streams"); short events classify at the nearest
   point, +1 s and the middle. The vehicle registry (0011) stays on the PT lens only.
+- **Which frame (home-ara decision 0010, addendum 2026-11-20).** `QUADRO_CRITERIO=perto`
+  (default, the behaviour until 2026-11-20): the track point with the largest y, +3 s, the
+  middle; the alert photo is the frame with the highest P(class). On 2026-11-20 07:53 that
+  sent only the REAR of a munck leaving the frame at the left edge ("tipo incerto: munck 34 %
+  ou bomba 31 %") while the whole truck was in the recording 2–3 s earlier.
+  `QUADRO_CRITERIO=enquadramento` uses home-ara `canteiro/quadros.py`: the event's
+  `path_data` (base-centre of the box over time) plus the width of `data.box` tell at each
+  instant whether the box fits in the frame; candidates are the track points where it fits
+  with margin (nearest the camera first), the type vote weighs each frame by that score and
+  the photo — also the day-gallery reference and what Claudinho gets — is the classified
+  frame with the best score. An open event still cut by the edge, or one whose recording
+  frames are all still 404, waits for the next round, never past `FOTO_ESPERA_S` (30 s from
+  the event start). Track geometry is used only on `LENTES_TRILHA` (default: the entrance
+  lens) — the PT lens moves while tracking people. `QUESTIONS=v4` adds the `inteiro`
+  predicate to the same call; it is only logged (`p_inteiro`). `alertas.jsonl` frames carry
+  `nota` and `p_inteiro`, and the record carries `criterio`. Backtest on that event: munck
+  39 % of the truck mass → 87 %, one API call instead of two. **Rollout: shadow first**
+  (a second container with `MODE=shadow`, its own `STATE_DIR`, `QUADRO_CRITERIO=enquadramento`,
+  `QUESTIONS=v4`); live = set the two variables on `canteiro-alertas`, rollback = unset them.
   `alertas.jsonl` lines carry `camera`.
 - **Gallery of the day's trucks** (decisão 0010 adendo 29/10/2026 — the same carroceria was
   alerted at 08:43 and 09:29 after the PT lens moved the box): before opening a new episode
