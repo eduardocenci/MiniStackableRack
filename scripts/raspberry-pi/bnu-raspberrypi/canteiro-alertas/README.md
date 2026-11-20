@@ -74,6 +74,12 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
   39 % of the truck mass → 87 %, one API call instead of two. **Rollout: shadow first**
   (a second container with `MODE=shadow`, its own `STATE_DIR`, `QUADRO_CRITERIO=enquadramento`,
   `QUESTIONS=v4`); live = set the two variables on `canteiro-alertas`, rollback = unset them.
+  The shadow twin is the compose service **`canteiro-alertas-sombra`** (since 2026-11-20):
+  state in `/var/lib/canteiro-alertas-sombra/` (`sudo install -d -o 1000 -g 1000` it before the
+  first `up`), messages only to Casa SmokeTests with the `👁️ SOMBRA` prefix, no vehicle
+  registry. Compare truck by truck:
+  `python scripts/devtool.py run bnu-raspberrypi "tail -3 /var/lib/canteiro-alertas-sombra/alertas.jsonl"`
+  against the live `alertas.jsonl` (same event `id`).
   `alertas.jsonl` lines carry `camera`.
 - **Gallery of the day's trucks** (decisão 0010 adendo 29/10/2026 — the same carroceria was
   alerted at 08:43 and 09:29 after the PT lens moved the box): before opening a new episode
