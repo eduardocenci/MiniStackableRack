@@ -162,7 +162,12 @@ def src_rede() -> dict:
             tags[tg.group(1).strip()] = tags.get(tg.group(1).strip(), False) or na_hora
         else:
             sem_tag += 1
+    # the day's unique devices (count shown next to "N agora"; the list itself only in /painel.json)
+    unicos = sorted(({"nome": re.sub(r"\s*\([^()]+\)\s*$", "", v["nome"]) or v["nome"], "tag": _tag(v["nome"]),
+                      "ts": v["ts"], "on": agora - v["ts"] <= 3600} for v in vistos.values()),
+                    key=lambda u: (not u["tag"], u["tag"].lower(), not u["on"], u["nome"].lower()))
     return {"pessoas": pessoas, "fixos_on": fixos_on, "fixos_total": fixos_total, "saidas": saidas[:4], "hora": hora,
+            "unicos": unicos,
             "serie": _rede_serie(dt.datetime.now(TZ), hora),
             "tags": [{"tag": k, "on": v} for k, v in sorted(tags.items(), key=lambda kv: (not kv[1], kv[0].lower()))],
             "sem_tag": sem_tag}
@@ -705,11 +710,16 @@ def render() -> Image.Image:
         dr.text((xa, y - 8), str(h1), font=f_n, fill=GREEN if h1 else DIM)
         nw = dr.textlength(str(h1), font=f_n)
         dr.text((xa + nw + 12, y), "aparelho" + ("" if h1 == 1 else "s") + " na última hora", font=f_b, fill=FG)
-        t1 = f"{n} agora"
+        unicos = len(d.get("unicos") or [])   # distinct devices seen today (pedido Eduardo 18-20/11/2026)
+        t1 = f"{n} agora, {unicos} único{'' if unicos == 1 else 's'} hoje"
         dr.text((xa + nw + 12, y + 28), t1, font=f_bs, fill=DIM)
         if d["fixos_on"] != d["fixos_total"]:   # the site's own gear (camera, Pi...) only shows up when one is down
-            dr.text((xa + nw + 12 + dr.textlength(t1 + " · ", font=f_bs), y + 28),
-                    f"fixos {d['fixos_on']}/{d['fixos_total']}", font=f_bs, fill=RED)
+            fx = f"fixos {d['fixos_on']}/{d['fixos_total']}"
+            x = xa + nw + 12 + dr.textlength(t1 + " · ", font=f_bs)
+            if x + dr.textlength(fx, font=f_bs) <= xb:
+                dr.text((x, y + 28), fx, font=f_bs, fill=RED)
+            else:                               # no room after the day's count: in the title line
+                dr.text((xb - 60 - dr.textlength(fx, font=f_s), y - 42), fx, font=f_s, fill=RED)
         y += 60
         # Hoje: one pill per tag (company/person in the nickname's parentheses) seen today -
         # lit while one of its devices was on the network in the last hour, greyed out after.
