@@ -712,7 +712,7 @@ def render() -> Image.Image:
         nw = dr.textlength(str(h1), font=f_n)
         dr.text((xa + nw + 12, y), "aparelho" + ("" if h1 == 1 else "s") + " na última hora", font=f_b, fill=FG)
         unicos = d.get("unicos") or []
-        t1 = f"{n} agora, {len(unicos)} único{'' if len(unicos) == 1 else 's'} no dia"
+        t1 = f"{n} agora, {len(unicos)} único{'' if len(unicos) == 1 else 's'} hoje"
         dr.text((xa + nw + 12, y + 28), t1, font=f_bs, fill=DIM)
         if d["fixos_on"] != d["fixos_total"]:   # the site's own gear (camera, Pi...) only shows up when one is down
             fx = f"fixos {d['fixos_on']}/{d['fixos_total']}"
