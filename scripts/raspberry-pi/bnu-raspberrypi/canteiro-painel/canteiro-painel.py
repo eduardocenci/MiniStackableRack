@@ -162,7 +162,13 @@ def src_rede() -> dict:
             tags[tg.group(1).strip()] = tags.get(tg.group(1).strip(), False) or na_hora
         else:
             sem_tag += 1
+    # the day's unique devices, one by one (pedido Eduardo 18/11/2026): grouped by tag, tagged
+    # first, the ones seen in the last hour ahead inside each tag
+    unicos = sorted(({"nome": re.sub(r"\s*\([^()]+\)\s*$", "", v["nome"]) or v["nome"], "tag": _tag(v["nome"]),
+                      "ts": v["ts"], "on": agora - v["ts"] <= 3600} for v in vistos.values()),
+                    key=lambda u: (not u["tag"], u["tag"].lower(), not u["on"], u["nome"].lower()))
     return {"pessoas": pessoas, "fixos_on": fixos_on, "fixos_total": fixos_total, "saidas": saidas[:4], "hora": hora,
+            "unicos": unicos,
             "serie": _rede_serie(dt.datetime.now(TZ), hora),
             "tags": [{"tag": k, "on": v} for k, v in sorted(tags.items(), key=lambda kv: (not kv[1], kv[0].lower()))],
             "sem_tag": sem_tag}
@@ -646,7 +652,7 @@ def render() -> Image.Image:
     x2 = pad + w1 + gap
     x3 = x2 + w2 + gap
     x4 = x3 + w3 + gap
-    rede_h = 208   # room for two rows of tag pills
+    rede_h = 232   # room for three lines of the day's devices above the chart's hour labels
     boxes = {"rede": (pad, top, pad + w1, top + rede_h),
              "tags": (pad, top + rede_h + gap, pad + w1, bot),
              "venc": (x2, top, x2 + w2, bot),
@@ -705,35 +711,74 @@ def render() -> Image.Image:
         dr.text((xa, y - 8), str(h1), font=f_n, fill=GREEN if h1 else DIM)
         nw = dr.textlength(str(h1), font=f_n)
         dr.text((xa + nw + 12, y), "aparelho" + ("" if h1 == 1 else "s") + " na última hora", font=f_b, fill=FG)
-        t1 = f"{n} agora"
+        unicos = d.get("unicos") or []
+        t1 = f"{n} agora, {len(unicos)} único{'' if len(unicos) == 1 else 's'} hoje"
         dr.text((xa + nw + 12, y + 28), t1, font=f_bs, fill=DIM)
         if d["fixos_on"] != d["fixos_total"]:   # the site's own gear (camera, Pi...) only shows up when one is down
-            dr.text((xa + nw + 12 + dr.textlength(t1 + " · ", font=f_bs), y + 28),
-                    f"fixos {d['fixos_on']}/{d['fixos_total']}", font=f_bs, fill=RED)
+            fx = f"fixos {d['fixos_on']}/{d['fixos_total']}"
+            x = xa + nw + 12 + dr.textlength(t1 + " · ", font=f_bs)
+            if x + dr.textlength(fx, font=f_bs) <= xb:
+                dr.text((x, y + 28), fx, font=f_bs, fill=RED)
+            else:                               # no room after the day's count: in the title line
+                dr.text((xb - 60 - dr.textlength(fx, font=f_s), y - 42), fx, font=f_s, fill=RED)
         y += 60
-        # Hoje: one pill per tag (company/person in the nickname's parentheses) seen today -
-        # lit while one of its devices was on the network in the last hour, greyed out after.
-        dr.text((xa, y + 3), "Hoje:", font=f_bs, fill=DIM)
-        x = x0p = xa + dr.textlength("Hoje:", font=f_bs) + 10
-        tags = d.get("tags") or []
-        resto = d.get("sem_tag", 0)
-        if not tags and not resto:
-            dr.text((x, y + 3), "ninguém na rede", font=f_bs, fill=DIM)
-        for i, t in enumerate(tags):
-            w = int(dr.textlength(t["tag"], font=f_bs)) + 20
-            if x + w > xb and x > x0p:
-                x, y = xa, y + 31
-            if y + 27 > ye + 8:
-                resto += len(tags) - i
+        # Hoje: the day's unique devices one by one, grouped by tag (company/person in the
+        # nickname's parentheses) - lit when seen on the network in the last hour, greyed out
+        # after (pedido Eduardo 18/11/2026). On a full day the biggest groups fold into
+        # "tag N", so that every company stays visible; only then does the tail become "+ N".
+        f_l, f_lb = font(F_BODY, 18), font(F_SEMI, 20)
+        grupos: dict[str, list[dict]] = {}
+        for u in unicos:
+            grupos.setdefault(u["tag"], []).append(u)
+        if not grupos:
+            dr.text((xa, y + 3), "ninguém na rede hoje", font=f_bs, fill=DIM)
+        lh, sp = 23, 6
+        cabem = max(1, int((base - 22 - y) // lh))   # the lines stop above the chart's hour labels
+        tw = lambda t: dr.textlength(fit(dr, t[0], t[1], int(xb - xa)), font=t[1])
+
+        def linhas_de(dobrados: set[str]) -> list[list[tuple]]:
+            toks: list[tuple[str, object, tuple, int]] = []   # text, font, colour, devices it stands for
+            for gi, (tg, us) in enumerate(grupos.items()):
+                cor = GREEN if tg and any(u["on"] for u in us) else DIM
+                nome = (tg or "sem tag") + (f" {len(us)}" if len(us) > 1 else "")
+                if tg in dobrados:
+                    toks.append((nome + (" ·" if gi < len(grupos) - 1 else ""), f_lb, cor, len(us)))
+                    continue
+                toks.append((nome + ":", f_lb, cor, 0))
+                toks += [(u["nome"] + (" ·" if i < len(us) - 1 else ""), f_l, FG if u["on"] else (104, 112, 126), 1)
+                         for i, u in enumerate(us)]
+            out: list[list[tuple]] = [[]]
+            x = xa
+            for i, t in enumerate(toks):
+                # a tag never ends a line: it goes down together with its first device
+                need = tw(t) + (sp + tw(toks[i + 1]) if not t[3] and i + 1 < len(toks) else 0)
+                if out[-1] and x + need > xb:
+                    out.append([])
+                    x = xa
+                out[-1].append(t)
+                x += tw(t) + sp
+            return out
+
+        dobrados: set[str] = set()
+        linhas = linhas_de(dobrados)
+        for tg in sorted(grupos, key=lambda g: -len(grupos[g])):
+            if len(linhas) <= cabem:
                 break
-            if t["on"]:
-                dr.rounded_rectangle((x, y, x + w, y + 27), radius=13, fill=(30, 74, 48), outline=GREEN, width=2)
-            else:
-                dr.rounded_rectangle((x, y, x + w, y + 27), radius=13, fill=None, outline=LINE, width=2)
-            dr.text((x + 10, y + 2), t["tag"], font=f_bs, fill=FG if t["on"] else (104, 112, 126))
-            x += w + 8
-        if resto and (tags or d.get("sem_tag")):
-            dr.text((x, y + 3), f"+ {resto} sem tag" if resto == d.get("sem_tag", 0) else f"+ {resto}", font=f_bs, fill=DIM)
+            dobrados.add(tg)
+            linhas = linhas_de(dobrados)
+        fora = sum(t[3] for ln in linhas[cabem:] for t in ln)
+        linhas = linhas[:cabem]
+        while fora and linhas[-1] and (not linhas[-1][-1][3] or sum(tw(t) + sp for t in linhas[-1])
+                                       + dr.textlength(f"+ {fora}", font=f_l) > xb - xa):
+            fora += linhas[-1].pop()[3]          # make room for "+ N" (and never leave a lone tag before it)
+        for ln in linhas:
+            x = xa
+            for t in ln:
+                dr.text((x, y + (1 if t[1] is f_l else 0)), fit(dr, t[0], t[1], int(xb - xa)), font=t[1], fill=t[2])
+                x += tw(t) + sp
+            if fora and ln is linhas[-1]:
+                dr.text((x, y + 1), f"+ {fora}", font=f_l, fill=DIM)
+            y += lh
 
     # 1b — gate (bottom of the first column)
     xa, y, xb, ye = head("tags", "PORTÃO — TAGS", "últimas", "tags")
