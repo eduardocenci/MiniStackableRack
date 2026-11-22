@@ -80,6 +80,22 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
   registry. Compare truck by truck:
   `python scripts/devtool.py run bnu-raspberrypi "tail -3 /var/lib/canteiro-alertas-sombra/alertas.jsonl"`
   against the live `alertas.jsonl` (same event `id`).
+- **Observed departure (home-ara rule 2g, addendum 2026-11-22).** On Friday 2026-11-20 12:56
+  the group got "· saindo (chegou às 07:53)" for a munck that only repositioned in front of the
+  entrance lens (outriggers down at 12:58, still parked when the feed dropped at 13:05):
+  Frigate had opened a second 3-point track on the same truck and its box jump read as
+  "leaving". Eduardo's rule: the departure message may be late, but only goes out when the
+  camera really SAW the truck leave. Every `saindo` track now goes through home-ara
+  `canteiro.alertas.saida_observada`: at least `SAIDA_MIN_PTS` (5) track points, steps moving
+  outward, last point in the street band (`y ≤ SAIDA_Y_RUA`, 0.30 on the fixed lens; empty =
+  no band check) and no other vehicle event still OPEN and still on the same spot (Frigate
+  `in_progress=1` on the entrance lens — any age, not limited by `JANELA_S`). The refusal
+  reason is ALWAYS logged as `saida_veto` in `alertas.jsonl`; it only takes effect with
+  `SAIDA_REGRA=v1` (the direction becomes `parado`: the truck stays on site, no message).
+  `SAIDA_REGRA=atual` (default) behaves as since 2026-11-09. Backtest on the labelled set
+  (home-ara `python -m canteiro.saidas backtest`): current rule 10 right / 1 false / 0 missed,
+  v1 10 / 0 / 0. **Rollout: shadow first** (`SAIDA_REGRA=v1` on `canteiro-alertas-sombra`),
+  live only with Eduardo's OK; rollback = unset the variable.
   `alertas.jsonl` lines carry `camera`.
 - **Gallery of the day's trucks** (decisão 0010 adendo 29/10/2026 — the same carroceria was
   alerted at 08:43 and 09:29 after the PT lens moved the box): before opening a new episode

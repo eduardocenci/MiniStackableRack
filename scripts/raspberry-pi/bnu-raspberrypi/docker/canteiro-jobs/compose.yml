@@ -138,6 +138,7 @@ services:
       MODE: shadow
       QUADRO_CRITERIO: enquadramento
       QUESTIONS: v4
+      SAIDA_REGRA: v1          # regra 2g em sombra (22/11/2026): a saída só vale se a câmera a OBSERVOU
       APRENDER_VEICULOS: "0"
       DESCONHECIDOS: "0"
     volumes:
