@@ -20,7 +20,16 @@ multi-thread). Opções A–E do redesign, todas adotadas:
 | Decolagem | wheels-up | chips (hora, origem, meteo com ícone, **próxima atualização ~T+10** — ~T+19 saindo da região de SP) + mapa da região de saída com o avião no rumo inicial + painel do METAR (ícone, estação, hora da observação, temperatura, nuvens, vento, visibilidade, METAR cru). **Sem palpite de destino** — nem no cartão nem na legenda, e sem "destino não informado" (decisão Eduardo 2026-10-03): para onde vai é assunto do cartão de T+10 |
 | Em voo | T+10 (T+19 região de SP) | chips (altitude + razão de subida, velocidade, rumo com bússola, chegada estimada com **ícone do tempo no destino**) + mapa com o trecho voado colorido pela altitude, avião, perna tracejada até cada destino candidato com chip de ETA, voo anterior da rota em cinza + faixa "perfil até agora e relevo à frente" + linha do METAR do destino com ícone |
 | Pouso 1/2 | ~2 min após o toque | chips (tempo de voo, **vs esperado** verde/âmbar, cruzeiro, distância) + mapa-herói com a rota colorida pela altitude, voo anterior em cinza e linha reta — leva a legenda completa |
-| Pouso 2/2 | logo em seguida | chips de fases (subida, cruzeiro, descida, relevo máx.) + altitude sobre o **relevo real** por distância, com fases marcadas + **altitude e velocidade por minutos desde a decolagem, ao lado dos voos anteriores** da rota (mesma direção ou volta) e a linha do esperado |
+| Pouso 2/2 | logo em seguida | chips de fases (subida, cruzeiro, descida, relevo máx.) + altitude sobre o **relevo real** por distância, com fases marcadas + **altitude e velocidade por minutos desde a decolagem, ao lado dos voos anteriores** da rota e a linha do esperado |
+
+**Voos anteriores = mesmo sentido (2026-11-20, decisão Eduardo)**: havendo ao
+menos uma viagem anterior no mesmo sentido do mesmo segmento (aeroporto de
+partida → chegada), as viagens de volta ficam **fora** da comparação — poluem
+o cartão. Vale para o voo anterior em cinza nos mapas (em voo e pouso 1/2) e
+para os painéis de altitude/velocidade do pouso 2/2. A volta (rótulo
+`(volta)`) só aparece como recurso quando ainda não existe nenhuma ida
+registrada no segmento — mesma regra do "vs esperado" e das ETAs em voo
+(`cards._history`).
 
 Fontes: mapa = os tiles OSM que o `maptile` já cacheia em `/data/tiles`,
 **dessaturados e clareados** (`_quiet`) — o CARTO Positron passou a responder
