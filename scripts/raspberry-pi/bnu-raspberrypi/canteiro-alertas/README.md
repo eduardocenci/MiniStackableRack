@@ -96,6 +96,26 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
   (home-ara `python -m canteiro.saidas backtest`): current rule 10 right / 1 false / 0 missed,
   v1 10 / 0 / 0. **Rollout: shadow first** (`SAIDA_REGRA=v1` on `canteiro-alertas-sombra`),
   live only with Eduardo's OK; rollback = unset the variable.
+- **Departure confirmed with a delay (home-ara rule 2h, phase 2, 2026-11-22).** Eduardo: the
+  "saindo" notice may arrive late, but only when the camera really saw the truck leave. With
+  `SAIDA_ESPERA_S` > 0 (seconds; 0 = off, the notice goes at once) an accepted "saindo" track is
+  not sent: the engine keeps it as a pending candidate and the truck stays "on site". Any new
+  sighting of that truck inside the window (a strong or weak event that joins its episode, or
+  one of its events still open) cancels it. When the window expires the service looks at the
+  CURRENT frame of both lenses (recording 10 s back; without one, Frigate `latest.jpg`) with the
+  same questions: P(truck) ≥ `soft_p` (0.5) on either lens = still there, cancelled; otherwise
+  the "· saindo" message goes out, first line with the OBSERVED exit time, footer "saída
+  confirmada às HH:MM", photo = the exit frame kept in `caminhoes/saida-<event>.jpg`.
+  **Infrastructure gate:** while a candidate is pending, `SAIDA_CEGO_RODADAS` (4) rounds in a
+  row without image (Frigate down, a lens with `camera_fps` 0, rounds failing) mark the window
+  blind — the exit is "not observed": no message, log only (precedent: the camera dropped at
+  13:05 on 2026-11-20). A confirmation more than 5 min late (service stopped) is also "not
+  observed". `alertas.jsonl` gets one line per step — `saida_pendente` · `saida_confirmada` ·
+  `saida_cancelada` · `saida_nao_observada` (`motivo`, `quadros` of the check). Replay:
+  home-ara `python -m canteiro.saidas replay 2026-11-18 --regra v1 --espera 600`.
+  **Rollout: shadow only** (`SAIDA_ESPERA_S=600` on `canteiro-alertas-sombra`); live only with
+  Eduardo's OK. Known limit: a DIFFERENT truck in frame when the window expires also blocks the
+  confirmation (silence) — to be measured in shadow.
   `alertas.jsonl` lines carry `camera`.
 - **Gallery of the day's trucks** (decisão 0010 adendo 29/10/2026 — the same carroceria was
   alerted at 08:43 and 09:29 after the PT lens moved the box): before opening a new episode

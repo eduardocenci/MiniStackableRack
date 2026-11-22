@@ -51,6 +51,17 @@ O motivo da recusa vai SEMPRE a `saida_veto` no alertas.jsonl; só com SAIDA_REG
 vale (a direção vira "parado": o caminhão segue no canteiro, sem mensagem). SAIDA_REGRA=atual
 (padrão) = como desde 09/11, só registra o que a v1 recusaria.
 
+Saída CONFIRMADA com atraso (regra 2h, fase 2 de 22/11/2026 — SAIDA_ESPERA_S > 0; 0 = a saída vai
+na hora): a trilha "saindo" aceita vira uma candidata pendente no motor; qualquer avistamento do
+mesmo caminhão na janela a cancela. Vencida a janela, o serviço olha o QUADRO ATUAL das duas lentes
+(gravação de 10 s atrás; sem gravação, `latest.jpg`) com as mesmas perguntas: P(caminhão) ≥ soft_p
+em qualquer lente = ainda está lá, cancela; nenhuma = a mensagem "· saindo" sai, com a hora
+observada da saída e "saída confirmada às HH:MM". Trava de infraestrutura: com candidata pendente,
+SAIDA_CEGO_RODADAS rodadas seguidas sem imagem (Frigate fora, lente com camera_fps 0, rodada
+falhando) marcam a janela como CEGA — a saída fica "não observada", sem mensagem (precedente: a
+câmera caiu às 13:05 de 20/11). Tudo em alertas.jsonl: linhas `saida_pendente` · `saida_confirmada`
+· `saida_cancelada` · `saida_nao_observada` (com `motivo` e os `quadros` da conferência).
+
 A lógica é o pacote `canteiro/` do home-ara (submódulo homes/ara), copiado para a
 imagem canteiro-jobs — este arquivo só faz a E/S.
 
@@ -142,6 +153,9 @@ DIRECAO_ESPERA_S = int(E("DIRECAO_ESPERA_S", "30"))  # evento aberto sem direç�
 SAIDA_REGRA = E("SAIDA_REGRA", "atual")
 SAIDA_MIN_PTS = int(E("SAIDA_MIN_PTS", "5"))         # pontos mínimos da trilha de saída (as reais têm 8–12; a falsa, 3)
 SAIDA_Y_RUA = float(E("SAIDA_Y_RUA", "0.30")) if E("SAIDA_Y_RUA", "0.30") else None   # faixa da rua na lente fixa ("" = sem veto)
+# Saída confirmada com atraso (regra 2h, 22/11/2026): janela em s (0 = desligada, a saída vai na hora)
+SAIDA_ESPERA_S = int(E("SAIDA_ESPERA_S", "0"))
+SAIDA_CEGO_RODADAS = int(E("SAIDA_CEGO_RODADAS", "4"))   # rodadas seguidas sem imagem que invalidam a janela
 CAM_DIAS = int(E("CAM_DIAS", "7"))                 # snapshots dos caminhões alertados guardados por N dias
 # Escolha do quadro (adendo 0010, 20/11/2026 — munck das 07:53: a foto era só a traseira na borda):
 #   perto         = como até 20/11 — ponto mais baixo da trilha + maior P(classe)
@@ -154,7 +168,7 @@ LENTES_TRILHA = {x.strip() for x in E("LENTES_TRILHA", ENTRADA_LENTE).split(",")
 ENQUADRAR = QUADRO_CRITERIO == "enquadramento"
 
 CFG = Config(thr=float(E("THR", "0.85")), min_dur_s=int(E("MIN_DUR_S", "10")),
-             cap_day=int(E("CAP_DAY", "25")))
+             cap_day=int(E("CAP_DAY", "25")), saida_espera_s=SAIDA_ESPERA_S)
 
 
 def _lentes(spec: str, padrao: int) -> dict[str, int]:
@@ -329,6 +343,88 @@ def eventos_abertos(cam: str, exceto: str) -> list[dict]:
             for o in evs if o.get("id") != exceto and o.get("camera") == cam and not o.get("end_time")]
 
 
+# ---------------------------------------------------------------- saída confirmada (regra 2h)
+CEGO_N = 0                                         # rodadas seguidas sem imagem com candidata pendente
+
+
+def lentes_vivas() -> str | None:
+    """None = o Frigate responde e todas as lentes entregam quadros; senão o motivo."""
+    try:
+        cams = (http_json(f"{FRIGATE_URL}/api/stats", timeout=10).get("cameras") or {})
+    except Exception as ex:  # noqa: BLE001
+        return f"Frigate fora ({type(ex).__name__})"
+    for cam in CAMERAS:
+        if not (cams.get(cam) or {}).get("camera_fps"):
+            return f"{lente(cam)} sem imagem"
+    return None
+
+
+def quadro_atual(cam: str, now: float) -> tuple[bytes | None, str]:
+    """O quadro mais recente da lente: a gravação de 10 s atrás (2304×1296, só existe com
+    movimento/evento) ou, sem ela, o `latest.jpg` do stream de detecção."""
+    q = quadro_gravacao(now - 10, cam)
+    if q is not None:
+        return q, "gravacao"
+    try:
+        return http_bytes(f"{FRIGATE_URL}/api/{cam}/latest.jpg", timeout=20), "latest"
+    except Exception as ex:  # noqa: BLE001
+        log(f"latest.jpg de {cam}: {ex}")
+        return None, "sem"
+
+
+def confirmar_saida(p: dict, classify, now: float, quadros: list) -> tuple[bool | None, str | None]:
+    """``confirmar`` do Motor.tick: a câmera ainda vê um caminhão? (False, motivo) = sim, a saída
+    não vale; (None, motivo) = não deu para olhar; (True, None) = nenhuma lente o vê."""
+    motivo = lentes_vivas()
+    if motivo:
+        return None, motivo
+    for cam in sorted(CAMERAS, key=lambda c: c != ENTRADA_LENTE):   # a lente da entrada primeiro
+        raw, fonte = quadro_atual(cam, now)
+        if raw is None:
+            return None, f"{lente(cam)} sem quadro"
+        c, err, _ = classify(raw)
+        quadros.append({"camera": cam, "fonte": fonte, "p": round(c.p_truck, 3) if c else None,
+                        "classe": c.truck_class if c else None, "erro": err})
+        if c is None:
+            return None, f"sem classificação do quadro da {lente(cam)} ({err})"
+        if c.p_truck >= CFG.soft_p:
+            return False, f"caminhão ainda no quadro da {lente(cam)} (P {c.p_truck:.2f})"
+    return True, None
+
+
+def saidas_da_rodada(motor: Motor, classify: Classifier, now: float) -> bool:
+    """Fim da rodada (depois dos eventos dela): trava de infraestrutura, decisão da candidata
+    vencida, envio da mensagem e os desfechos no alertas.jsonl."""
+    global CEGO_N
+    if motor.s.get("saida_pend"):
+        cego = lentes_vivas()
+        CEGO_N = CEGO_N + 1 if cego else 0
+        if cego and CEGO_N >= SAIDA_CEGO_RODADAS:
+            motor.saida_cega(now, cego)
+    else:
+        CEGO_N = 0
+    quadros: list = []
+    enviadas = []
+    for m in motor.tick(now, lambda p: confirmar_saida(p, classify, now, quadros)):
+        ref = CAM_DIR / f"saida-{m.evento}.jpg" if m.evento else None
+        img = jpeg_envio(ref.read_bytes()) if ref is not None and ref.exists() else None
+        try:
+            dest = deliver(m, img)
+        except Exception as ex:  # noqa: BLE001
+            dest = f"FALHOU: {ex}"
+            log(f"envio falhou ({m.tipo}): {ex}")
+        enviadas.append({"tipo": m.tipo, "destino": dest, "texto": m.texto})
+        log(f"{m.tipo} → {dest}: {m.texto.splitlines()[0]}")
+    desfechos = motor.drenar_saidas()
+    for d in desfechos:
+        if d["tipo"] != "saida_pendente":
+            d = {**d, **({"quadros": quadros} if quadros else {}),
+                 **({"mensagens": enviadas} if d["tipo"] == "saida_confirmada" else {})}
+            log(f"{d['tipo']} ({d['id'][-6:]})" + (f": {d['motivo']}" if d.get("motivo") else ""))
+        jsonl(d)
+    return bool(desfechos or enviadas)
+
+
 def snapshot(eid: str) -> bytes | None:
     try:
         return http_bytes(f"{FRIGATE_URL}/api/events/{eid}/snapshot.jpg?quality=80")
@@ -350,7 +446,7 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
                         fh.write(json.dumps({"tipo": "fim", "visita": v["key"], "veiculo": v["veiculo"],
                                              "inicio": v["inicio"], "fim": v["fim"]}) + "\n")
             CADASTRO.salvar()
-    for m in motor.tick(now):
+    for m in motor.tick(now, saidas=False):      # a candidata de saída decide-se no FIM da rodada (2h)
         dest = deliver(m, None)
         jsonl({"ts": now, "tipo": m.tipo, "destino": dest, "texto": m.texto})
         changed = True
@@ -402,6 +498,10 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
                                mesmo_caminhao=lambda novo, cands: mesmo_caminhao(raw, cands, classify, galeria_log))
         if any(t["evento"] == eid for t in motor.s.get("caminhoes") or []):   # abriu episódio: vira referência
             guardar_caminhao(eid, raw)
+        pend = motor.s.get("saida_pend")
+        if pend and pend["evento"] == eid and raw:                           # 2h: a foto da saída espera a confirmação
+            CAM_DIR.mkdir(parents=True, exist_ok=True)
+            (CAM_DIR / f"saida-{eid}.jpg").write_bytes(raw)
         rec = {"ts": now, "id": eid, "camera": cam, "inicio": start, "dur_s": round(last - start),
                "label": e.get("label"), "direcao": direcao, **({"saida_veto": saida_veto} if saida_veto else {}),
                "p_caminhao": round(c.p_truck, 3) if c else None, "classe": c.truck_class if c else None,
@@ -427,7 +527,7 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
                     PENDENTES[eid] = start      # aprende quando completar 20 s parado
         jsonl(rec)
         changed = True
-    return changed
+    return saidas_da_rodada(motor, classify, now) or changed
 
 
 # ---------------------------------------------------------------- quadros da gravação (adendo 0010, 29/10/2026)
@@ -778,7 +878,8 @@ def main() -> int:
     classify = Classifier()
     log(f"canteiro-alertas MODE={MODE} limiar={CFG.thr} lentes={CAMERAS} perguntas={VERSION} "
         f"quadros={QUADROS} teto_dia={CFG.cap_day} cadastro={'on' if APRENDER else 'off'} "
-        f"desconhecidos={'on' if DESCONHECIDOS else 'off'}")
+        f"desconhecidos={'on' if DESCONHECIDOS else 'off'} saida={SAIDA_REGRA}/espera {SAIDA_ESPERA_S}s")
+    falhas = 0
     first = True
     while True:
         try:
@@ -786,10 +887,15 @@ def main() -> int:
                 save_state(motor)
             heartbeat(True)
             first = False
+            falhas = 0
         except Exception as ex:  # noqa: BLE001 — Frigate fora, rede: tenta de novo na próxima
             log(f"rodada falhou: {ex}")
             traceback.print_exc()
             heartbeat(False, str(ex)[:300])
+            falhas += 1
+            if falhas >= SAIDA_CEGO_RODADAS and motor.s.get("saida_pend"):   # 2h: sem ver, a janela não prova nada
+                motor.saida_cega(time.time(), "rodadas falhando")
+                save_state(motor)
         if "--once" in sys.argv:
             return 0
         time.sleep(POLL_S)
