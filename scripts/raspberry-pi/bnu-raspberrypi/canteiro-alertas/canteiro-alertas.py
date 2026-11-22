@@ -42,6 +42,15 @@ com o evento encerrado. Tipo com < tipo_min (0,4) da massa de caminhão sai como
 canteiro" + "Tipo incerto: …" (regra 2f); a distribuição inteira de cada quadro fica em
 `quadros[].probs` no alertas.jsonl.
 
+Saída OBSERVADA (regra 2g, adendo 0010 de 22/11/2026 — o munck de 20/11 12:56 só manobrou diante
+da lente fixa e o grupo recebeu "saindo"; Eduardo: a saída pode ir com atraso, mas só quando a
+câmera VIU o caminhão sair): toda trilha "saindo" passa por canteiro.alertas.saida_observada —
+≥ SAIDA_MIN_PTS pontos, passos para fora, fim na faixa da rua (y ≤ SAIDA_Y_RUA) e nenhum outro
+evento de veículo ABERTO e parado no mesmo lugar (Frigate `in_progress=1` da lente da entrada).
+O motivo da recusa vai SEMPRE a `saida_veto` no alertas.jsonl; só com SAIDA_REGRA=v1 a recusa
+vale (a direção vira "parado": o caminhão segue no canteiro, sem mensagem). SAIDA_REGRA=atual
+(padrão) = como desde 09/11, só registra o que a v1 recusaria.
+
 A lógica é o pacote `canteiro/` do home-ara (submódulo homes/ara), copiado para a
 imagem canteiro-jobs — este arquivo só faz a E/S.
 
@@ -86,7 +95,8 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).resolve().parent))   # /app/canteiro (cópia do home-ara)
 
 from canteiro import quadros as Q  # noqa: E402
-from canteiro.alertas import NOMES, Classif, Config, Motor, direcao_trilha, hhmm  # noqa: E402
+from canteiro.alertas import (NOMES, Classif, Config, Motor, direcao_trilha, hhmm,  # noqa: E402
+                              saida_observada)
 from canteiro.decisions import (MAX_SIDE, BudgetExceeded, Client, build_payload,  # noqa: E402
                                 data_url, estimate_image_tokens, estimate_text_tokens,
                                 prepare_image, usd)
@@ -128,6 +138,10 @@ P_MESMO_CAMINHAO = float(E("P_MESMO_CAMINHAO", "0.8"))  # galeria do dia: P(id) 
 ENTRADA_LENTE = E("ENTRADA_LENTE", "canteiro_fixa")  # lente da passagem: a trilha do evento dá chegada/saída (regra 2d)
 ENTRADA_SENTIDO = int(E("ENTRADA_SENTIDO", "-1"))    # sinal de dx de quem CHEGA (−1: x caindo = entrando, lente fixa 09/11/2026)
 DIRECAO_ESPERA_S = int(E("DIRECAO_ESPERA_S", "30"))  # evento aberto sem direção clara: espera até isto antes de avaliar
+# Saída observada (regra 2g, 22/11/2026): atual = só registra `saida_veto`; v1 = a recusa vale ("parado")
+SAIDA_REGRA = E("SAIDA_REGRA", "atual")
+SAIDA_MIN_PTS = int(E("SAIDA_MIN_PTS", "5"))         # pontos mínimos da trilha de saída (as reais têm 8–12; a falsa, 3)
+SAIDA_Y_RUA = float(E("SAIDA_Y_RUA", "0.30")) if E("SAIDA_Y_RUA", "0.30") else None   # faixa da rua na lente fixa ("" = sem veto)
 CAM_DIAS = int(E("CAM_DIAS", "7"))                 # snapshots dos caminhões alertados guardados por N dias
 # Escolha do quadro (adendo 0010, 20/11/2026 — munck das 07:53: a foto era só a traseira na borda):
 #   perto         = como até 20/11 — ponto mais baixo da trilha + maior P(classe)
@@ -300,6 +314,21 @@ def frigate_events(after: float) -> list[dict]:
     return [e for e in http_json(f"{FRIGATE_URL}/api/events?{q}") if e.get("camera") in CAMERAS]
 
 
+def eventos_abertos(cam: str, exceto: str) -> list[dict]:
+    """Eventos de veículo AINDA ABERTOS na lente (qualquer idade — o munck de 20/11 ficou aberto
+    25 h, fora da JANELA_S), no formato de canteiro.alertas.saida_observada. Falha do Frigate =
+    lista vazia: os vetos da própria trilha continuam valendo."""
+    q = urllib.parse.urlencode({"cameras": cam, "labels": LABELS, "in_progress": 1, "limit": 50})
+    try:
+        evs = http_json(f"{FRIGATE_URL}/api/events?{q}")
+    except Exception as ex:  # noqa: BLE001
+        log(f"eventos abertos de {cam}: {ex}")
+        return []
+    return [{"id": o["id"], "box": (o.get("data") or {}).get("box"),
+             "path": (o.get("data") or {}).get("path_data") or [], "end": o.get("end_time")}
+            for o in evs if o.get("id") != exceto and o.get("camera") == cam and not o.get("end_time")]
+
+
 def snapshot(eid: str) -> bytes | None:
     try:
         return http_bytes(f"{FRIGATE_URL}/api/events/{eid}/snapshot.jpg?quality=80")
@@ -345,13 +374,18 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
             motor.ignorar(eid, now, "backlog da partida (> STALE_S)")
             changed = True
             continue
-        direcao = None
+        direcao = saida_veto = None
+        box = (e.get("data") or {}).get("box")
         if cam == ENTRADA_LENTE:                 # regra 2d: o que a trilha diz na lente da entrada
-            direcao = direcao_trilha((e.get("data") or {}).get("path_data") or [], not e.get("end_time"),
-                                     last - start, ENTRADA_SENTIDO)
+            trilha = (e.get("data") or {}).get("path_data") or []
+            direcao = direcao_trilha(trilha, not e.get("end_time"), last - start, ENTRADA_SENTIDO)
             if direcao is None and not e.get("end_time") and now - start < DIRECAO_ESPERA_S:
                 continue                         # cedo demais (saída só com o evento encerrado): próxima rodada
-        box = (e.get("data") or {}).get("box")
+            if direcao == "saindo":              # regra 2g: a câmera VIU o veículo ir embora?
+                ok, saida_veto = saida_observada(trilha, box, last, eventos_abertos(cam, eid), ENTRADA_SENTIDO,
+                                                 min_pts=SAIDA_MIN_PTS, y_rua=SAIDA_Y_RUA)
+                if not ok and SAIDA_REGRA == "v1":
+                    direcao = "parado"           # segue no canteiro: sem mensagem de saída
         cedo = not first and now + POLL_S - start <= FOTO_ESPERA_S   # a próxima rodada ainda cai dentro do teto
         if (ENQUADRAR and cedo and cam in LENTES_TRILHA and not e.get("end_time")
                 and not Q.tem_inteiro((e.get("data") or {}).get("path_data") or [], box)):
@@ -369,7 +403,7 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
         if any(t["evento"] == eid for t in motor.s.get("caminhoes") or []):   # abriu episódio: vira referência
             guardar_caminhao(eid, raw)
         rec = {"ts": now, "id": eid, "camera": cam, "inicio": start, "dur_s": round(last - start),
-               "label": e.get("label"), "direcao": direcao,
+               "label": e.get("label"), "direcao": direcao, **({"saida_veto": saida_veto} if saida_veto else {}),
                "p_caminhao": round(c.p_truck, 3) if c else None, "classe": c.truck_class if c else None,
                "p_entrega": c.p_entrega if c else None, "p_concretagem": c.p_concretagem if c else None,
                "erro": err, "fonte": fonte, **meta, "galeria": galeria_log or None, "mensagens": []}
