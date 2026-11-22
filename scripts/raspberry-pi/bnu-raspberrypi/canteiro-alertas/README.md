@@ -95,7 +95,7 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
   `SAIDA_REGRA=atual` (default) behaves as since 2026-11-09. Backtest on the labelled set
   (home-ara `python -m canteiro.saidas backtest`): current rule 10 right / 1 false / 0 missed,
   v1 10 / 0 / 0. **Rollout: shadow first** (`SAIDA_REGRA=v1` on `canteiro-alertas-sombra`),
-  live only with Eduardo's OK; rollback = unset the variable.
+  **LIVE since 2026-11-22 20:06** (Eduardo's OK; set in compose.yml on both containers); rollback = remove the variable and recreate.
 - **Departure confirmed with a delay (home-ara rule 2h, phase 2, 2026-11-22).** Eduardo: the
   "saindo" notice may arrive late, but only when the camera really saw the truck leave. With
   `SAIDA_ESPERA_S` > 0 (seconds; 0 = off, the notice goes at once) an accepted "saindo" track is
@@ -113,8 +113,8 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
   observed". `alertas.jsonl` gets one line per step — `saida_pendente` · `saida_confirmada` ·
   `saida_cancelada` · `saida_nao_observada` (`motivo`, `quadros` of the check). Replay:
   home-ara `python -m canteiro.saidas replay 2026-11-18 --regra v1 --espera 600`.
-  **Rollout: shadow only** (`SAIDA_ESPERA_S=600` on `canteiro-alertas-sombra`); live only with
-  Eduardo's OK. Known limit: a DIFFERENT truck in frame when the window expires also blocks the
+  **LIVE since 2026-11-22 20:06** (Eduardo's OK; `SAIDA_ESPERA_S=600` on both containers) — no real
+  truck had gone through the window yet when it went live. Known limit: a DIFFERENT truck in frame when the window expires also blocks the
   confirmation (silence) — to be measured in shadow.
   `alertas.jsonl` lines carry `camera`.
 - **Gallery of the day's trucks** (decisão 0010 adendo 29/10/2026 — the same carroceria was
