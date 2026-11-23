@@ -146,6 +146,15 @@ to Casa SmokeTests). After changing the launcher or the clone, restart the task
 and check that the heartbeat `pid` changed: a Start right after a Stop can still
 find the lock held and exit, leaving the task `Ready` with nothing running.
 
+**Auth of the headless sessions (2026-11-23):** the launcher reads
+`ARA_CLAUDE_CODE_OAUTH_TOKEN` from the root `.env` and exports it as
+`CLAUDE_CODE_OAUTH_TOKEN` — a long-lived token from `claude setup-token` (bundled CLI:
+`%APPDATA%\Claude\claude-code\<ver>\<hash>\claude.exe`; `claude` is not on PATH), valid
+about a year. The interactive login (`~/.claude/.credentials.json`) expires and cannot
+renew itself: on 2026-11-23 it had ended and the 10:19 truck alert got no answer. Symptom:
+`⚠️ claudinho: desisti do alerta … Failed to authenticate` in Casa SmokeTests. Fix: run
+`setup-token` again, replace the `.env` line (one line, no spaces), restart the task.
+
 ### bnu UPS (nobreak) — read it through ups-monitor on bnu-raspberrypi (found 2026-11-11)
 
 The bnu rack UPS is an **SMS Premium 1500 VA bivolt** (reports `PRM1500BiBiW`, fw
