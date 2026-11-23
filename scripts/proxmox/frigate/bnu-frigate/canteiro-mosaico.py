@@ -34,8 +34,9 @@ Now the output does not depend on any input being alive:
                                   and publishes to canteiro-hls. It has no network input and no
                                   clock of its own, so nothing can stall or desynchronise it.
 
-The raw frame is 1280x2520 yuv420p: lens L (1280x720), lens R (1280x720) and the panel folded
-into 1280x1080 (its left 1280 px over its right 640 px) one under the other. Same width = the
+The raw frame is 1280x2712 yuv420p: lens L (1280x720), lens R (1280x720), the panel folded
+into 1280x1080 (its left 1280 px over its right 640 px) and the thumbnail block (1280x192, see
+below) one under the other. Same width = the
 planes are simply concatenated (no pixel work in Python, ~73 MB/s through the pipe), and one
 stream = every filter in the encoder sees the same timestamps: there is no second input to
 drift against (the old `-re -f image2` panel input and the setpts wall-clock alignment of the
@@ -60,6 +61,18 @@ Things kept from the single-process composer, with their reasons:
   - the panel PNG is fetched every 30 s; only a complete PNG replaces the last good one;
     unreachable = the last picture stays; never fetched = a black band.
   - a publisher, not a go2rtc `exec:` source (Frigate refuses exec sources).
+
+ÚLTIMAS DETECÇÕES ON THE TV (2026-11-23, pedido Eduardo)
+`mosaico-tv` carries, at the bottom right of each lens, the last three Frigate detections of
+that lens as small moving pictures - what /live shows as GIFs over the video. Only the TV
+output: `mosaico` also feeds the canteiro-vigia videos and the watchdog frame, which must stay
+clean. canteiro-painel (bnu-raspberrypi) draws them (PIL lives there): /det/tv.json lists six
+keys, /det/tv/<key>.yuv is a loop of raw I420 frames 172x96 with border, age and icon already
+on it. Here a poll thread fetches what changed (every 15 s) and an 8 fps thread copies the
+current frame of each loop into the thumbnail block: 96 rows of picture (three thumbnails at
+x=0, three at x=640) over 96 rows of mask (235 where there is a thumbnail, 16 elsewhere). The
+encoder cuts the two groups, uses the mask as alpha and overlays them on the TV branch - so an
+empty slot, an unreachable panel (5 min) or MINIATURAS_URL="" is simply nothing drawn.
 
 State for humans: /run/canteiro-painel/mosaico-estado.json (rewritten every 5 s).
 MOSAICO_HW=0 swaps VAAPI for software decode + libx264 (tests away from the LXC).
@@ -103,6 +116,14 @@ FRAME = YS + 2 * CS
 PW, PH = 1280, 1080                       # the 1920x540 panel folded: 1280x540 over 640x540(+pad)
 PYS, PCS = PW * PH, PW * PH // 4
 PFRAME = PYS + 2 * PCS
+TW, TH, TPITCH = 172, 96, 180               # thumbnail, and the step between two of a group
+TGW = 2 * TPITCH + TW                       # a group of three: 532 px
+TBH = 2 * TH                                # block: picture rows over mask rows
+TYS, TCS = W * TBH, W * TBH // 4
+TFRAME = TW * TH * 3 // 2
+TSLOTS = 6                                  # 0-2 left lens (fixa), 3-5 right lens (PT)
+MINIATURAS_URL = E("MINIATURAS_URL", "http://10.1.1.123:8557/det").rstrip("/")   # "" = off
+MINIATURAS_STALE_S = float(E("MINIATURAS_STALE_S", "300"))
 Q_HIGH = 8        # frames (~0.5 s) the jitter queue may hold before playing ~12 % faster
 Q_SNAP = 45       # 3 s: beyond this drop to the newest frames at once
 BRT = timezone(timedelta(hours=-3))       # the LXC clock is US Eastern; the label is Brasília
@@ -337,6 +358,114 @@ class Panel:
             STOP.wait(30)
 
 
+class Thumbs:
+    """The last detections of each lens as moving thumbnails (drawn by canteiro-painel)."""
+
+    def __init__(self):
+        self.y = bytearray(bytes([16]) * TYS)            # picture rows black, mask rows "nothing"
+        self.u = bytearray(bytes([128]) * TCS)
+        self.v = bytearray(bytes([128]) * TCS)
+        self.planes = (bytes(self.y), bytes(self.u), bytes(self.v))
+        self.want = [None] * TSLOTS                      # (key, n, data) per slot, set by poll_loop
+        self.have = [None] * TSLOTS
+        self.idx = [-1] * TSLOTS
+        self.fps = 8
+        self.ok_wall = None
+        self.said = None
+
+    @staticmethod
+    def x0(k):
+        return (k % 3) * TPITCH + (0 if k < 3 else W // 2)
+
+    def _get(self, path, timeout):
+        with urllib.request.urlopen(MINIATURAS_URL + path, timeout=timeout) as r:
+            return r.read()
+
+    def poll_once(self):
+        j = json.loads(self._get("/tv.json", 5).decode("utf-8"))
+        if (j.get("w"), j.get("h")) != (TW, TH):
+            raise ValueError("thumbnail size %sx%s, expected %dx%d" % (j.get("w"), j.get("h"), TW, TH))
+        keys = (list(j.get("slots") or []) + [None] * TSLOTS)[:TSLOTS]
+        cur = {s[0]: s for s in self.want if s}
+        new = []
+        for key in keys:
+            if key is None or key in cur:
+                new.append(cur.get(key))
+                continue
+            d = self._get("/tv/%s.yuv" % key, 20)
+            n = len(d) // TFRAME
+            if n < 1 or len(d) != n * TFRAME:
+                raise ValueError("loop %s: %d bytes" % (key, len(d)))
+            new.append((key, n, d))
+        self.fps = max(1, min(15, int(j.get("fps") or 8)))
+        self.want = new
+        self.ok_wall = time.time()
+
+    def poll_loop(self):
+        while not STOP.is_set():
+            try:
+                self.poll_once()
+                if self.said:
+                    log("miniaturas: back")
+                    self.said = None
+            except Exception as e:                       # the panel is away: keep, then clear
+                msg = "%s: %s" % (e.__class__.__name__, e)
+                if msg != self.said:
+                    self.said = msg
+                    log("miniaturas: " + msg[:160])
+                if any(self.want) and (self.ok_wall is None
+                                       or time.time() - self.ok_wall > MINIATURAS_STALE_S):
+                    self.want = [None] * TSLOTS
+                    log("miniaturas: no list for %.0f s - clearing them" % MINIATURAS_STALE_S)
+            STOP.wait(15)
+
+    def _mask(self, k, on):
+        x, val = self.x0(k), bytes([235 if on else 16]) * TW
+        for r in range(TH, 2 * TH):
+            self.y[r * W + x:r * W + x + TW] = val
+
+    def _blit(self, k, data, i):
+        x, o = self.x0(k), i * TFRAME
+        mv = memoryview(data)
+        y = self.y
+        for r in range(TH):
+            y[r * W + x:r * W + x + TW] = mv[o + r * TW:o + (r + 1) * TW]
+        hw, hx, cw = W // 2, x // 2, TW // 2
+        for plane, base in ((self.u, o + TW * TH), (self.v, o + TW * TH + cw * (TH // 2))):
+            for r in range(TH // 2):
+                plane[r * hw + hx:r * hw + hx + cw] = mv[base + r * cw:base + (r + 1) * cw]
+
+    def step(self, t):
+        """Bring the block to instant t. True when something changed."""
+        changed = False
+        want = self.want
+        for k in range(TSLOTS):
+            s = want[k]
+            if s is not self.have[k]:
+                self.have[k], self.idx[k] = s, -1
+                self._mask(k, s is not None)
+                changed = True
+            if s is None:
+                continue
+            i = int(t * self.fps) % s[1]
+            if i != self.idx[k]:
+                self.idx[k] = i
+                self._blit(k, s[2], i)
+                changed = True
+        if changed:
+            self.planes = (bytes(self.y), bytes(self.u), bytes(self.v))
+        return changed
+
+    def anim_loop(self):
+        while not STOP.wait(1.0 / 16):
+            try:
+                self.step(mono())
+            except Exception as e:                       # never take the pump down for a thumbnail
+                log("miniaturas: %s: %s - clearing them" % (e.__class__.__name__, e))
+                self.want = [None] * TSLOTS
+                STOP.wait(5)
+
+
 class Encoder:
     def __init__(self, lenses):
         self.lenses = lenses
@@ -357,12 +486,20 @@ class Encoder:
             draw += (",drawtext=fontfile=%s:textfile=%s:reload=1:x=%d:y=36:fontsize=40:"
                      "fontcolor=white:borderw=3:bordercolor=black" % (FONT, l.label_path, i * W + 36))
         up = "format=nv12,hwupload" if HW else "format=yuv420p"
-        graph = ("[0:v]split=4[a][b][c][d];"
+        t0 = 2 * H + PH                                  # first row of the thumbnail block
+        gx, gy = 960 - TGW - 10, 540 - TH - 10           # a group inside its 960x540 half
+        graph = ("[0:v]split=8[a][b][c][d][e][f][g][h];"
                  "[a]crop=%d:%d:0:0[l];[b]crop=%d:%d:0:%d[r];" % (W, H, W, H, H)
                  + "[l][r]hstack=inputs=2" + draw + ",split=2[m1][m2];"
                  "[m1]" + up + "[v];[m2]scale=1920:540[m];"
                  "[c]crop=1280:540:0:%d[pl];[d]crop=640:540:0:%d[pr];" % (2 * H, 2 * H + 540)
-                 + "[pl][pr]hstack=inputs=2[p];[m][p]vstack=inputs=2," + up + "[t]")
+                 + "[pl][pr]hstack=inputs=2[p];"
+                 "[e]crop=%d:%d:0:%d[tl];[f]crop=%d:%d:0:%d,format=gray[al];[tl][al]alphamerge[ol];"
+                 % (TGW, TH, t0, TGW, TH, t0 + TH)
+                 + "[g]crop=%d:%d:%d:%d[tr];[h]crop=%d:%d:%d:%d,format=gray[ar];[tr][ar]alphamerge[or];"
+                 % (TGW, TH, W // 2, t0, TGW, TH, W // 2, t0 + TH)
+                 + "[m][ol]overlay=%d:%d[m3];[m3][or]overlay=%d:%d[m4];" % (gx, gy, 960 + gx, gy)
+                 + "[m4][p]vstack=inputs=2," + up + "[t]")
         if HW:
             pre = ["-init_hw_device", "vaapi=va:" + DRI, "-filter_hw_device", "va"]
             enc = ["-c:v", "h264_vaapi", "-profile:v", "high", "-b:v", "3M", "-maxrate", "4M",
@@ -372,7 +509,7 @@ class Encoder:
             enc = ["-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
                    "-b:v", "3M", "-maxrate", "4M", "-bufsize", "4M", "-g", "30", "-an"]
         c = [FFMPEG, "-hide_banner", "-loglevel", E("ENCODER_LOGLEVEL", "warning"), "-nostdin"] + pre
-        c += ["-f", "rawvideo", "-pix_fmt", "yuv420p", "-video_size", "%dx%d" % (W, 2 * H + PH),
+        c += ["-f", "rawvideo", "-pix_fmt", "yuv420p", "-video_size", "%dx%d" % (W, 2 * H + PH + TBH),
               "-framerate", str(FPS), "-i", "pipe:0", "-filter_complex", graph]
         for label, path in (("[v]", "mosaico"), ("[t]", "mosaico-tv")):
             c += ["-map", label] + enc + ["-rtsp_transport", "tcp", "-f", "rtsp", OUT + "/" + path]
@@ -474,7 +611,7 @@ def grey_once(lenses):
     return (float(m.group(1)), float(m.group(2))) if m else None
 
 
-def watch_loop(lenses, enc, panel, stats):
+def watch_loop(lenses, enc, panel, stats, thumbs):
     """Every 5 s: the encoder's publisher connections and the state file. Every 30 s: grey."""
     bad = 0
     tick = 0
@@ -517,6 +654,9 @@ def watch_loop(lenses, enc, panel, stats):
             "encoder": {"up": enc.proc is not None, "publishers": n, "starts": enc.restarts + 1,
                         "stuck": enc.stuck is not None},
             "painel_age_s": None if panel.ok_wall is None else int(time.time() - panel.ok_wall),
+            "miniaturas": {"slots": sum(1 for x in thumbs.have if x),
+                           "age_s": None if thumbs.ok_wall is None else int(time.time() - thumbs.ok_wall),
+                           "erro": thumbs.said},
             "lentes": {l.name: {
                 "live": l.live, "queue": len(l.q), "feeder_up": l.proc is not None,
                 "feeder_exits": l.restarts, "stuck": l.stuck is not None,
@@ -534,6 +674,7 @@ def main():
     lenses = [Lens(n, u) for n, u in SRC]
     panel = Panel()
     enc = Encoder(lenses)
+    thumbs = Thumbs()
     stats = {"t0": mono(), "frames": 0}
 
     def stop(*_):
@@ -543,7 +684,10 @@ def main():
 
     threads = [threading.Thread(target=l.feeder_loop, daemon=True) for l in lenses]
     threads.append(threading.Thread(target=panel.loop, daemon=True))
-    threads.append(threading.Thread(target=watch_loop, args=(lenses, enc, panel, stats), daemon=True))
+    threads.append(threading.Thread(target=watch_loop, args=(lenses, enc, panel, stats, thumbs), daemon=True))
+    if MINIATURAS_URL:
+        threads.append(threading.Thread(target=thumbs.poll_loop, daemon=True))
+        threads.append(threading.Thread(target=thumbs.anim_loop, daemon=True))
     for t in threads:
         t.start()
     log("pump up: %s | %s -> %s/mosaico(-tv), %s" % (SRC[0][1], SRC[1][1], OUT,
@@ -561,8 +705,9 @@ def main():
             a = lenses[0].tick(now)
             b = lenses[1].tick(now)
             p = panel.planes
+            t = thumbs.planes
             enc.ensure(now)
-            enc.write((a[0], b[0], p[0], a[1], b[1], p[1], a[2], b[2], p[2]), now)
+            enc.write((a[0], b[0], p[0], t[0], a[1], b[1], p[1], t[1], a[2], b[2], p[2], t[2]), now)
             stats["frames"] += 1
     finally:
         STOP.set()

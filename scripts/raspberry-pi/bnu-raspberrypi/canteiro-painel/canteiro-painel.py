@@ -42,6 +42,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+import zlib
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -1226,6 +1227,150 @@ def det_clip(rid: str) -> Path | None:
     return f
 
 
+# ---- the same thumbnails, ready for the TV ------------------------------------------------
+# The TV plays `mosaico-tv`, a video: there is no page to lay GIFs over it, so canteiro-mosaico
+# (bnu Frigate LXC) burns them in (fase 2, 23/11/2026). It is stdlib-only and must stay light,
+# so the drawing is done HERE, where PIL is: each listed item becomes a short loop of raw
+# I420 frames TV_W x TV_H with everything already on it - border by severity, "3m atrás",
+# the type icon. The composer only asks for the list and copies bytes.
+#   /det/tv.json        {w, h, fps, slots: [key | null] * (lenses * DET_N)}  left lens first
+#   /det/tv/<key>.yuv   n frames of w*h*3/2 bytes; key = <id>.<crc of the age text>, so a
+#                       loop is fetched again only when its label changes (once a minute at most)
+TV_W, TV_H, TV_B, TV_FPS = 172, 96, 2, 8
+TV_MAX = int(E("DET_TV_MAX_FRAMES", "120"))
+TV_COR = {"alert": (229, 72, 77), "detection": (245, 165, 36)}
+TV_RGB: dict[str, list] = {}       # id -> bordered RGB frames, no label
+TV_YUV: dict[str, bytes] = {}      # key -> I420 loop
+TV_LOCK = threading.Lock()
+_Y_LUT = [16 + round(v * 219 / 255) for v in range(256)]          # PIL's YCbCr is full range,
+_C_LUT = [128 + round((v - 128) * 224 / 255) for v in range(256)]  # video is 16-235 / 16-240
+
+
+def _idade(ts: float) -> str:
+    s = max(0, time.time() - ts)
+    if s < 60:
+        return "agora"
+    if s < 3600:
+        return f"{int(s // 60)}m atrás"
+    if s < 86400:
+        return f"{int(s // 3600)}h atrás"
+    return f"{int(s // 86400)}d atrás"
+
+
+def _tv_icone(tipo: str, px: int) -> Image.Image | None:
+    """White silhouette of a detection type as an alpha mask px x px (drawn at 48, shrunk)."""
+    m = Image.new("L", (48, 48), 0)
+    d = ImageDraw.Draw(m)
+    if tipo == "person":
+        d.ellipse((18, 2, 30, 14), fill=255)
+        d.rounded_rectangle((12, 17, 36, 34), 4, fill=255)
+        d.rectangle((16, 32, 23, 46), fill=255)
+        d.rectangle((25, 32, 32, 46), fill=255)
+    elif tipo == "car":
+        d.polygon([(9, 21), (13, 8), (35, 8), (39, 21)], fill=255)
+        d.rounded_rectangle((6, 20, 42, 36), 4, fill=255)
+        d.rectangle((10, 36, 16, 41), fill=255)
+        d.rectangle((32, 36, 38, 41), fill=255)
+        d.polygon([(15, 20), (17, 12), (31, 12), (33, 20)], fill=0)
+        d.ellipse((10, 25, 16, 31), fill=0)
+        d.ellipse((32, 25, 38, 31), fill=0)
+    elif tipo == "bus":
+        d.rounded_rectangle((8, 4, 40, 36), 6, fill=255)
+        d.rectangle((12, 36, 17, 42), fill=255)
+        d.rectangle((31, 36, 36, 42), fill=255)
+        d.rectangle((12, 11, 36, 23), fill=0)
+        d.ellipse((12, 27, 17, 32), fill=0)
+        d.ellipse((31, 27, 36, 32), fill=0)
+    elif tipo in ("bicycle", "motorcycle"):
+        w = 4 if tipo == "bicycle" else 6
+        d.ellipse((3, 25, 19, 41), outline=255, width=w)
+        d.ellipse((29, 25, 45, 41), outline=255, width=w)
+        if tipo == "bicycle":
+            d.line([(11, 33), (19, 16), (30, 16), (37, 33)], fill=255, width=4, joint="curve")
+            d.line([(20, 18), (24, 33), (31, 18)], fill=255, width=4, joint="curve")
+            d.line([(13, 16), (19, 16)], fill=255, width=4)
+        else:
+            d.polygon([(11, 31), (19, 19), (31, 19), (37, 31), (29, 31), (25, 25), (21, 25), (18, 31)], fill=255)
+            d.line([(29, 19), (32, 13), (38, 13)], fill=255, width=4)
+    else:
+        return None
+    return m.resize((px, px), Image.LANCZOS)
+
+
+def _tv_rotulo(texto: str, objetos: list) -> Image.Image:
+    """The label layer (RGBA): a dark fade at the bottom, the age at the left, icons at the right."""
+    im = Image.new("RGBA", (TV_W, TV_H), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    fade = 26
+    for r in range(fade):
+        yy = TV_H - TV_B - fade + r
+        d.line([(TV_B, yy), (TV_W - TV_B - 1, yy)], fill=(0, 0, 0, int(200 * (r + 1) / fade)))
+    d.text((TV_B + 4, TV_H - TV_B - 4), texto, font=font(F_BODY, 14), fill=(255, 255, 255, 255),
+           anchor="ls", stroke_width=1, stroke_fill=(0, 0, 0, 200))
+    x = TV_W - TV_B - 4
+    for tipo in reversed(list(dict.fromkeys(objetos))):
+        ic = _tv_icone(tipo, 13)
+        if ic is None:
+            continue
+        x -= 13
+        im.paste(Image.new("RGBA", ic.size, (0, 0, 0, 220)), (x + 1, TV_H - TV_B - 15), ic)   # shadow
+        im.paste(Image.new("RGBA", ic.size, (255, 255, 255, 255)), (x, TV_H - TV_B - 16), ic)
+        x -= 3
+    return im
+
+
+def tv_slots() -> list:
+    with DET_LOCK:
+        cams = {c: list(lst) for c, lst in DET["cams"].items()}
+    out = []
+    for c in DET_CAMS:
+        lst = cams.get(c, [])[:DET_N]
+        out += [f"{i['id']}.{zlib.crc32(_idade(i['start']).encode()) & 0xffff:04x}" for i in lst]
+        out += [None] * (DET_N - len(lst))
+    return out
+
+
+def tv_loop_yuv(key: str) -> bytes | None:
+    rid = key.rsplit(".", 1)[0]
+    with DET_LOCK:
+        it = next((dict(i) for lst in DET["cams"].values() for i in lst if i["id"] == rid), None)
+        gif = DET["gifs"].get(rid)
+        vivos = {i["id"] for lst in DET["cams"].values() for i in lst}
+    if not it or not gif:
+        return None
+    with TV_LOCK:
+        if key in TV_YUV:
+            return TV_YUV[key]
+        frames = TV_RGB.get(rid)
+        if frames is None:
+            g = Image.open(io.BytesIO(gif))
+            n = getattr(g, "n_frames", 1)
+            passo = -(-n // TV_MAX)                # a longer GIF: every 2nd, 3rd... frame, whole event
+            frames = []
+            for k in range(0, n, passo):
+                g.seek(k)
+                # Frigate's preview is 4:3 of a 16:9 lens (detect runs on the 640x480 substream):
+                # stretching it back to 16:9 undoes the squeeze.
+                q = Image.new("RGB", (TV_W, TV_H), TV_COR.get(it["sev"], TV_COR["detection"]))
+                q.paste(g.convert("RGB").resize((TV_W - 2 * TV_B, TV_H - 2 * TV_B), Image.BILINEAR), (TV_B, TV_B))
+                frames.append(q)
+            TV_RGB[rid] = frames
+        rot = _tv_rotulo(_idade(it["start"]), it["objetos"])
+        partes = []
+        for q in frames:
+            y, cb, cr = Image.alpha_composite(q.convert("RGBA"), rot).convert("RGB").convert("YCbCr").split()
+            partes += [y.point(_Y_LUT).tobytes(),
+                       cb.resize((TV_W // 2, TV_H // 2), Image.BOX).point(_C_LUT).tobytes(),
+                       cr.resize((TV_W // 2, TV_H // 2), Image.BOX).point(_C_LUT).tobytes()]
+        blob = b"".join(partes)
+        for k in [k for k in TV_RGB if k not in vivos]:
+            del TV_RGB[k]
+        for k in [k for k in TV_YUV if k.rsplit(".", 1)[0] not in vivos or k.rsplit(".", 1)[0] == rid]:
+            del TV_YUV[k]                          # one loop per item: the old label goes
+        TV_YUV[key] = blob
+        return blob
+
+
 # ------------------------------------------------------------------ serve
 LOCK = threading.Lock()
 LAST = {"png": b"", "ts": 0.0}
@@ -1272,6 +1417,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _det(self, name: str) -> None:
         """/det/<id>.gif = Frigate's preview of a listed item; /det/<id>.mp4 = its recording."""
+        if name == "tv.json" or (name.startswith("tv/") and name.endswith(".yuv")):
+            if name == "tv.json":
+                body = json.dumps({"w": TV_W, "h": TV_H, "fps": TV_FPS, "slots": tv_slots()}).encode()
+                ctype = "application/json"
+            else:
+                key = name[3:-4]
+                rid, _, crc = key.rpartition(".")
+                body = tv_loop_yuv(key) if DET_ID_RE.match(rid) and re.fullmatch(r"[0-9a-f]{4}", crc) else None
+                ctype = "application/octet-stream"
+            if not body:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         rid, _, ext = name.rpartition(".")
         if not DET_ID_RE.match(rid) or ext not in ("gif", "mp4"):
             self.send_error(404)
