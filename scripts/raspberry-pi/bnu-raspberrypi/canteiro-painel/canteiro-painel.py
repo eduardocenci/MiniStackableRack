@@ -1117,6 +1117,115 @@ def _match(item: str, marks: list[dict]) -> dict | None:
     return best
 
 
+# ------------------------------------------------------------------ últimas detecções (miniaturas)
+# The last DET_N review items of each lens, as Frigate's own preview GIFs, for the /live page to
+# lay over the video like Frigate's live dashboard does (pedido Eduardo 23/11/2026). No filter by
+# duration and no expiry: always the last three, however old (his rules of the same day). Only
+# ENDED items — Frigate has no preview of one still open. A thread of its own: the GIFs must not
+# wait for the 60 s render tick, and a slow Frigate must not hold the panel.
+FRIGATE_URL = E("FRIGATE_URL", "http://bnu-frigate:5000").rstrip("/")
+DET_CAMS = [c.strip() for c in E("DET_CAMERAS", "canteiro_fixa,canteiro").split(",") if c.strip()]
+DET_N = int(E("DET_N", "3"))
+DET_S = int(E("DET_S", "15"))
+DET_CLIP_MAX = int(E("DET_CLIP_MAX_MB", "120")) * 1024 * 1024
+DET_CLIP_KEEP = int(E("DET_CLIP_KEEP", "6"))
+DET_ID_RE = re.compile(r"^[0-9]+\.[0-9]+-[a-z0-9]+$")
+DET_LOCK = threading.Lock()
+DET = {"ts": 0.0, "erro": None, "cams": {c: [] for c in DET_CAMS}, "gifs": {}}
+DET_CLIP_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _frigate(path: str, timeout: float = 15) -> bytes:
+    with urllib.request.urlopen(FRIGATE_URL + path, timeout=timeout) as r:
+        return r.read()
+
+
+def det_refresh() -> None:
+    cams: dict[str, list] = {}
+    gifs = dict(DET["gifs"])
+    for cam in DET_CAMS:
+        # A few more than DET_N: the newest ones may still be open or have no preview yet.
+        items = json.loads(_frigate(f"/api/review?cameras={cam}&limit={DET_N + 6}"))
+        out = []
+        for it in sorted(items, key=lambda i: -i["start_time"]):
+            rid = it.get("id", "")
+            if len(out) >= DET_N or not it.get("end_time") or not DET_ID_RE.match(rid):
+                continue
+            if rid not in gifs:
+                try:
+                    gif = _frigate(f"/api/review/{rid}/preview")
+                except OSError:
+                    continue                      # preview not there yet: next round
+                if gif[:3] != b"GIF":
+                    continue
+                gifs[rid] = gif
+            d = it.get("data") or {}
+            out.append({"id": rid, "start": it["start_time"], "end": it["end_time"],
+                        "sev": it.get("severity") or "detection", "objetos": d.get("objects") or []})
+        cams[cam] = out
+    keep = {i["id"] for lst in cams.values() for i in lst}
+    with DET_LOCK:
+        DET["cams"], DET["gifs"] = cams, {k: v for k, v in gifs.items() if k in keep}
+        DET["ts"], DET["erro"] = time.time(), None
+
+
+def det_loop() -> None:
+    while True:
+        try:
+            det_refresh()
+        except Exception as ex:  # noqa: BLE001 — the last good list stays
+            with DET_LOCK:
+                DET["erro"] = f"{ex.__class__.__name__}: {ex}"[:200]
+        time.sleep(DET_S)
+
+
+def det_clip(rid: str) -> Path | None:
+    """The recording of one listed review item, fetched from Frigate on the first click and kept
+    on disk (Frigate streams it chunked, with no Range — a browser cannot seek it, iOS not even
+    play it; from a file we can answer Range)."""
+    with DET_LOCK:
+        it = next((i | {"cam": c} for c, lst in DET["cams"].items() for i in lst if i["id"] == rid), None)
+        lock = DET_CLIP_LOCKS.setdefault(rid, threading.Lock())
+    if not it:
+        return None
+    d = STATE_DIR / "det-clips"
+    f = d / f"{rid}.mp4"
+    with lock:
+        if f.exists():
+            return f
+        d.mkdir(parents=True, exist_ok=True)
+        tmp = d / f"{rid}.tmp"
+        url = f"{FRIGATE_URL}/api/{it['cam']}/start/{it['start'] - 2:.0f}/end/{it['end'] + 2:.0f}/clip.mp4"
+        n = 0
+        with urllib.request.urlopen(url, timeout=60) as r, tmp.open("wb") as o:
+            while chunk := r.read(1 << 16):
+                n += len(chunk)
+                if n > DET_CLIP_MAX:
+                    break
+                o.write(chunk)
+        if not n or n > DET_CLIP_MAX:
+            tmp.unlink(missing_ok=True)
+            return None
+        # Frigate's clip is fragmented HEVC tagged `hev1`: Chrome plays it, Safari (macOS/iOS)
+        # refuses it and the page fell back to the enlarged GIF (seen by Eduardo, 23/11/2026).
+        # Rewrap — no re-encode — as `hvc1` with the index up front, which both play.
+        out = d / f"{rid}.remux.mp4"
+        try:
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(tmp), "-c", "copy", "-tag:v", "hvc1",
+                            "-movflags", "+faststart", str(out)], check=True, timeout=120,
+                           stdin=subprocess.DEVNULL, capture_output=True)
+            out.replace(f)
+            tmp.unlink(missing_ok=True)
+        except (OSError, subprocess.SubprocessError) as ex:
+            log(f"det clip {rid}: remux failed ({ex.__class__.__name__}) - serving Frigate's file as is")
+            out.unlink(missing_ok=True)
+            tmp.replace(f)
+        old = sorted(d.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)[DET_CLIP_KEEP:]
+        for p in old:
+            p.unlink(missing_ok=True)
+    return f
+
+
 # ------------------------------------------------------------------ serve
 LOCK = threading.Lock()
 LAST = {"png": b"", "ts": 0.0}
@@ -1141,6 +1250,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if path.endswith("/painel.json"):
                 snap["dados"] = {k: c["data"] for k, c in CACHE.items()}
             body, ctype = json.dumps(snap, ensure_ascii=False).encode(), "application/json; charset=utf-8"
+        elif path.endswith("/det.json"):
+            with DET_LOCK:
+                snap = {"ts": DET["ts"], "erro": DET["erro"], "cams": DET["cams"]}
+            body, ctype = json.dumps(snap, ensure_ascii=False).encode(), "application/json; charset=utf-8"
+        elif "/det/" in path:
+            self._det(path.rsplit("/det/", 1)[1])
+            return
         else:
             self.send_error(404)
             return
@@ -1153,6 +1269,66 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(body)
+
+    def _det(self, name: str) -> None:
+        """/det/<id>.gif = Frigate's preview of a listed item; /det/<id>.mp4 = its recording."""
+        rid, _, ext = name.rpartition(".")
+        if not DET_ID_RE.match(rid) or ext not in ("gif", "mp4"):
+            self.send_error(404)
+            return
+        if ext == "gif":
+            with DET_LOCK:
+                body = DET["gifs"].get(rid)
+            if not body:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/gif")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "private, max-age=86400, immutable")   # the id never changes picture
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        try:
+            f = det_clip(rid)
+        except OSError as ex:
+            log(f"det clip {rid}: {ex}")
+            f = None
+        if not f:
+            self.send_error(404)
+            return
+        size = f.stat().st_size
+        a, b = 0, size - 1
+        m = re.match(r"bytes=(\d*)-(\d*)$", self.headers.get("Range") or "")
+        if m and (m.group(1) or m.group(2)):
+            if m.group(1):
+                a = int(m.group(1))
+                b = min(int(m.group(2)), b) if m.group(2) else b
+            else:
+                a = max(0, size - int(m.group(2)))
+            if a > b:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.end_headers()
+                return
+            self.send_response(206)
+            self.send_header("Content-Range", f"bytes {a}-{b}/{size}")
+        else:
+            self.send_response(200)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(b - a + 1))
+        self.send_header("Cache-Control", "private, max-age=3600")
+        self.end_headers()
+        try:
+            with f.open("rb") as fh:
+                fh.seek(a)
+                left = b - a + 1
+                while left > 0 and (chunk := fh.read(min(1 << 16, left))):
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        except OSError:
+            pass                                    # the player dropped the connection
 
 
 def tick() -> None:
@@ -1184,6 +1360,7 @@ def main() -> int:
         return 2
     srv = http.server.ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
+    threading.Thread(target=det_loop, daemon=True).start()
     log(f"canteiro-painel on :{PORT}, clients {sorted(ALLOW)}")
     while True:
         t0 = time.time()
