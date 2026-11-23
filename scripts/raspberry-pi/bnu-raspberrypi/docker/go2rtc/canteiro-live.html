@@ -51,8 +51,13 @@
   #det a.alert { border-color: #e5484d; }
   #det a img { width: 100%; height: 100%; object-fit: fill; display: block; }
   #det a span { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 5px 1px;
+                display: flex; align-items: center; justify-content: space-between; gap: 3px;
                 color: #fff; font: 600 clamp(8px, 0.72vw, 13px) system-ui, sans-serif;
                 background: linear-gradient(transparent, #000b); text-shadow: 0 1px 2px #000; }
+  /* ícone do tipo de detecção (pessoa, veículo…), da altura do texto "Xm atrás" */
+  #det a span svg { height: 1em; width: 1em; flex: none; margin-left: 2px; fill: #fff; stroke: none;
+                    filter: drop-shadow(0 1px 1px #000); }
+  #det a span em { flex: 1; font-style: normal; white-space: nowrap; overflow: hidden; }
   #clip { position: fixed; inset: 0; z-index: 4; display: none; background: #000d;
           align-items: center; justify-content: center; }
   #clip.show { display: flex; }
@@ -202,6 +207,19 @@
   const DET_ON = new URLSearchParams(location.search).get('det') !== '0';
   let detKey = '', detItems = [];
   const ROTULO = { person: 'pessoa', car: 'veículo', bus: 'ônibus', motorcycle: 'moto', bicycle: 'bicicleta' };
+  // Ícone minúsculo do tipo, no canto inferior direito da miniatura (pedido Eduardo 23/11/2026).
+  // Constantes fixas — nunca texto vindo do Frigate; tipo sem ícone = só o texto.
+  const RODAS = '<circle cx="5.5" cy="16.5" r="4" fill="none" stroke="#fff" stroke-width="W"/>' +
+                '<circle cx="18.5" cy="16.5" r="4" fill="none" stroke="#fff" stroke-width="W"/>';
+  const ICONE = {
+    person: '<circle cx="12" cy="4.5" r="3"/><path d="M8 9h8a2 2 0 0 1 2 2v5h-2v7h-2.6v-6h-2.8v6H8v-7H6v-5a2 2 0 0 1 2-2z"/>',
+    car: '<path fill-rule="evenodd" d="M5 10l1.6-4.6A2 2 0 0 1 8.5 4h7a2 2 0 0 1 1.9 1.4L19 10a2 2 0 0 1 2 2v6h-2v1.5a1.25 1.25 0 0 1-2.5 0V18h-9v1.5a1.25 1.25 0 0 1-2.5 0V18H3v-6a2 2 0 0 1 2-2zm2.3 0h9.4l-1.2-4h-7zM6.5 15a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zm11 0a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/>',
+    bus: '<path fill-rule="evenodd" d="M4 5a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v13h-1.5v1.5a1.25 1.25 0 0 1-2.5 0V18H8v1.5a1.25 1.25 0 0 1-2.5 0V18H4zm2 1v6h12V6zm1.5 10a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5zm9 0a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5z"/>',
+    bicycle: RODAS.replace(/W/g, '1.8') + '<path d="M5.5 16.5L9.5 8h5.5l3.5 8.5M9 8h-2.5M12 16.5L9.8 9.5M12 16.5l3.5-7" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+    motorcycle: RODAS.replace(/W/g, '2.6') + '<path d="M6 15l3.5-5h6l2.5 5h-3.5l-2-2.5H10.5L9 15z"/><path d="M14.5 10l1.5-3h3" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round"/>',
+  };
+  const icones = i => [...new Set(i.objetos)].filter(o => ICONE[o])
+    .map(o => '<svg viewBox="0 0 24 24" aria-label="' + ROTULO[o] + '">' + ICONE[o] + '</svg>').join('');
   const objetos = i => i.objetos.map(o => ROTULO[o] || o).join(', ');
 
   function idade(ts) {
@@ -241,8 +259,11 @@
           const img = document.createElement('img');
           img.src = '/painel/det/' + i.id + '.gif';
           img.alt = '';
-          const sp = document.createElement('span');
-          a.append(img, sp);
+          const wrap = document.createElement('span');
+          const sp = document.createElement('em');
+          wrap.append(sp);
+          wrap.insertAdjacentHTML('beforeend', icones(i));
+          a.append(img, wrap);
           a.addEventListener('click', () => openClip(i, c));
           g.append(a);
           detItems.push([i, a, sp]);
