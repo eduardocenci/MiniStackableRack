@@ -912,7 +912,10 @@ def render() -> Image.Image:
                 y += 28
                 sw = dr.textlength(r["st"], font=f_bs)
                 dr.text((xb - sw, y), r["st"], font=f_bs, fill=BLUE if on else DIM)
-                dr.text((xa + 24, y), fit(dr, r["det"], f_bs, int(tw - sw - 12)), font=f_bs,
+                det = r["det"]                           # no room: drop the last note rather than cut a word
+                while " · " in det and dr.textlength(det, font=f_bs) > tw - sw - 12:
+                    det = det.rsplit(" · ", 1)[0]
+                dr.text((xa + 24, y), fit(dr, det, f_bs, int(tw - sw - 12)), font=f_bs,
                         fill=AMBER if r["box"] == "fraco" else DIM)
                 y += 28
             y += 4
