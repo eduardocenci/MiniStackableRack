@@ -199,7 +199,7 @@ def _rede_hoje(dia: str, novos: dict[str, dict]) -> dict[str, dict]:
     return vistos
 
 
-SERIE_H = (7, 18)   # the chart's X axis: the site's working hours (07:00-18:00)
+SERIE_H = (0, 24)   # the chart's X axis: the whole day, 00:00-24:00 (pedido Eduardo 23/11/2026; was 07:00-18:00)
 
 
 def _rede_serie(agora: dt.datetime, hora: int) -> list[list[int]]:
@@ -683,7 +683,7 @@ def render() -> Image.Image:
     xa, y, xb, ye = head("rede", "NA REDE AGORA", f"{now:%H:%M}", "rede")
     d = CACHE["rede"]["data"]
     if d:
-        # behind the text: the day's curve of "devices in the last hour" over the working hours,
+        # behind the text: the day's curve of "devices in the last hour" over the whole day (24 h),
         # across the whole card (pedido Eduardo 16/11/2026). Dim on purpose - the text stays on top.
         h0, h1x = SERIE_H
         base, topo = ye + 4, y + 28
@@ -704,8 +704,8 @@ def render() -> Image.Image:
             dr.text((xb - dr.textlength(lab, font=f_mx), topo + 3), lab, font=f_mx, fill=DIM)
         for hh in range(h0, h1x + 1):
             x = px(hh * 60)
-            dr.line((x, base - (7 if hh % 2 else 4), x, base), fill=LINE, width=1)
-            if hh % 2:
+            dr.line((x, base - (4 if hh % 3 else 7), x, base), fill=LINE, width=1)
+            if hh % 3 == 0:
                 lab = f"{hh}h"
                 tx = min(max(x - dr.textlength(lab, font=f_ax) / 2, xa), xb - dr.textlength(lab, font=f_ax))
                 dr.text((tx, base - 25), lab, font=f_ax, fill=(84, 94, 110))
