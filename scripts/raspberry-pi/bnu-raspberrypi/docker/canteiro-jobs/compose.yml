@@ -112,6 +112,11 @@ services:
       TZ: America/Sao_Paulo
       PYTHONUNBUFFERED: "1"
       STATE_DIR: /var/lib/canteiro-alertas
+      # Saída OBSERVADA ao vivo (home-ara regras 2g + 2h; OK do Eduardo 22/11/2026): a trilha "saindo"
+      # passa pelos vetos e o aviso só vai ao grupo 10 min depois, se a câmera não viu mais o caminhão.
+      # Rollback = tirar as duas linhas e recriar o container.
+      SAIDA_REGRA: v1
+      SAIDA_ESPERA_S: "600"
     volumes:
       - /var/lib/canteiro-alertas:/var/lib/canteiro-alertas
     command: ["python3", "/app/canteiro-alertas.py"]
