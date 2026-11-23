@@ -29,6 +29,23 @@ Container `canteiro-painel` on bnu-raspberrypi — image `canteiro-jobs:local`, 
 HTTP `:8557`: `/painel.png` and `/painel.json` only for `PAINEL_ALLOW`
 (`127.0.0.1,10.1.1.160`); `/health` for anyone (no names — it feeds the globalnet LED).
 
+### Últimas detecções — the thumbnails over the `/live` video (pedido Eduardo 23/11/2026)
+
+Same port, same `PAINEL_ALLOW`. A thread of its own asks the bnu Frigate (`FRIGATE_URL`, already
+in the env) every 15 s (`DET_S`) for the review items of each lens (`DET_CAMERAS`, default
+`canteiro_fixa,canteiro` = left | right of the mosaic) and keeps the last 3 (`DET_N`) ENDED ones
+with Frigate's own preview GIF (`/api/review/<id>/preview`, 240×180, 8 fps) in memory. Eduardo's
+rules of 23/11/2026: no filter by duration, no expiry — always the last three, however old.
+
+| Route | What |
+|---|---|
+| `/det.json` | `{ts, erro, cams: {<camera>: [{id, start, end, sev, objetos}]}}`, newest first; `erro` = the last Frigate failure (the last good list stays) |
+| `/det/<id>.gif` | the preview GIF of a LISTED item (anything else = 404) |
+| `/det/<id>.mp4` | the recording of that stretch (`/api/<camera>/start/…/end/…/clip.mp4`, ± 2 s), fetched on the first click and kept in `STATE_DIR/det-clips/` (last 6, ≤ 120 MB each) — Frigate streams it chunked with no `Range`, so it is served from the file, with `Range` |
+
+Check: `curl -s 127.0.0.1:8557/det.json` on the Pi. The TV output (`mosaico-tv`) does not carry
+the thumbnails yet (phase 2: burned in by the composer).
+
 ## Consumers
 
 - **`canteiro-mosaico`** (bnu Frigate LXC 105,
@@ -37,7 +54,10 @@ HTTP `:8557`: `/painel.png` and `/painel.json` only for `PAINEL_ALLOW`
 - **`/live`** ([`../docker/go2rtc/canteiro-live.html`](../docker/go2rtc/canteiro-live.html)):
   `tailscale serve --bg --set-path=/painel http://127.0.0.1:8557` (tailnet only); the page
   shows `/painel/painel.png` under the 2560×720 video, reloaded every 30 s.
-  `…/live?painel=0` = video only.
+  `…/live?painel=0` = video only. Since 2026-11-23 it also lays the last three detections of
+  each lens over the video, at the bottom right of that lens (`/painel/det.json` every 15 s,
+  `/painel/det/<id>.gif`; red border = alert, amber = detection; a click plays
+  `/painel/det/<id>.mp4`). `…/live?det=0` = without them.
 
 ## Deploy / test
 
