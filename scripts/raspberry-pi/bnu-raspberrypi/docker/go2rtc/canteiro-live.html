@@ -64,6 +64,12 @@
   #clip video, #clip img { width: auto; height: auto; max-width: 94vw; max-height: 90vh; background: #000; }
   #clip p { position: absolute; top: 10px; left: 14px; margin: 0; color: #ddd;
             font: 14px system-ui, sans-serif; }
+  /* baixar a gravação aberta (pedido Eduardo 23/11/2026) */
+  #baixar { position: absolute; top: 8px; right: 14px; padding: 6px 12px; border-radius: 6px;
+            background: #2b6cb0; color: #fff; text-decoration: none; cursor: pointer;
+            font: 600 14px system-ui, sans-serif; }
+  #baixar:hover { background: #3a82d0; }
+  #baixar[hidden] { display: none; }
   #msg { position: fixed; top: 12px; left: 12px; color: #9a9a9a;
          font: 14px system-ui, sans-serif; z-index: 2; }
   #offline { position: fixed; inset: 0; display: none; z-index: 3;
@@ -94,7 +100,7 @@
 <video id="v" muted autoplay playsinline controls></video>
 <div id="det"></div>
 <img id="painel" alt="Painel do canteiro: rede, portão, entregas, plano da semana">
-<div id="clip"><p></p></div>
+<div id="clip"><p></p><a id="baixar" hidden>⬇ Baixar clip</a></div>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
   // MOSAICO [lente fixa (rua) | lente PT] desde 14/11/2026 — H.264 2560x720.
@@ -202,6 +208,7 @@
   // do Frigate do bnu. Clicar abre a gravação do trecho (/painel/det/<id>.mp4). ?det=0 desliga.
   const det = document.getElementById('det');
   const clip = document.getElementById('clip');
+  const baixar = document.getElementById('baixar');
   const LENTES = PATH === 'mosaico' ? ['canteiro_fixa', 'canteiro']      // esquerda | direita
                : [PATH === 'canteiro' ? 'canteiro' : 'canteiro_fixa'];
   const DET_ON = new URLSearchParams(location.search).get('det') !== '0';
@@ -292,12 +299,19 @@
       (i.objetos.length ? ' · ' + objetos(i) : '') + ' — clique fora para fechar';
     const old = clip.querySelector('video, img');
     if (old) old.remove();
+    // nome do arquivo: lente + data e hora de Brasília do início da detecção
+    const d = new Date(i.start * 1000).toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+    baixar.href = '/painel/det/' + i.id + '.mp4';
+    baixar.download = 'canteiro-' + (cam === 'canteiro' ? 'pt' : 'fixa') + '-' +
+      d.replace(/[-:]/g, '').replace(' ', '-') + '.mp4';
+    baixar.hidden = false;
     const cv = document.createElement('video');
     cv.controls = true; cv.autoplay = true; cv.muted = true; cv.playsInline = true;
     cv.addEventListener('error', () => {           // sem gravação (já apagada): mostra o GIF grande
       const big = document.createElement('img');
       big.src = '/painel/det/' + i.id + '.gif';
       big.style.width = 'min(94vw, 960px)';
+      baixar.hidden = true;                        // não há gravação para baixar
       cv.replaceWith(big);
     });
     cv.src = '/painel/det/' + i.id + '.mp4';
@@ -310,6 +324,7 @@
     if (m) { if (m.pause) m.pause(); m.remove(); }
     clip.classList.remove('show');
   }
+  baixar.addEventListener('click', e => e.stopPropagation());
   clip.addEventListener('click', closeClip);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeClip(); });
 

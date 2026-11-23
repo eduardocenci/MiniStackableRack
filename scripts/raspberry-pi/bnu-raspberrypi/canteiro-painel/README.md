@@ -68,7 +68,8 @@ The composer polls `/det/tv.json` every 15 s. Look at one loop:
   `…/live?painel=0` = video only. Since 2026-11-23 it also lays the last three detections of
   each lens over the video, at the bottom right of that lens (`/painel/det.json` every 15 s,
   `/painel/det/<id>.gif`; red border = alert, amber = detection; a click plays
-  `/painel/det/<id>.mp4`). `…/live?det=0` = without them.
+  `/painel/det/<id>.mp4`, with a "Baixar clip" button at the top right that saves that file as
+  `canteiro-<fixa|pt>-AAAAMMDD-HHMMSS.mp4`). `…/live?det=0` = without them.
 
 ## Deploy / test
 
