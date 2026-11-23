@@ -20,7 +20,10 @@
        resumes at the live edge when shown again.
      - Offline screen: after ~15 s without recovery shows "CANTEIRO FORA DO
        AR" with an offline timer, over the last good frame (canvas-captured
-       every 30 s while playing), retrying every 5 s while visible. -->
+       every 30 s while playing), retrying every 5 s while visible.
+     - Since 2026-11-23: the last 3 Frigate detections of each lens (preview GIFs)
+       over the video, bottom right of that lens — /painel/det.json + /painel/det/<id>.gif
+       from canteiro-painel; a click plays the recording. ?det=0 hides them. -->
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
@@ -35,6 +38,27 @@
   body.painel video, body.painel #painel { display: block; width: 100vw;
          height: min(50vh, 28.125vw); object-fit: contain; }
   body.painel #painel { background: #0e1116; }
+  /* Últimas detecções de cada lente (GIFs do Frigate) sobre o vídeo — desde 23/11/2026.
+     #det cobre exatamente a imagem do vídeo (posicionado por JS); cada .grp é o canto
+     inferior direito de uma lente. Sobe para liberar a barra de controles do player. */
+  #det { position: fixed; z-index: 1; pointer-events: none; display: none; }
+  #det .grp { position: absolute; bottom: 2.5%; display: flex; justify-content: flex-end;
+              gap: 0.6%; padding-right: 0.5%; box-sizing: border-box; transition: transform .15s; }
+  video:hover ~ #det .grp, #det:hover .grp { transform: translateY(-46px); }
+  #det a { position: relative; display: block; flex: 0 0 var(--tw); aspect-ratio: 16 / 9;
+           pointer-events: auto; cursor: pointer; border-radius: 6px; overflow: hidden;
+           border: 2px solid #f5a524; background: #111; box-shadow: 0 1px 6px #000a; }
+  #det a.alert { border-color: #e5484d; }
+  #det a img { width: 100%; height: 100%; object-fit: fill; display: block; }
+  #det a span { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 5px 1px;
+                color: #fff; font: 600 clamp(8px, 0.72vw, 13px) system-ui, sans-serif;
+                background: linear-gradient(transparent, #000b); text-shadow: 0 1px 2px #000; }
+  #clip { position: fixed; inset: 0; z-index: 4; display: none; background: #000d;
+          align-items: center; justify-content: center; }
+  #clip.show { display: flex; }
+  #clip video, #clip img { width: auto; height: auto; max-width: 94vw; max-height: 90vh; background: #000; }
+  #clip p { position: absolute; top: 10px; left: 14px; margin: 0; color: #ddd;
+            font: 14px system-ui, sans-serif; }
   #msg { position: fixed; top: 12px; left: 12px; color: #9a9a9a;
          font: 14px system-ui, sans-serif; z-index: 2; }
   #offline { position: fixed; inset: 0; display: none; z-index: 3;
@@ -63,7 +87,9 @@
   </div>
 </div>
 <video id="v" muted autoplay playsinline controls></video>
+<div id="det"></div>
 <img id="painel" alt="Painel do canteiro: rede, portão, entregas, plano da semana">
+<div id="clip"><p></p></div>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
   // MOSAICO [lente fixa (rua) | lente PT] desde 14/11/2026 — H.264 2560x720.
@@ -164,6 +190,117 @@
   v.addEventListener('error', scheduleRetry);
   v.addEventListener('stalled', markDown);
   v.addEventListener('waiting', markDown);
+  // ---- Últimas detecções de cada lente (pedido Eduardo 23/11/2026) -----------------
+  // As 3 últimas de cada lente, sem filtro de duração e sem validade (a idade fica escrita),
+  // mais nova à esquerda; borda vermelha = alerta, âmbar = detecção, como no Frigate.
+  // GIFs e lista vêm do canteiro-painel (/painel/det.json, /painel/det/<id>.gif), que os lê
+  // do Frigate do bnu. Clicar abre a gravação do trecho (/painel/det/<id>.mp4). ?det=0 desliga.
+  const det = document.getElementById('det');
+  const clip = document.getElementById('clip');
+  const LENTES = PATH === 'mosaico' ? ['canteiro_fixa', 'canteiro']      // esquerda | direita
+               : [PATH === 'canteiro' ? 'canteiro' : 'canteiro_fixa'];
+  const DET_ON = new URLSearchParams(location.search).get('det') !== '0';
+  let detKey = '', detItems = [];
+  const ROTULO = { person: 'pessoa', car: 'veículo', bus: 'ônibus', motorcycle: 'moto', bicycle: 'bicicleta' };
+  const objetos = i => i.objetos.map(o => ROTULO[o] || o).join(', ');
+
+  function idade(ts) {
+    const s = Math.max(0, Date.now() / 1000 - ts);
+    if (s < 60) return 'agora';
+    if (s < 3600) return Math.floor(s / 60) + 'm atrás';
+    if (s < 86400) return Math.floor(s / 3600) + 'h atrás';
+    return Math.floor(s / 86400) + 'd atrás';
+  }
+
+  function placeDet() {              // #det = o retângulo da IMAGEM dentro do <video> (object-fit: contain)
+    const r = v.getBoundingClientRect();
+    const ar = v.videoWidth && v.videoHeight ? v.videoWidth / v.videoHeight : (LENTES.length === 2 ? 32 / 9 : 16 / 9);
+    let w = r.width, h = r.width / ar;
+    if (h > r.height) { h = r.height; w = h * ar; }
+    det.style.left = (r.left + (r.width - w) / 2) + 'px';
+    det.style.top = (r.top + (r.height - h) / 2) + 'px';
+    det.style.width = w + 'px';
+    det.style.height = h + 'px';
+    det.style.setProperty('--tw', (w * (LENTES.length === 2 ? 0.088 : 0.12)) + 'px');
+  }
+
+  function drawDet(cams) {
+    const key = LENTES.map(c => (cams[c] || []).map(i => i.id).join(',')).join('|');
+    if (key !== detKey) {            // só refaz o DOM quando a lista muda (não reinicia os GIFs à toa)
+      detKey = key;
+      det.textContent = '';
+      detItems = [];
+      LENTES.forEach((c, n) => {
+        const g = document.createElement('div');
+        g.className = 'grp';
+        g.style.left = (n * 100 / LENTES.length) + '%';
+        g.style.width = (100 / LENTES.length) + '%';
+        (cams[c] || []).forEach(i => {
+          const a = document.createElement('a');
+          if (i.sev === 'alert') a.className = 'alert';
+          const img = document.createElement('img');
+          img.src = '/painel/det/' + i.id + '.gif';
+          img.alt = '';
+          const sp = document.createElement('span');
+          a.append(img, sp);
+          a.addEventListener('click', () => openClip(i, c));
+          g.append(a);
+          detItems.push([i, a, sp]);
+        });
+        det.append(g);
+      });
+    }
+    const hora = ts => new Date(ts * 1000).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+    detItems.forEach(([i, a, sp]) => {
+      sp.textContent = idade(i.start);
+      a.title = hora(i.start) + ' – ' + hora(i.end) + (i.objetos.length ? ' · ' + objetos(i) : '');
+    });
+    det.style.display = detItems.length ? 'block' : 'none';
+    placeDet();
+  }
+
+  function loadDet() {
+    if (document.hidden) return;
+    fetch('/painel/det.json', { cache: 'no-store' }).then(r => r.ok ? r.json() : null)
+      .then(j => { if (j && j.cams) drawDet(j.cams); }).catch(() => {});
+  }
+
+  function openClip(i, cam) {
+    const quando = new Date(i.start * 1000).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+    clip.querySelector('p').textContent = (cam === 'canteiro' ? 'Lente PT' : 'Lente fixa') + ' · ' + quando +
+      (i.objetos.length ? ' · ' + objetos(i) : '') + ' — clique fora para fechar';
+    const old = clip.querySelector('video, img');
+    if (old) old.remove();
+    const cv = document.createElement('video');
+    cv.controls = true; cv.autoplay = true; cv.muted = true; cv.playsInline = true;
+    cv.addEventListener('error', () => {           // sem gravação (já apagada): mostra o GIF grande
+      const big = document.createElement('img');
+      big.src = '/painel/det/' + i.id + '.gif';
+      big.style.width = 'min(94vw, 960px)';
+      cv.replaceWith(big);
+    });
+    cv.src = '/painel/det/' + i.id + '.mp4';
+    cv.addEventListener('click', e => e.stopPropagation());
+    clip.append(cv);
+    clip.classList.add('show');
+  }
+  function closeClip() {
+    const m = clip.querySelector('video, img');
+    if (m) { if (m.pause) m.pause(); m.remove(); }
+    clip.classList.remove('show');
+  }
+  clip.addEventListener('click', closeClip);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeClip(); });
+
+  if (DET_ON) {
+    loadDet();
+    setInterval(loadDet, 15000);
+    window.addEventListener('resize', placeDet);
+    v.addEventListener('loadedmetadata', placeDet);
+    v.addEventListener('resize', placeDet);
+    document.getElementById('painel').addEventListener('load', placeDet);   // o painel muda a altura do vídeo
+  }
+
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {           // pausa o consumo enquanto ninguém olha
       clearTimeout(retryTimer);
@@ -172,6 +309,7 @@
     }
     if (hls) { hls.startLoad(); v.play().catch(() => {}); }
     else start();
+    if (DET_ON) loadDet();
   });
   start();
 </script>
