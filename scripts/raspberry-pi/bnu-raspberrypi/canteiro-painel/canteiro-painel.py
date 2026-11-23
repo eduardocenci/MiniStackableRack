@@ -1206,7 +1206,20 @@ def det_clip(rid: str) -> Path | None:
         if not n or n > DET_CLIP_MAX:
             tmp.unlink(missing_ok=True)
             return None
-        tmp.replace(f)
+        # Frigate's clip is fragmented HEVC tagged `hev1`: Chrome plays it, Safari (macOS/iOS)
+        # refuses it and the page fell back to the enlarged GIF (seen by Eduardo, 23/11/2026).
+        # Rewrap — no re-encode — as `hvc1` with the index up front, which both play.
+        out = d / f"{rid}.remux.mp4"
+        try:
+            subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(tmp), "-c", "copy", "-tag:v", "hvc1",
+                            "-movflags", "+faststart", str(out)], check=True, timeout=120,
+                           stdin=subprocess.DEVNULL, capture_output=True)
+            out.replace(f)
+            tmp.unlink(missing_ok=True)
+        except (OSError, subprocess.SubprocessError) as ex:
+            log(f"det clip {rid}: remux failed ({ex.__class__.__name__}) - serving Frigate's file as is")
+            out.unlink(missing_ok=True)
+            tmp.replace(f)
         old = sorted(d.glob("*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)[DET_CLIP_KEEP:]
         for p in old:
             p.unlink(missing_ok=True)
