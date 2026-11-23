@@ -81,6 +81,7 @@ REDE_AVISO = E("REDE_AVISO", "off").lower()
 REDE_AVISO_FORA = {t.strip().lower() for t in E("REDE_AVISO_FORA", "Eduardo,Jorge,Ênio,Ariane").split(",") if t.strip()}
 WAHA_URL, WAHA_KEY, WAHA_SESSION, TEST_JID = E("WAHA_URL").rstrip("/"), E("WAHA_KEY"), E("WAHA_SESSION", "default"), E("TEST_JID")
 HOJE_DIA = E("PAINEL_HOJE")            # YYYY-MM-DD: read that day's trucks instead of today's (tests)
+DIARIO_N = int(E("DIARIO_N", "3"))     # diaries read: the newest is "the" Diário, the others only list what was concluded
 HOJE_CONF = int(E("HOJE_CONF", "60"))  # below this Claudinho's answer is "provável" and gives no automatic baixa
 FIN_TAB = E("FIN_TAB", "Financeiro")
 VENC_DIAS = int(E("VENC_DIAS", "7"))      # titles due from today to today + N days…
@@ -165,7 +166,7 @@ def src_rede() -> dict:
             sem_tag += 1
     # the day's unique devices (count shown next to "N agora"; the list itself only in /painel.json)
     unicos = sorted(({"nome": re.sub(r"\s*\([^()]+\)\s*$", "", v["nome"]) or v["nome"], "tag": _tag(v["nome"]),
-                      "ts": v["ts"], "on": agora - v["ts"] <= 3600} for v in vistos.values()),
+                      "ts": v["ts"], "t0": v.get("t0") or v["ts"], "on": agora - v["ts"] <= 3600} for v in vistos.values()),
                     key=lambda u: (not u["tag"], u["tag"].lower(), not u["on"], u["nome"].lower()))
     return {"pessoas": pessoas, "fixos_on": fixos_on, "fixos_total": fixos_total, "saidas": saidas[:4], "hora": hora,
             "unicos": unicos,
@@ -185,7 +186,7 @@ def _rede_hoje(dia: str, novos: dict[str, dict]) -> dict[str, dict]:
     vistos = st.get("vistos", {}) if st.get("dia") == dia else {}
     for k, v in novos.items():
         if v["ts"] >= vistos.get(k, {}).get("ts", 0):
-            vistos[k] = v
+            vistos[k] = dict(v, t0=vistos.get(k, {}).get("t0") or v["ts"])   # t0 = first sighting of the day
     try:
         STATE_DIR.mkdir(parents=True, exist_ok=True)
         tmp = f.with_suffix(".tmp")
@@ -324,19 +325,24 @@ def src_diario() -> dict:
     if r.returncode:
         raise RuntimeError("rclone lsf: " + r.stderr.strip()[-120:])
     days = sorted(d.strip("/") for d in r.stdout.split() if re.fullmatch(r"\d{4}-\d{2}-\d{2}/", d))
-    for day in reversed(days[-6:]):
+    achados: list[dict] = []
+    for day in reversed(days[-8:]):
         with tempfile.TemporaryDirectory() as td:
             dest = Path(td) / "diario.json"
             g = subprocess.run(["rclone", "copyto", f"{RCLONE_REMOTE}/{DIARIO_DIR}/{day}/diario.json", str(dest)],
                                capture_output=True, text=True, timeout=120, env=env)
             if g.returncode == 0 and dest.exists():
                 j = json.loads(dest.read_text(encoding="utf-8"))
-                return {"date": day, "week": j.get("week"),
-                        "entregas": [{k: _plain(e.get(k)) for k in ("contrato", "o_que", "previsto", "status", "status_label")}
-                                     for e in (j.get("entregas") or [])],
-                        "plano": [{k: _plain(p.get(k)) for k in ("item", "status", "status_label")}
-                                  for p in (j.get("plano") or [])]}
-    raise RuntimeError("no diario.json in the last 6 day folders")
+                achados.append({"date": day, "week": j.get("week"),
+                                "entregas": [{k: _plain(e.get(k)) for k in ("contrato", "o_que", "previsto", "status", "status_label")}
+                                             for e in (j.get("entregas") or [])],
+                                "plano": [{k: _plain(p.get(k)) for k in ("item", "status", "status_label")}
+                                          for p in (j.get("plano") or [])]})
+        if len(achados) >= DIARIO_N:
+            break
+    if not achados:
+        raise RuntimeError("no diario.json in the last 8 day folders")
+    return dict(achados[0], anteriores=[{"date": a["date"], "entregas": a["entregas"]} for a in achados[1:]])
 
 
 def _plain(v) -> str:
@@ -858,82 +864,87 @@ def render() -> Image.Image:
                 y += 26
             y += 4
 
-    # 3 — deliveries
+    # 3 — suppliers on site (pedido Eduardo 23/11/2026): ONE row per happening. A truck of today
+    # that matches an item the Diário expected becomes a single row under PRESENTE HOJE (it used
+    # to show twice: the truck and the item). Checked box = the supplier was identified today
+    # (camera + Claudinho >= HOJE_CONF, or a tagged device on the Wi-Fi) - presence, NOT "done":
+    # green stays for what a Diário recorded.
     dj = CACHE["diario"]["data"]
-    sub = ""
+    xa, y, xb, ye = head("entregas", "FORNECEDORES NA OBRA", f"{WD_PT[now.weekday()]} {now:%d/%m}", "diario")
     if dj:
         dd = dt.date.fromisoformat(dj["date"])
-        sub = f"diário de {WD_PT[dd.weekday()]} {dd:%d/%m}"
-    xa, y, xb, ye = head("entregas", "ENTREGAS", sub, "diario")
-    if dj:
-        col = {"part": AMBER, "no": RED, "na": BLUE}
+        col = {"part": AMBER, "no": RED}
         rows = [e for e in dj["entregas"] if not _filler(e)]
-        feitos = [e for e in rows if _recebido(e)]
+        feitos = [dict(e, _dia=dd) for e in rows if _recebido(e)]
         falta = [e for e in rows if not _recebido(e)]
+        ja = {(_key(e["contrato"]), _key(e["o_que"])) for e in feitos}
+        for a in dj.get("anteriores") or []:           # concluded in the diaries before the last one
+            ad = dt.date.fromisoformat(a["date"])
+            for e in a["entregas"]:
+                k = (_key(e["contrato"]), _key(e["o_que"]))
+                if not _filler(e) and _recebido(e) and k not in ja:
+                    ja.add(k)
+                    feitos.append(dict(e, _dia=ad))
         tw = int(xb - xa - 24)
-        # Today, before tonight's Diário: the trucks the camera alerted and Claudinho identified.
-        # Blue = seen by the camera (evidence); green stays for what a Diário recorded.
         hj = CACHE["hoje"]["data"]
-        hoje = hj["caminhoes"] if hj and hj["dia"] > dj["date"] else []
         hd = dt.date.fromisoformat(hj["dia"]) if hj else now.date()
-        quando = "hoje" if hd == now.date() else f"{WD_PT[hd.weekday()]} {hd:%d/%m}"
-        for t in hoje:
-            if t["con"] and t["conf"] >= HOJE_CONF and _key(t["tipo"]).startswith("entrega"):
-                for e in [e for e in falta if e["contrato"].split(" ")[0] == t["con"]]:
-                    falta.remove(e)
-                    feitos.insert(0, dict(e, _cam=True, previsto="", status_label=f"chegou {quando} {t['chegou']}"))
-        if hoje:
-            dr.text((xa, y), "HOJE" if hd == now.date() else f"{WD_PT[hd.weekday()].upper()} {hd:%d/%m}", font=f_s, fill=DIM)
-            dr.text((xb - dr.textlength("pela câmera", font=f_bs), y + 2), "pela câmera", font=f_bs, fill=BLUE)
+        antes = hd.isoformat() > dj["date"]             # tonight's Diário is not out yet
+        presentes = _presentes(hj["caminhoes"] if hj and antes else [], falta,
+                               CACHE["rede"]["data"] if antes and hd == now.date() else None, hd, now)
+        if presentes:
+            dr.text((xa, y), "PRESENTE HOJE" if hd == now.date() else f"PRESENTE {WD_PT[hd.weekday()].upper()} {hd:%d/%m}",
+                    font=f_s, fill=DIM)
+            fonte = " · ".join(x for x in ("pela câmera" if any(not r.get("rede") for r in presentes) else "",
+                                           "pela rede" if any(r.get("rede") for r in presentes) else "") if x)
+            dr.text((xb - dr.textlength(fonte, font=f_bs), y + 2), fonte, font=f_bs, fill=BLUE)
             y += 27
-            for i, t in enumerate(hoje):
+            for i, r in enumerate(presentes):
                 if y + 56 > ye - 120:                    # always leave room for the Diário's sections
-                    dr.text((xa, y - 2), f"+ {len(hoje) - i} caminhões", font=f_bs, fill=DIM)
+                    dr.text((xa, y - 2), f"+ {len(presentes) - i}", font=f_bs, fill=DIM)
                     y += 24
                     break
-                ident = bool(t["empresa"])
-                fraco = ident and t["conf"] < HOJE_CONF
-                cc = BLUE if ident and not fraco else AMBER if fraco else DIM
-                dr.ellipse((xa, y + 9, xa + 14, y + 23), fill=cc if ident else None, outline=cc, width=2)
-                # no exit message yet: "no canteiro" only while that is still likely (2 h), then nothing
-                hh, mm = (int(x) for x in t["chegou"].split(":"))
-                idade = (now - dt.datetime.combine(hd, dt.time(hh, mm), TZ)).total_seconds()
-                st = f"saiu {t['saiu']}" if t["saiu"] else "no canteiro" if 0 <= idade < 7200 else ""
-                sw = dr.textlength(st, font=f_bs)
-                dr.text((xb - sw, y + 3), st, font=f_bs, fill=DIM if t["saiu"] else BLUE)
-                quem = t["empresa"] if ident else "caminhão " + (t["veiculo"] or "de tipo incerto")
-                dr.text((xa + 24, y), fit(dr, f"{t['chegou']}  {quem}", f_b, int(tw - sw - 12)), font=f_b, fill=FG)
+                on = r["box"] == "on"
+                cc = BLUE if on else AMBER if r["box"] == "fraco" else DIM
+                dr.rounded_rectangle((xa - 1, y + 8, xa + 15, y + 24), radius=3, fill=cc if on else None, outline=cc, width=2)
+                if on:
+                    dr.line([(xa + 3, y + 16), (xa + 6, y + 20), (xa + 12, y + 12)], fill=CARD, width=3)
+                dr.text((xa + 24, y), fit(dr, r["titulo"], f_b, tw), font=f_b, fill=FG)
                 y += 28
-                if ident:
-                    d2 = " · ".join(x for x in ((f"provável {t['conf']} %" if fraco else ""), t["tipo"], t["o_que"]) if x)
-                else:
-                    d2 = "não identificado"
-                dr.text((xa + 24, y), fit(dr, d2, f_bs, tw), font=f_bs, fill=AMBER if fraco else DIM)
+                sw = dr.textlength(r["st"], font=f_bs)
+                dr.text((xb - sw, y), r["st"], font=f_bs, fill=BLUE if on else DIM)
+                det = r["det"]                           # no room: drop the last note rather than cut a word
+                while " · " in det and dr.textlength(det, font=f_bs) > tw - sw - 12:
+                    det = det.rsplit(" · ", 1)[0]
+                dr.text((xa + 24, y), fit(dr, det, f_bs, int(tw - sw - 12)), font=f_bs,
+                        fill=AMBER if r["box"] == "fraco" else DIM)
                 y += 28
             y += 4
 
         def bloco(e: dict, done: bool, maxl: int, draw: bool) -> int:
             """Height of one delivery; draws it at y when asked."""
-            c = BLUE if e.get("_cam") else GREEN if done else col.get(e["status"], AMBER)
+            c = GREEN if done else col.get(e["status"], DIM)
+            dia = e.get("_dia", dd)
             lines = wrap(dr, e["o_que"], f_b, tw)
             if len(lines) > maxl:
                 lines = lines[:maxl - 1] + [fit(dr, " ".join(lines[maxl - 1:]), f_b, tw)]
             # The Diário writes from its own day ("executada ontem"): on the panel, days later, that
             # reads wrong - relative words become that day's date. And it often says the same thing
-            # twice ("no canteiro até 19/11" / "no canteiro"): a received item shows it ONCE, in
-            # green on the right, in its fuller form; the grey line keeps only the vendor.
-            st, prev = _abs_dia(e["status_label"], dd, now.date()), _abs_dia(e["previsto"], dd, now.date())
-            if e.get("_cam"):
-                st = e["status_label"]
+            # twice ("no canteiro até 19/11" / "no canteiro"): a concluded item shows it ONCE, in
+            # green on the right; the grey line keeps only the vendor.
+            st, prev = _abs_dia(e["status_label"], dia, now.date()), _abs_dia(e["previsto"], dia, now.date())
             if not prev.strip("—-– "):
                 prev = ""
-            if e.get("_cam"):
-                pass
+            if not done and e["status"] not in col and re.search(r"n[ãa]o esperad", st, re.I):
+                # "não esperada" was true on the Diário's day; under PREVISTO it only says WHEN
+                m = re.search(r"semana \d+|\b\d{1,2}/\d{1,2}\b", prev)
+                st = m.group(0) if m else "sem data"
             elif done and prev and (RECEBIDO_RE.search(prev) or not RECEBIDO_RE.search(st)):
                 if RECEBIDO_RE.search(prev):
                     st, prev = prev, ""
             elif prev and (_key(prev) == _key(st) or _key(st) in _key(prev)):
                 st, prev = prev, ""
+            if done and not re.search(r"\d{1,2}/\d{1,2}", st):   # every concluded item says its day
+                st = f"{WD_PT[dia.weekday()]} {dia:%d/%m}"
             det = " · ".join(t for t in (re.sub(r"^CON-\d+\w?\s*", "", e["contrato"]).strip("—-– "), prev) if t)
             sw = dr.textlength(st, font=f_bs)
             # A short status sits on the right of the grey line. A long one ("'marcar a
@@ -948,7 +959,10 @@ def render() -> Image.Image:
             if len(sl) == 2:
                 sl[1] = fit(dr, " ".join(wrap(dr, st, f_bs, tw)[1:]), f_bs, tw)
             if draw:
-                dr.ellipse((xa, y + 9, xa + 14, y + 23), fill=c)
+                if done or e["status"] in col:
+                    dr.ellipse((xa, y + 9, xa + 14, y + 23), fill=c)
+                else:                                   # expected, nothing happened yet: hollow
+                    dr.ellipse((xa, y + 9, xa + 14, y + 23), fill=None, outline=DIM, width=2)
                 yy = y
                 for ln in lines:
                     dr.text((xa + 24, yy), ln, font=f_b, fill=FG)
@@ -963,20 +977,23 @@ def render() -> Image.Image:
                     yy += 25
             return 28 * len(lines) + 25 * max(1, len(dl) + len(sl)) + 9
 
-        secs = [("A RECEBER", falta, False), ("JÁ RECEBIDOS", feitos, True)]
+        secs = [("PREVISTO", falta, False, f"diário de {WD_PT[dd.weekday()]} {dd:%d/%m}"),
+                ("CONCLUÍDO RECENTEMENTE", feitos, True, "")]
         maxl = 4   # as many lines of text per item as the card has room for
         while maxl > 1 and sum(27 + (sum(bloco(e, d, maxl, False) for e in li) if li else 30) + 6
-                               for _, li, d in secs if li or not d) > ye - y:
+                               for _, li, d, _n in secs if li or not d) > ye - y:
             maxl -= 1
-        for titulo, lista, done in secs:
+        for titulo, lista, done, nota in secs:
             if not lista and done:
                 continue
             if y + 27 + 30 > ye:
                 break
             dr.text((xa, y), titulo, font=f_s, fill=DIM)
+            if nota:
+                dr.text((xb - dr.textlength(nota, font=f_bs), y + 2), nota, font=f_bs, fill=DIM)
             y += 27
             if not lista:
-                dr.text((xa, y), "nada pendente no último diário", font=f_bs, fill=DIM)
+                dr.text((xa, y), "nada previsto no último diário", font=f_bs, fill=DIM)
                 y += 30
             for i, e in enumerate(lista):
                 h = bloco(e, done, maxl, False)
@@ -1066,6 +1083,67 @@ def _recebido(e: dict) -> bool:
     if e["status"] in ("no", "part"):
         return False
     return bool(RECEBIDO_RE.search(e["status_label"]) or RECEBIDO_RE.search(e["previsto"]))
+
+
+def _compat(tipo: str, o_que: str) -> bool:
+    """May a truck of this kind (Claudinho: entrega · retirada · serviço…) be the expected item?
+    Only an explicit clash refuses: a "retirada" truck never closes an "Entrega de…" item."""
+    k, q = _key(tipo), _key(o_que)
+    if k.startswith("retir"):
+        return "retir" in q or "entreg" not in q
+    if k.startswith("entreg"):
+        return "entreg" in q or "retir" not in q
+    return True
+
+
+def _presentes(caminhoes: list[dict], falta: list[dict], rede: dict | None, hd: dt.date, now: dt.datetime) -> list[dict]:
+    """Rows of PRESENTE HOJE: {box: on | fraco | nao, titulo, det, st[, rede]}. A truck identified
+    with >= HOJE_CONF that matches ONE expected item of its contract takes that item out of
+    `falta` (mutated) and shows as a single row with the item's own words. Below HOJE_CONF, or
+    with no answer, the box stays empty and nothing moves. A tag on the site Wi-Fi with no truck
+    of that company is a row too (suppliers that come by car) - REDE_AVISO_FORA never shows."""
+    out: list[dict] = []
+    for t in caminhoes:
+        ident = bool(t["empresa"])
+        hh, mm = (int(x) for x in t["chegou"].split(":"))
+        idade = (now - dt.datetime.combine(hd, dt.time(hh, mm), TZ)).total_seconds()
+        st = (f"{t['chegou']} → {t['saiu']}" if t["saiu"] else
+              f"no canteiro desde {t['chegou']}" if 0 <= idade < 7200 else f"{t['chegou']} · saída não vista")
+        if not (ident and t["conf"] >= HOJE_CONF):
+            out.append({"box": "fraco" if ident else "nao", "titulo": "Caminhão " + (t["veiculo"] or "de tipo incerto"),
+                        "det": f"provável {t['conf']} % · {t['empresa']}" if ident else "não identificado", "st": st})
+            continue
+        item = None
+        if t["con"]:
+            cands = [e for e in falta if e["contrato"].split(" ")[0] == t["con"] and _compat(t["tipo"], e["o_que"])]
+            item = cands[0] if len(cands) == 1 else next(
+                (e for e in cands if _key(t["tipo"])[:5] and _key(t["tipo"])[:5] in _key(e["o_que"])), None)
+        if item:
+            falta.remove(item)
+        oq = t["o_que"] or f"{t['tipo']} — {t['empresa']}"
+        quem = re.sub(r"^CON-\d+\w?\s*", "", item["contrato"]).strip("—-– ") if item else ""
+        n = len(t["horas"])
+        out.append({"box": "on", "titulo": item["o_que"] if item else oq[:1].upper() + oq[1:], "empresa": t["empresa"],
+                    "det": " · ".join(x for x in (quem or t["empresa"], f"{n} caminhões" if n > 1 else "",
+                                                  "no previsto" if item else "fora do previsto") if x),
+                    "st": st})
+    grupos: dict[str, dict] = {}
+    for u in (rede or {}).get("unicos") or []:
+        tg = u.get("tag") or ""
+        if not tg or tg.lower() in REDE_AVISO_FORA:
+            continue
+        g = grupos.setdefault(tg, {"n": 0, "t0": u.get("t0") or u["ts"], "ts": u["ts"], "on": False})
+        g["n"] += 1
+        g["t0"], g["ts"], g["on"] = min(g["t0"], u.get("t0") or u["ts"]), max(g["ts"], u["ts"]), g["on"] or bool(u.get("on"))
+    for tg, g in sorted(grupos.items(), key=lambda kv: kv[1]["t0"]):
+        k = _key(tg)
+        if any(r.get("empresa") and (k in _key(r["empresa"]) or _key(r["empresa"]) in k) for r in out):
+            continue                                     # that company's truck is already a row
+        h0, h1 = (dt.datetime.fromtimestamp(x, TZ) for x in (g["t0"], g["ts"]))
+        out.append({"box": "on", "rede": True, "titulo": tg,
+                    "det": ("1 aparelho" if g["n"] == 1 else f"{g['n']} aparelhos") + " no Wi-Fi · sem caminhão",
+                    "st": f"desde {h0:%H:%M}" if g["on"] else f"{h0:%H:%M} – {h1:%H:%M}"})
+    return out
 
 
 REL_DIA = {"anteontem": -2, "ontem": -1, "hoje": 0, "amanhã": 1, "amanha": 1}
