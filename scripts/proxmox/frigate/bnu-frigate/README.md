@@ -266,7 +266,7 @@ go2rtc canteiro ──────▶ feeder ffmpeg (same) ───────
 canteiro-painel PNG (every 30 s) ─▶ one-shot ffmpeg ─▶ raw ───────────────┤
                                                                           ▼
                        PUMP — 15 fps clock: next frame of each lens, or its LAST one again
-                                                                          │ one raw stream, 1280×2520
+                                                                          │ one raw stream, 1280×2712
                                                                           ▼
                        encoder ffmpeg (stdin only) ─▶ h264_vaapi ×2 ─▶ mosaico, mosaico-tv
 ```
@@ -343,6 +343,28 @@ VAAPI in three processes works: 2 publishers, 15 fps, unit memory ~410–435 MB 
 | 70 s asked, both lenses | the composer itself killed the mute feeders at 30 s (`feeder up 30 s without a frame - restarting it`) and the picture was back at 35 s; `mosaico` and `mosaico-tv` playlists on bnu-raspberrypi went from media sequence 35 to 66 in 125 s — one segment every ~4 s, no gap; `canteiro-watchdog` logged nothing (no heal) |
 
 Still to observe: a night of real uplink holes against the watchdog's heal count.
+
+## canteiro-mosaico: últimas detecções on the TV (2026-11-23)
+
+Pedido Eduardo 23/11/2026: the last three Frigate detections of each lens as small moving
+pictures at the bottom right of that lens — on `/live` they are GIFs laid over the video by the
+page; on the TV they are burned into **`mosaico-tv` only** (`mosaico` also feeds the
+canteiro-vigia videos, `canteiro-clipe` and the watchdog frame, which stay clean).
+
+- `canteiro-painel` (bnu-raspberrypi) draws them: `/det/tv.json` (six keys) and
+  `/det/tv/<key>.yuv` (a loop of raw I420 frames 172×96 with border, age and icon on it).
+- `canteiro-mosaico.py`, class `Thumbs`: a poll thread fetches what changed every 15 s; an 8 fps
+  thread copies the current frame of each loop into a fourth block of the raw frame, 1280×192 —
+  96 rows of picture (three thumbnails from x=0, three from x=640, 180 px apart) over 96 rows of
+  mask (235 under a thumbnail, 16 elsewhere). Cost measured: 0.4 ms per recomposed block.
+- Encoder graph, TV branch only: crop the two groups, `alphamerge` with their masks, two
+  `overlay`s on the 1920×540 mosaic before the panel is stacked under it. Empty slot = mask 16 =
+  nothing drawn.
+- No list from the panel for 5 min (`MINIATURAS_STALE_S`) → the thumbnails are cleared (a frozen
+  "3m atrás" would lie). `MINIATURAS_URL=""` in the unit's environment turns them off.
+- State: `miniaturas` in `/run/canteiro-painel/mosaico-estado.json` (`slots`, `age_s`, `erro`).
+- Rehearsed off the LXC first (software mode, the graph from `Encoder.cmd()` on a raw file) —
+  never run a second composer in this LXC.
 
 ## canteiro-clipe — mosaic rolling buffer + clips on demand (added 2026-11-14)
 

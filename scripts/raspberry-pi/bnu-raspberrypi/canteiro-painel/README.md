@@ -43,8 +43,19 @@ rules of 23/11/2026: no filter by duration, no expiry — always the last three,
 | `/det/<id>.gif` | the preview GIF of a LISTED item (anything else = 404) |
 | `/det/<id>.mp4` | the recording of that stretch (`/api/<camera>/start/…/end/…/clip.mp4`, ± 2 s), fetched on the first click and kept in `STATE_DIR/det-clips/` (last 6, ≤ 120 MB each) — Frigate streams it chunked with no `Range`, so it is served from the file, with `Range` |
 
-Check: `curl -s 127.0.0.1:8557/det.json` on the Pi. The TV output (`mosaico-tv`) does not carry
-the thumbnails yet (phase 2: burned in by the composer).
+Check: `curl -s 127.0.0.1:8557/det.json` on the Pi.
+
+**For the TV** (same day, phase 2): `mosaico-tv` is a video, so the thumbnails are burned in by
+`canteiro-mosaico` (bnu Frigate LXC) — and drawn here, where PIL is, so the composer only copies
+bytes:
+
+| Route | What |
+|---|---|
+| `/det/tv.json` | `{w: 172, h: 96, fps: 8, slots: [key \| null × 6]}` — slots 0–2 = left lens (`canteiro_fixa`), 3–5 = right lens; `key` = `<id>.<crc of the age text>` |
+| `/det/tv/<key>.yuv` | that item as a loop of raw I420 frames 172×96 (≤ 120, `DET_TV_MAX_FRAMES`) with everything on it: border by severity, "3m atrás", type icon (person, car, bus, bicycle, motorcycle). Fetched again only when the age text changes |
+
+The composer polls `/det/tv.json` every 15 s. Look at one loop:
+`ffmpeg -f rawvideo -pix_fmt yuv420p -video_size 172x96 -i loop.yuv -frames:v 1 x.png`.
 
 ## Consumers
 
