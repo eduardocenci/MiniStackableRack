@@ -178,6 +178,28 @@ SNMP/Modbus/NUT: only HTTP is open. Code, protocol and deploy:
 `scripts/raspberry-pi/bnu-raspberrypi/docker/ups-monitor/README.md`. Runbook: globalnet
 `docs/runbooks/ups-monitor.md`.
 
+### ara UPS (nobreak) — EcoFlow RIVER 3 Plus, read through ups-monitor on ara-raspberrypi2 (found 2026-11-24)
+
+The canteiro nobreak is an **EcoFlow RIVER 3 Plus** (286 Wh) whose USB port is plugged
+into **ara-raspberrypi2** since 2026-11-24. It enumerates as `3746:ffff`
+"EF-UPS-RIVER 3 Plus": a HID Power Device plus a CDC-ACM port (`/dev/ttyACM0`, unused).
+The kernel rejects its HID report descriptor, so there is **no `/dev/hidraw`**, and
+Debian 13's NUT (2.8.1) has no EcoFlow subdriver: don't try `usbhid-ups`. The
+**`ups-monitor` container** reads it from usbfs with HID `GET_REPORT` only and exposes
+the same API as the bnu one:
+
+- `curl -s http://ara-raspberrypi2:8795/api/status`: live reading and state (battery %,
+  runtime, AC present; this station reports no input voltage, load or temperature)
+- `curl -s http://ara-raspberrypi2:8795/api/stats`: *ativações* and recent episodes and
+  messages
+- `curl -s -X POST http://ara-raspberrypi2:8795/api/test`: one test message to Casa
+  SmokeTests
+
+To read the raw reports (`python3 ecoflow_hid.py --raw` in `~/ups-monitor/`), stop the
+container first: the HID interface has one owner. Code, reports and deploy:
+`scripts/raspberry-pi/ara-raspberrypi/docker/ups-monitor/README.md`. Runbook: globalnet
+`docs/runbooks/ups-monitor.md`.
+
 ### ARA (home build — dashboard site `home: true`, still not in devtool.py)
 
 `ara-raspberrypi2` is a tailnet node (the "computadorzinho" in the canteiro

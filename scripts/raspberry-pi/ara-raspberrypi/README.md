@@ -7,7 +7,7 @@ site**, but since 2026-08-26 it IS a dashboard site: registered in
 `globalnet/architecture.yaml` as `home: true` (nodes `ara_rpi`/`ara_nto` +
 camera/router probes; `make fleet` audits this Pi like the rack ones —
 decisão Eduardo). Since 2026-08-29 **every service here is a Docker
-container** (six: netoverview + the five in [`docker/`](docker/)). Only
+container** (netoverview + the ones in [`docker/`](docker/)). Only
 netoverview self-updates via the 5-min pull cron with prune (see
 [`../README.md`](../README.md)) — the other four are local builds or
 pinned images, updated deliberately.
@@ -95,3 +95,4 @@ Starlink uplink carries.
 | [`docker/dvrip-bridge/`](docker/dvrip-bridge/) | socat container (alpine/socat pinned): bridges the camera's DVRIP port `37777` onto the tailnet (`ara-raspberrypi2:37777` → `192.168.1.56:37777`) |
 | [`docker/starlink-proxy/`](docker/starlink-proxy/) | socat container (alpine/socat pinned): bridges the Starlink **dish** gRPC API onto the tailnet (`ara-raspberrypi2:9200` → `192.168.100.1:9200`) — globalnet reads live WAN throughput + dish watts from it for the ARA dashboard card |
 | [`docker/router-proxy/`](docker/router-proxy/) | socat container (alpine/socat pinned): bridges the Starlink **router** gRPC API onto the tailnet (`ara-raspberrypi2:9000` → `192.168.1.1:9000`) — bnu `canteiro-vigia` reads `wifi_get_clients` (`associatedTimeS` = the second each phone joined the Wi-Fi) to arm/disarm the empty-obra watch and judge each detection |
+| [`docker/ups-monitor/`](docker/ups-monitor/) | `ups-monitor` container (`:8795`, since 2026-11-24): reads the canteiro nobreak — an **EcoFlow RIVER 3 Plus** (286 Wh) plugged into a Pi USB port, HID Power Device `3746:ffff` — every 2 s and messages WhatsApp on *falta de energia* · *bateria < 20 %* · *energia voltou* (`MODE=shadow` → Casa SmokeTests until a real outage is seen); `/api/status` + `/api/stats` feed the ARA **Nobreak (UPS)** card on globalnet. Same rule and API as the bnu rack [`ups-monitor`](../bnu-raspberrypi/docker/ups-monitor/) |
