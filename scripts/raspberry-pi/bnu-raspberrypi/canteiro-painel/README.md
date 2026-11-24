@@ -68,7 +68,8 @@ The composer polls `/det/tv.json` every 15 s. Look at one loop:
   `…/live?painel=0` = video only. Since 2026-11-23 it also lays the last three detections of
   each lens over the video, at the bottom right of that lens (`/painel/det.json` every 15 s,
   `/painel/det/<id>.gif`; red border = alert, amber = detection; a click plays
-  `/painel/det/<id>.mp4`). `…/live?det=0` = without them. Since 2026-11-24 the mouse over a
+  `/painel/det/<id>.mp4`, with a "Baixar clip" button at the top right that saves that file as
+  `canteiro-<fixa|pt>-AAAAMMDD-HHMMSS.mp4`). `…/live?det=0` = without them. Since 2026-11-24 the mouse over a
   title of the VENCIMENTOS card (a tap on a phone) shows the whole note of the sheet —
   `/painel/zonas.json` (fetched with each PNG) lists the rectangles of the current picture, in
   the PNG's own pixels, with the title, the full guidance and the Observações text. The TV has
