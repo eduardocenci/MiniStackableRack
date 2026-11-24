@@ -8,7 +8,7 @@
 # all day for a camera that isn't there. At boot and every 2 min
 # (ara-site-gate.timer) this checks for the ara LAN — a default route via
 # 192.168.1.1 AND a Starlink gRPC port answering (router 192.168.1.1:9000 or
-# dish 192.168.100.1:9200) — and only then: brings the six stacks up, installs
+# dish 192.168.100.1:9200) — and only then: brings the stacks up, installs
 # the fleet netoverview update cron, re-seeds the hand-set netoverview
 # nicknames, writes the armed marker, disables its own timer and posts one
 # line to Casa SmokeTests. From then on the containers' restart policies
@@ -28,7 +28,7 @@ MARK=/var/lib/ara-site/armed
 H=/home/eduardocenci
 # start order: relay first (the timelapse grabs from it), netoverview before
 # starlink-names (names are written through its API)
-STACKS="canteiro-relay dvrip-bridge starlink-proxy router-proxy netoverview starlink-names canteiro-timelapse"
+STACKS="canteiro-relay dvrip-bridge starlink-proxy router-proxy netoverview starlink-names canteiro-timelapse ups-monitor"
 # fleet standard line (scripts/raspberry-pi/README.md) — installed only on
 # arming, so its `up -d` can never start netoverview off-site
 CRON='*/5 * * * * cd ~/netoverview && docker compose pull -q && docker compose up -d && docker image prune -f >/dev/null'

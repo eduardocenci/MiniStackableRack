@@ -26,9 +26,9 @@ No other site uses `192.168.1.0/24` with a Starlink kit (fleet IP plan).
 
 On arming it:
 
-1. runs `docker compose up -d` for the six stacks, in this order:
+1. runs `docker compose up -d` for the stacks, in this order:
    canteiro-relay, dvrip-bridge, starlink-proxy, netoverview,
-   starlink-names, canteiro-timelapse;
+   starlink-names, canteiro-timelapse, ups-monitor (the last one since 2026-11-24);
 2. installs the fleet netoverview update cron from `../../README.md`
    (installed only now, so the cron's `up -d` can't start netoverview
    off-site);

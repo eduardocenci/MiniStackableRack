@@ -1,0 +1,4 @@
+# EcoFlow RIVER 3 Plus (USB HID UPS, 3746:ffff) — let group dialout read it through
+# usbfs, so the ups-monitor container runs as uid 1000 instead of root.
+# Live copy: ara-raspberrypi2:/etc/udev/rules.d/99-ecoflow-ups.rules
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="3746", ATTR{idProduct}=="ffff", GROUP="dialout", MODE="0660"

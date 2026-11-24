@@ -1,0 +1,45 @@
+# ups-monitor (ara) — the canteiro nobreak (EcoFlow RIVER 3 Plus) → WhatsApp (queda ·
+# bateria < 20 % · volta) + activation stats for globalnet (pedido Eduardo 24/11/2026).
+#
+# Authoritative copy: scripts/raspberry-pi/ara-raspberrypi/docker/ups-monitor/
+# Live copy:          ara-raspberrypi2:~/ups-monitor/   (docker compose up -d --build)
+#
+# Host network: WAHA is reached over the tailnet (bnu-proxmox:3001, the same relay the
+# timelapse alerts use) and globalnet reads http://ara-raspberrypi2:8795.
+# user 1000 = eduardocenci (owns /var/lib/ups-monitor); group 20 = dialout, which the
+# udev rule 99-ecoflow-ups.rules gives the station's usbfs node to.
+services:
+  ups-monitor:
+    build: .
+    image: ups-monitor:local
+    container_name: ups-monitor
+    network_mode: host
+    user: "1000:1000"
+    group_add:
+      - "20"    # dialout
+    restart: unless-stopped
+    init: true
+    # WAHA_URL / WAHA_KEY / WAHA_SESSION — chmod 600, NOT in git. Same values as
+    # ~/canteiro-timelapse/env/alerts.env (ALERT_WAHA_*), a live copy of the root
+    # .env BNU_WAHA_API_KEY. See README "First install".
+    env_file: ups-monitor.env
+    environment:
+      TZ: America/Sao_Paulo            # message clock
+      MODE: shadow                     # log | shadow (SmokeTests) | live
+      SITE_LABEL: ARA
+      ALERT_JID: "120363410965618335@g.us"   # Casa Céu Azul (= ARA_WHATSAPP_GROUP_JID), used only in MODE=live
+      TEST_JID: "120363410899542847@g.us"    # Casa SmokeTests (= SMOKETESTS_WHATSAPP_GROUP_JID): shadow + POST /api/test
+      PORT: "8795"
+      STATE_DIR: /var/lib/ups-monitor
+      POLL_S: "2"
+      ALERT_AFTER_S: "10"              # shorter transfers to battery are counted, not messaged
+      RESTORE_CONFIRM_S: "10"
+      LOW_BATTERY_PCT: "20"
+    volumes:
+      - /var/lib/ups-monitor:/var/lib/ups-monitor          # ups.db (episodes, outbox, samples)
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
+      # the whole usbfs tree (not `devices:`), so a re-plugged station (new device
+      # number) is found again; the cgroup rule allows only USB device nodes.
+      - /dev/bus/usb:/dev/bus/usb
+    device_cgroup_rules:
+      - "c 189:* rmw"                  # /dev/bus/usb/* (usb_device major 189)
