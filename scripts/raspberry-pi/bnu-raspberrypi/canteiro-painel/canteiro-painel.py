@@ -123,7 +123,8 @@ def src_rede() -> dict:
         devs = json.loads(r.read().decode())
     if isinstance(devs, dict):
         devs = devs.get("devices", [])
-    pessoas, fixos_on, fixos_total, saidas = [], 0, 0, []
+    pessoas, saidas = [], []
+    fixos: dict[str, bool] = {}    # fixed device (by MAC) -> online; one device may hold two IP rows
     agora = time.time()
     meia_noite = dt.datetime.combine(dt.datetime.now(TZ).date(), dt.time(), TZ).timestamp()
     novos: dict[str, dict] = {}    # people's devices seen today in THIS answer
@@ -132,8 +133,8 @@ def src_rede() -> dict:
         fixed = name.lower() in FIXED
         since = _utc(d.get("last_status_change_utc"))
         if fixed:
-            fixos_total += 1
-            fixos_on += bool(d.get("online"))
+            k = (d.get("mac") or name).lower()
+            fixos[k] = fixos.get(k, False) or bool(d.get("online"))
         elif d.get("online"):
             pessoas.append({"nome": name, "desde": since})
         elif since:
@@ -143,6 +144,7 @@ def src_rede() -> dict:
             visto = agora if d.get("online") else (_utc(d.get("last_seen_utc")) or 0)
             if visto >= meia_noite:
                 novos[(d.get("mac") or name).lower()] = {"nome": name, "ts": visto, "on": bool(d.get("online"))}
+    fixos_on, fixos_total = sum(fixos.values()), len(fixos)
     pessoas.sort(key=lambda x: x["desde"] or 0)
     saidas.sort(key=lambda x: -x["saiu"])
     # netoverview drops an offline device from /api/devices once it is more than 30 days old
@@ -685,6 +687,13 @@ def render() -> Image.Image:
     if d:
         # behind the text: the day's curve of "devices in the last hour" over the whole day (24 h),
         # across the whole card (pedido Eduardo 16/11/2026). Dim on purpose - the text stays on top.
+        # the site's own gear (camera, Pi...) only shows up when one is down: in the title line, left
+        # of the clock; when a stale-data note takes that room it goes after the day's count, and the
+        # chart's "máx. N" label - which owns the end of that line - steps aside (24/11/2026: the two
+        # were drawn over each other)
+        fx = f"fixos {d['fixos_on']}/{d['fixos_total']}" if d["fixos_on"] != d["fixos_total"] else ""
+        fx_x = xb - dr.textlength(age_txt("rede")[0] or f"{now:%H:%M}", font=f_s) - 14 - dr.textlength(fx, font=f_s)
+        fx_titulo = fx_x >= xa + dr.textlength("NA REDE AGORA", font=f_t) + 12
         h0, h1x = SERIE_H
         base, topo = ye + 4, y + 28
         px = lambda mm: xa + (xb - xa) * (mm - h0 * 60) / ((h1x - h0) * 60)
@@ -699,9 +708,10 @@ def render() -> Image.Image:
             dr.line(pts, fill=(52, 104, 70), width=2)
             for x in range(int(xa), int(xb), 10):          # dashed line at the peak, across the card
                 dr.line((x, topo, min(x + 5, xb), topo), fill=(70, 82, 98), width=1)
-            f_mx = font(F_SEMI, 18)
-            lab = f"máx. {vmax}"
-            dr.text((xb - dr.textlength(lab, font=f_mx), topo + 3), lab, font=f_mx, fill=DIM)
+            if not fx or fx_titulo:
+                f_mx = font(F_SEMI, 18)
+                lab = f"máx. {vmax}"
+                dr.text((xb - dr.textlength(lab, font=f_mx), topo + 3), lab, font=f_mx, fill=DIM)
         for hh in range(h0, h1x + 1):
             x = px(hh * 60)
             dr.line((x, base - (4 if hh % 3 else 7), x, base), fill=LINE, width=1)
@@ -720,13 +730,10 @@ def render() -> Image.Image:
         unicos = len(d.get("unicos") or [])   # distinct devices seen today (pedido Eduardo 18-20/11/2026)
         t1 = f"{n} agora, {unicos} único{'' if unicos == 1 else 's'} hoje"
         dr.text((xa + nw + 12, y + 28), t1, font=f_bs, fill=DIM)
-        if d["fixos_on"] != d["fixos_total"]:   # the site's own gear (camera, Pi...) only shows up when one is down
-            fx = f"fixos {d['fixos_on']}/{d['fixos_total']}"
-            x = xa + nw + 12 + dr.textlength(t1 + " · ", font=f_bs)
-            if x + dr.textlength(fx, font=f_bs) <= xb:
-                dr.text((x, y + 28), fx, font=f_bs, fill=RED)
-            else:                               # no room after the day's count: in the title line
-                dr.text((xb - 60 - dr.textlength(fx, font=f_s), y - 42), fx, font=f_s, fill=RED)
+        if fx and fx_titulo:
+            dr.text((fx_x, y - 42), fx, font=f_s, fill=RED)
+        elif fx:
+            dr.text((xa + nw + 12 + dr.textlength(t1 + " · ", font=f_bs), y + 28), fx, font=f_bs, fill=RED)
         y += 60
         # Hoje: one pill per tag (company/person in the nickname's parentheses) seen today -
         # lit while one of its devices was on the network in the last hour, greyed out after.
@@ -750,7 +757,16 @@ def render() -> Image.Image:
             dr.text((x + 10, y + 2), t["tag"], font=f_bs, fill=FG if t["on"] else (104, 112, 126))
             x += w + 8
         if resto and (tags or d.get("sem_tag")):
-            dr.text((x, y + 3), f"+ {resto} sem tag" if resto == d.get("sem_tag", 0) else f"+ {resto}", font=f_bs, fill=DIM)
+            # never past the card's right edge (it ran into VENCIMENTOS, 24/11/2026): same row if it
+            # fits, else the next row, else just the count
+            full = f"+ {resto} sem tag" if resto == d.get("sem_tag", 0) else f"+ {resto}"
+            cabe = y + 27 <= ye + 8
+            if cabe and x + dr.textlength(full, font=f_bs) <= xb:
+                dr.text((x, y + 3), full, font=f_bs, fill=DIM)
+            elif y + 31 + 27 <= ye + 8:
+                dr.text((xa, y + 34), full, font=f_bs, fill=DIM)
+            elif cabe and x + dr.textlength(f"+ {resto}", font=f_bs) <= xb:
+                dr.text((x, y + 3), f"+ {resto}", font=f_bs, fill=DIM)
 
     # 1b — gate (bottom of the first column)
     xa, y, xb, ye = head("tags", "PORTÃO — TAGS", "últimas", "tags")
