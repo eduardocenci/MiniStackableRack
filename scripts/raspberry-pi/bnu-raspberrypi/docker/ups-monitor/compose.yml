@@ -31,7 +31,7 @@ services:
       UPS_DEV: /dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_BHAFb149907-if00-port0
       PORT: "8795"
       STATE_DIR: /var/lib/ups-monitor
-      POLL_S: "2"
+      POLL_S: "0.5"                    # was 2 until 2026-11-23; a Q round trip measures ~147 ms
       ALERT_AFTER_S: "10"              # shorter transfers to battery are counted, not messaged
       RESTORE_CONFIRM_S: "10"
       LOW_BATTERY_PCT: "20"

@@ -104,6 +104,39 @@ box, no health LED, no Docs button. Treat that row, a failing `make fleet`, or a
 feature that `grep` cannot reach from the words of the question, as an
 unfinished deploy, not cosmetics. (Details: `DOCS_WORKFLOW.md`.)
 
+### Changing something that is already live — repo, docs and host move together
+
+Every change to a running container, service or automation — an env var, an
+interval, a threshold, a mode, a port, a schedule, a line of code — is made
+through Claude too, so this is the gate for changes the same way the checklist
+above is the gate for creation. The change is not done until, in the same
+session:
+
+1. **Repo first** — edit the file in the repo and deploy *from it*. If the value
+   was tried on the host first, copy it back before the session ends: a value
+   that exists only on the host is lost on the next deploy from `main`.
+2. **Sweep the old value** — `grep` the old number/name/mode and fix every
+   mention: the container's README (prose *and* config table), the host
+   README's services row, `REMOTE_ACCESS.md`, the node `detail` in
+   `globalnet/architecture.yaml`, the runbook (text and diagrams) and, for the
+   ARA build, the row in `homes/ara/CLAUDE.md`. Twins count: when two sites run
+   the same service (the bnu and ara `ups-monitor`), check both.
+3. **Verify live = main** — after the merge, `md5sum` the deployed files on the
+   host against `git show origin/main:<path> | md5sum`; they must match, and
+   `docker inspect <name>` must show the env values the compose file declares.
+4. **Merge** — to `main` in the same session, with the globalnet submodule bump
+   when the docs moved.
+
+When a session answers "how is X configured?", the live host is the evidence
+and the repo is the claim: read the host (`docker inspect`, the deployed file)
+before quoting a number from a README. A difference between the two is an
+unfinished change — fix it, do not report either side as the answer.
+
+Precedent: on 23/11/2026 the bnu `ups-monitor` went from `POLL_S` 2 to 0.5 on the
+Pi only. Next day the ara twin was built at 2 s "like bnu", the docs of both
+said 2 s, and a session told Eduardo that bnu polls every 2 s (decisão Eduardo
+24/11/2026).
+
 ## Credentials
 
 - All credentials live in a single `.env` at the repo root

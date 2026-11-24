@@ -31,7 +31,7 @@ services:
       TEST_JID: "120363410899542847@g.us"    # Casa SmokeTests (= SMOKETESTS_WHATSAPP_GROUP_JID): POST /api/test
       PORT: "8795"
       STATE_DIR: /var/lib/ups-monitor
-      POLL_S: "2"
+      POLL_S: "0.5"                    # was 2 until 2026-11-24; same as bnu, measured interval 0.5 s
       ALERT_AFTER_S: "10"              # shorter transfers to battery are counted, not messaged
       RESTORE_CONFIRM_S: "10"
       LOW_BATTERY_PCT: "20"

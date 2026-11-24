@@ -138,6 +138,9 @@ commits (ACTIVITY.md derives from history). The cockpit refreshes within
   goes in docs.
 - `make check` gates everything: broken doc slugs, malformed yaml, and Sphinx
   warnings (`-W`) all fail CI.
+- A change to something already live (interval, threshold, mode, port, code)
+  follows `CLAUDE.md` § *Changing something that is already live*: repo first,
+  sweep the old value in every doc, verify live = `main`, merge the same session.
 - No secrets in docs — credential *names* (`.env` keys) are fine, values never.
 - Credential stickers live in `globalnet/vault/`, never in `docs/` or
   `static/` (those ship in the public image).

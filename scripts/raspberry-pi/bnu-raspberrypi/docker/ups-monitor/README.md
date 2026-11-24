@@ -1,7 +1,7 @@
 # ups-monitor — nobreak (UPS) do rack bnu → alertas de falta de energia no WhatsApp
 
 The bnu rack **nobreak** (UPS) is plugged into **bnu-raspberrypi** through a
-USB-serial adapter. The `ups-monitor` container reads it every 2 s and sends
+USB-serial adapter. The `ups-monitor` container reads it every 0.5 s and sends
 **one message to "Casa Blumenau"** (the bnu group) in each case:
 
 - 🔴 **falta de energia**: the UPS has been on battery for 10 s.
@@ -50,7 +50,7 @@ Live copy: `bnu-raspberrypi:~/ups-monitor/`. State: `/var/lib/ups-monitor/ups.db
 | `ALERT_JID` | Casa Blumenau `120363428209351902@g.us` (= root `.env` `BNU_WHATSAPP_GROUP_JID`) |
 | `TEST_JID` | Casa SmokeTests `120363410899542847@g.us` (= `SMOKETESTS_WHATSAPP_GROUP_JID`), only for `POST /api/test` |
 | `WAHA_URL/KEY/SESSION` | from `env_file` = `~/canteiro-jobs/env/canteiro-watchdog.env`, the bnu WAHA credentials already on this Pi (mirror of `.env` `BNU_WAHA_*`). That file's other keys are ignored. To decouple, copy the three keys to `~/ups-monitor/ups-monitor.env` and repoint `env_file` |
-| `POLL_S` · `ALERT_AFTER_S` · `RESTORE_CONFIRM_S` · `LOW_BATTERY_PCT` | 2 · 10 · 10 · 20. `INPUT_MIN_V` defaults to 80 |
+| `POLL_S` · `ALERT_AFTER_S` · `RESTORE_CONFIRM_S` · `LOW_BATTERY_PCT` | 0.5 (2 until 2026-11-23; a Q round trip measures ~147 ms) · 10 · 10 · 20. `INPUT_MIN_V` defaults to 80 |
 | `TZ` | `America/Sao_Paulo` (the Pi itself runs Europe/London) |
 
 ## Deploy / update
