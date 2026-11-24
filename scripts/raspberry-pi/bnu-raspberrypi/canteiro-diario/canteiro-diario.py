@@ -91,7 +91,7 @@ STATE_DIR = Path(E("STATE_DIR", "/var/lib/canteiro-diario"))
 GITHUB_RAW_JSON = E("GITHUB_RAW_JSON", "")   # optional fallback: raw URL pattern with {date}
 GITHUB_TOKEN = E("GITHUB_TOKEN", "")
 FIXED_DEVICE_NAMES = {s.strip().lower() for s in
-                      E("FIXED_DEVICE_NAMES", "Roteador Starlink,Câmera do canteiro (iM9),ara-raspberrypi,ara-raspberrypi2").split(",")}
+                      E("FIXED_DEVICE_NAMES", "Roteador Starlink,Câmera do canteiro (iM9),Câmera do canteiro 2 (iM9),ara-raspberrypi,ara-raspberrypi2").split(",")}
 WORKDAY_START, WORKDAY_END = 6, 19       # presence day window (BRT hours)
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
