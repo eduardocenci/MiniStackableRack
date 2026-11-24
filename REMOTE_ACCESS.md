@@ -185,8 +185,9 @@ into **ara-raspberrypi2** since 2026-11-24. It enumerates as `3746:ffff`
 "EF-UPS-RIVER 3 Plus": a HID Power Device plus a CDC-ACM port (`/dev/ttyACM0`, unused).
 The kernel rejects its HID report descriptor, so there is **no `/dev/hidraw`**, and
 Debian 13's NUT (2.8.1) has no EcoFlow subdriver: don't try `usbhid-ups`. The
-**`ups-monitor` container** reads it from usbfs with HID `GET_REPORT` only and exposes
-the same API as the bnu one:
+**`ups-monitor` container** reads it from usbfs with HID `GET_REPORT` only, WhatsApps
+Casa Céu Azul on *falta de energia* / *bateria < 20 %* / *energia voltou* (`MODE=live`
+since 2026-11-24) and exposes the same API as the bnu one:
 
 - `curl -s http://ara-raspberrypi2:8795/api/status`: live reading and state (battery %,
   runtime, AC present; this station reports no input voltage, load or temperature)

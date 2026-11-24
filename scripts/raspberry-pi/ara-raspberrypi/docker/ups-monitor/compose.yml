@@ -25,10 +25,10 @@ services:
     env_file: ups-monitor.env
     environment:
       TZ: America/Sao_Paulo            # message clock
-      MODE: shadow                     # log | shadow (SmokeTests) | live
+      MODE: live                       # log | shadow (SmokeTests) | live — live since 2026-11-24 (OK Eduardo)
       SITE_LABEL: ARA
-      ALERT_JID: "120363410965618335@g.us"   # Casa Céu Azul (= ARA_WHATSAPP_GROUP_JID), used only in MODE=live
-      TEST_JID: "120363410899542847@g.us"    # Casa SmokeTests (= SMOKETESTS_WHATSAPP_GROUP_JID): shadow + POST /api/test
+      ALERT_JID: "120363410965618335@g.us"   # Casa Céu Azul (= ARA_WHATSAPP_GROUP_JID)
+      TEST_JID: "120363410899542847@g.us"    # Casa SmokeTests (= SMOKETESTS_WHATSAPP_GROUP_JID): POST /api/test
       PORT: "8795"
       STATE_DIR: /var/lib/ups-monitor
       POLL_S: "2"

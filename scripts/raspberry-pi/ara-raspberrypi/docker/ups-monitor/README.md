@@ -3,8 +3,8 @@
 The canteiro **nobreak** is an **EcoFlow RIVER 3 Plus** portable power station
 (286 Wh, 600 W, 1200 W peak) that Eduardo installed in the shed on his visit of
 **2026-11-24**, with its USB port plugged into **ara-raspberrypi2**. The
-`ups-monitor` container reads it every 2 s and sends **one WhatsApp message** in
-each case:
+`ups-monitor` container reads it every 2 s and sends **one message to "Casa Céu
+Azul"** (the ara group) in each case:
 
 - 🔴 **falta de energia**: the station has been on battery for 10 s.
 - 🟠 **bateria abaixo de 20 %** during the outage.
@@ -17,8 +17,9 @@ state, and the recent episodes and messages in its tooltip (`GET /api/ups`).
 It is the same rule, outbox and HTTP API as the bnu rack
 [`ups-monitor`](../../../bnu-raspberrypi/docker/ups-monitor/) (pedido Eduardo
 24/11/2026: "integrar de maneira similar ao UPS de Blumenau"); only the reader
-differs. Live since **2026-11-24 14:31 BRT** in `MODE=shadow` (messages go to
-Casa SmokeTests with a `[sombra]` prefix).
+differs. Running since 2026-11-24 14:31 BRT in `MODE=shadow`, and **live since
+2026-11-24 14:50 BRT** in `MODE=live` (OK Eduardo, who left the outage test for
+the first real one).
 
 Runbook (rule, sample messages, operate, failure modes): globalnet
 `docs/runbooks/ups-monitor.md`.
@@ -57,9 +58,9 @@ re-staged Pi starts it only on the ara LAN.
 
 | Env (compose.yml) | Value |
 |---|---|
-| `MODE` | `shadow` = Casa SmokeTests with a `[sombra]` prefix. `live` = `ALERT_JID`; `log` = send nothing |
-| `ALERT_JID` | Casa Céu Azul `120363410965618335@g.us` (= root `.env` `ARA_WHATSAPP_GROUP_JID`). Used only in `MODE=live` |
-| `TEST_JID` | Casa SmokeTests `120363410899542847@g.us` (= `SMOKETESTS_WHATSAPP_GROUP_JID`): shadow messages and `POST /api/test` |
+| `MODE` | `live`. `shadow` = Casa SmokeTests with a `[sombra]` prefix; `log` = send nothing |
+| `ALERT_JID` | Casa Céu Azul `120363410965618335@g.us` (= root `.env` `ARA_WHATSAPP_GROUP_JID`) |
+| `TEST_JID` | Casa SmokeTests `120363410899542847@g.us` (= `SMOKETESTS_WHATSAPP_GROUP_JID`), only for `POST /api/test` |
 | `WAHA_URL/KEY/SESSION` | `env_file` = `~/ups-monitor/ups-monitor.env` (chmod 600, not in git). The bnu WAHA through the tailnet relay `http://bnu-proxmox:3001`, the same values as `ALERT_WAHA_*` in `~/canteiro-timelapse/env/alerts.env` (live copy of root `.env` `BNU_WAHA_API_KEY`) |
 | `POLL_S` · `ALERT_AFTER_S` · `RESTORE_CONFIRM_S` · `LOW_BATTERY_PCT` | 2 · 10 · 10 · 20 |
 | `DASHBOARD_URL` | unset: the 🔴 message carries no link (a tailnet URL is useless to the group) |
@@ -105,4 +106,6 @@ status is `0x000c`; the *AC present* bit (`0x0004`) has not been seen cleared
 and *discharging* (`0x0002`) has not been seen set. After the first real *queda
 de energia* — or a deliberate 1-minute unplug of the station — check
 `/api/events` and `/api/history?hours=2` and record here what the station
-reported. Only then switch `MODE` to `live`.
+reported. Eduardo chose to go live without the test (24/11/2026): if the first
+real outage produces no 🔴, or a 🔴 comes with the grid up, set `MODE: shadow`
+and read the samples.
