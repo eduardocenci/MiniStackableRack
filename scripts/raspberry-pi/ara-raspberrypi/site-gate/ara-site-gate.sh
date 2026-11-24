@@ -36,6 +36,7 @@ CRON='*/5 * * * * cd ~/netoverview && docker compose pull -q && docker compose u
 # ARA section, starlink-names/README.md); starlink-names re-derives the rest
 NICKNAMES="74:24:9f:c5:b2:5f|Roteador Starlink
 54:ba:d9:bd:34:e3|Câmera do canteiro (iM9)
+54:ba:d9:41:c5:3a|Câmera do canteiro 2 (iM9)
 22:17:94:50:d1:b3|iPhone (Jorge)"
 
 log() { echo "ara-site-gate: $*"; }

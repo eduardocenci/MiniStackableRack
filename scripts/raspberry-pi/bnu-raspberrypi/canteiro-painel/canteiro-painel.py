@@ -60,7 +60,7 @@ ALLOW = {s.strip() for s in E("PAINEL_ALLOW", "127.0.0.1,10.1.1.160").split(",")
 STATE_DIR = Path(E("STATE_DIR", "/var/lib/canteiro-painel"))
 ARA_NTO_URL = E("ARA_NTO_URL", "http://ara-raspberrypi2:5000")
 FIXED = {s.strip().lower() for s in E(
-    "FIXED_DEVICE_NAMES", "Roteador Starlink,Câmera do canteiro (iM9),ara-raspberrypi,ara-raspberrypi2").split(",")}
+    "FIXED_DEVICE_NAMES", "Roteador Starlink,Câmera do canteiro (iM9),Câmera do canteiro 2 (iM9),ara-raspberrypi,ara-raspberrypi2").split(",")}
 PROXMOX_HOST = E("PROXMOX_HOST", "bnu-proxmox")
 PROXMOX_USER = E("PROXMOX_USER", "root")
 PROXMOX_PW = E("PROXMOX_PW")
