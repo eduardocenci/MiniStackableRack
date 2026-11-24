@@ -3,7 +3,7 @@
 The canteiro **nobreak** is an **EcoFlow RIVER 3 Plus** portable power station
 (286 Wh, 600 W, 1200 W peak) that Eduardo installed in the shed on his visit of
 **2026-11-24**, with its USB port plugged into **ara-raspberrypi2**. The
-`ups-monitor` container reads it every 2 s and sends **one message to "Casa Céu
+`ups-monitor` container reads it every 0.5 s and sends **one message to "Casa Céu
 Azul"** (the ara group) in each case:
 
 - 🔴 **falta de energia**: the station has been on battery for 10 s.
@@ -62,7 +62,7 @@ re-staged Pi starts it only on the ara LAN.
 | `ALERT_JID` | Casa Céu Azul `120363410965618335@g.us` (= root `.env` `ARA_WHATSAPP_GROUP_JID`) |
 | `TEST_JID` | Casa SmokeTests `120363410899542847@g.us` (= `SMOKETESTS_WHATSAPP_GROUP_JID`), only for `POST /api/test` |
 | `WAHA_URL/KEY/SESSION` | `env_file` = `~/ups-monitor/ups-monitor.env` (chmod 600, not in git). The bnu WAHA through the tailnet relay `http://bnu-proxmox:3001`, the same values as `ALERT_WAHA_*` in `~/canteiro-timelapse/env/alerts.env` (live copy of root `.env` `BNU_WAHA_API_KEY`) |
-| `POLL_S` · `ALERT_AFTER_S` · `RESTORE_CONFIRM_S` · `LOW_BATTERY_PCT` | 2 · 10 · 10 · 20 |
+| `POLL_S` · `ALERT_AFTER_S` · `RESTORE_CONFIRM_S` · `LOW_BATTERY_PCT` | 0.5 (2 until 2026-11-24; the four reads fit, measured interval 0.5 s) · 10 · 10 · 20 |
 | `DASHBOARD_URL` | unset: the 🔴 message carries no link (a tailnet URL is useless to the group) |
 | `TZ` | `America/Sao_Paulo` |
 
