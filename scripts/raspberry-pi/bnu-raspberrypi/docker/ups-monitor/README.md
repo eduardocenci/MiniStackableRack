@@ -51,6 +51,17 @@ Live copy: `bnu-raspberrypi:~/ups-monitor/`. State: `/var/lib/ups-monitor/ups.db
 | `TEST_JID` | Casa SmokeTests `120363410899542847@g.us` (= `SMOKETESTS_WHATSAPP_GROUP_JID`), only for `POST /api/test` |
 | `WAHA_URL/KEY/SESSION` | from `env_file` = `~/canteiro-jobs/env/canteiro-watchdog.env`, the bnu WAHA credentials already on this Pi (mirror of `.env` `BNU_WAHA_*`). That file's other keys are ignored. To decouple, copy the three keys to `~/ups-monitor/ups-monitor.env` and repoint `env_file` |
 | `POLL_S` · `ALERT_AFTER_S` · `RESTORE_CONFIRM_S` · `LOW_BATTERY_PCT` | 0.5 (2 until 2026-11-23; a Q round trip measures ~147 ms) · 10 · 10 · 20. `INPUT_MIN_V` defaults to 80 |
+
+**Polling interval and short blips (microquedas).** Detection is by sampling: the
+serial protocol has no event log and no latched "was on battery" bit, so a transfer
+to battery that starts and ends between two polls is **not recorded**. Episodes
+before 2026-11-23 have a 2 s resolution, and their count is a floor. Measured on
+2026-11-23 with the container stopped: a `Q` round trip takes 144–152 ms, 0 failures
+in 250 reads, including 80 reads at a 0.25 s cadence. The loop never sleeps less
+than 0.2 s between reads, so about 0.35 s is the practical minimum. The UPS's own
+event log is the *Eventos* page of the Wi-Fi module
+(`http://10.1.1.159/protect/eventos.htm`), behind the login whose credentials are
+unknown.
 | `TZ` | `America/Sao_Paulo` (the Pi itself runs Europe/London) |
 
 ## Deploy / update
@@ -83,8 +94,11 @@ implemented.
 
 ## Not verified yet
 
-Not tested with a real outage. On grid the status byte is `0x39`
-(*ups_ok · boost · bypass · beep*), and the *on battery* bit (`0x80`) has not
-been seen set. The rule therefore also triggers on input < 80 V. After the first
-real *queda de energia*, check `/api/events` and `/api/history?hours=2` and
-record what the UPS reported here.
+No outage long enough to send a message (≥ 10 s) has happened yet. From
+2026-11-11 to 2026-11-23 the monitor recorded **9 short episodes** (2–8 s, 34 s
+in total, battery always 100 %, none messaged). Six of them show the input at
+~220 V, so they were opened by the *on battery* bit (`0x80`), which therefore does
+get set; three show a real drop (0 V, 137 V, 107 V). On grid the status byte is
+`0x39` (*ups_ok · boost · bypass · beep*). After the first long *queda de
+energia*, check `/api/events` and `/api/history?hours=2` and record what the UPS
+reported here.

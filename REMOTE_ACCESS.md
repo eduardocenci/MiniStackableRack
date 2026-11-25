@@ -174,7 +174,10 @@ Read the UPS through its API, not the port:
 To read the raw port (`python3 sms_serial.py --raw`, sends only `Q`/`I`/`F`), stop the
 container first. The UPS's SMS "UPS Wi-Fi" module (`10.1.1.159`, LAN-only web UI) still
 answers, but its credentials are unknown (`admin`/`admin` is refused). Don't probe it for
-SNMP/Modbus/NUT: only HTTP is open. Code, protocol and deploy:
+SNMP/Modbus/NUT: only HTTP is open. It holds the UPS's own event log (*Eventos*,
+`/protect/eventos.htm`; every `/protect/*` page answers 302 to the login without a
+session, checked 2026-11-23), which the serial protocol does not offer: ups-monitor
+only sees what a poll catches. Code, protocol and deploy:
 `scripts/raspberry-pi/bnu-raspberrypi/docker/ups-monitor/README.md`. Runbook: globalnet
 `docs/runbooks/ups-monitor.md`.
 
