@@ -23,7 +23,10 @@
        every 30 s while playing), retrying every 5 s while visible.
      - Since 2026-11-23: the last 3 Frigate detections of each lens (preview GIFs)
        over the video, bottom right of that lens — /painel/det.json + /painel/det/<id>.gif
-       from canteiro-painel; a click plays the recording. ?det=0 hides them. -->
+       from canteiro-painel; a click plays the recording. ?det=0 hides them.
+     - Since 2026-11-24: the mouse over a title of the VENCIMENTOS card shows the whole
+       note of the sheet (Observações) — /painel/zonas.json from canteiro-painel gives the
+       rectangles of the current PNG and their texts; a tap does the same on a phone. -->
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
@@ -58,12 +61,25 @@
   #det a span svg { height: 1em; width: 1em; flex: none; margin-left: 2px; fill: #fff; stroke: none;
                     filter: drop-shadow(0 1px 1px #000); }
   #det a span em { flex: 1; font-style: normal; white-space: nowrap; overflow: hidden; }
+  /* Texto completo da planilha ao passar o mouse num título do card VENCIMENTOS — desde 24/11/2026. */
+  #dica { position: fixed; z-index: 5; display: none; max-width: min(460px, 92vw); padding: 10px 12px;
+          background: #181d25f2; color: #eceff4; border: 1px solid #3a4454; border-radius: 8px;
+          font: 14px/1.4 system-ui, sans-serif; box-shadow: 0 4px 18px #000c; pointer-events: none; }
+  #dica b { display: block; color: #ecac3c; margin-bottom: 4px; }
+  #dica i { display: block; font-style: normal; color: #60c878; margin-bottom: 4px; }
+  #dica i.nao { color: #e86060; }
   #clip { position: fixed; inset: 0; z-index: 4; display: none; background: #000d;
           align-items: center; justify-content: center; }
   #clip.show { display: flex; }
   #clip video, #clip img { width: auto; height: auto; max-width: 94vw; max-height: 90vh; background: #000; }
   #clip p { position: absolute; top: 10px; left: 14px; margin: 0; color: #ddd;
             font: 14px system-ui, sans-serif; }
+  /* baixar a gravação aberta (pedido Eduardo 23/11/2026) */
+  #baixar { position: absolute; top: 8px; right: 14px; padding: 6px 12px; border-radius: 6px;
+            background: #2b6cb0; color: #fff; text-decoration: none; cursor: pointer;
+            font: 600 14px system-ui, sans-serif; }
+  #baixar:hover { background: #3a82d0; }
+  #baixar[hidden] { display: none; }
   #msg { position: fixed; top: 12px; left: 12px; color: #9a9a9a;
          font: 14px system-ui, sans-serif; z-index: 2; }
   #offline { position: fixed; inset: 0; display: none; z-index: 3;
@@ -94,7 +110,8 @@
 <video id="v" muted autoplay playsinline controls></video>
 <div id="det"></div>
 <img id="painel" alt="Painel do canteiro: rede, portão, entregas, plano da semana">
-<div id="clip"><p></p></div>
+<div id="dica"></div>
+<div id="clip"><p></p><a id="baixar" hidden>⬇ Baixar clip</a></div>
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js"></script>
 <script>
   // MOSAICO [lente fixa (rua) | lente PT] desde 14/11/2026 — H.264 2560x720.
@@ -106,7 +123,40 @@
   // refeito a cada minuto. ?painel=0 volta ao vídeo em tela cheia; uma lente só não leva painel.
   if (PATH === 'mosaico' && new URLSearchParams(location.search).get('painel') !== '0') {
     const pimg = document.getElementById('painel');
-    const load = () => { pimg.src = '/painel/painel.png?t=' + Date.now(); };
+    // Zonas de hover do PNG atual (em pixels do próprio PNG): título, orientação e a observação da planilha.
+    let zonas = { w: 1920, h: 540, zonas: [] };
+    const dica = document.getElementById('dica');
+    const loadZonas = () => fetch('/painel/zonas.json', { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null).then(j => { if (j && j.zonas) zonas = j; }).catch(() => {});
+    const load = () => { pimg.src = '/painel/painel.png?t=' + Date.now(); loadZonas(); };
+    function zonaEm(ev) {            // ponto do mouse -> pixel do PNG (object-fit: contain) -> zona
+      const r = pimg.getBoundingClientRect(), ar = zonas.w / zonas.h;
+      let w = r.width, h = r.width / ar;
+      if (h > r.height) { h = r.height; w = h * ar; }
+      const x = (ev.clientX - r.left - (r.width - w) / 2) * zonas.w / w;
+      const y = (ev.clientY - r.top - (r.height - h) / 2) * zonas.h / h;
+      return zonas.zonas.find(z => x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h);
+    }
+    function mostraDica(ev) {
+      const z = zonaEm(ev);
+      pimg.style.cursor = z ? 'help' : '';
+      if (!z) { dica.style.display = 'none'; return; }
+      dica.textContent = '';
+      const b = document.createElement('b'); b.textContent = z.titulo; dica.append(b);
+      if (z.pagar) {
+        const i = document.createElement('i'); i.textContent = z.pagar;
+        if (z.pagar.startsWith('NÃO')) i.className = 'nao';
+        dica.append(i);
+      }
+      if (z.texto) dica.append(document.createTextNode(z.texto));
+      dica.style.display = 'block';
+      const d = dica.getBoundingClientRect();   // acima do cursor; nunca para fora da janela
+      dica.style.left = Math.max(6, Math.min(ev.clientX + 14, innerWidth - d.width - 6)) + 'px';
+      dica.style.top = Math.max(6, ev.clientY - d.height - 14) + 'px';
+    }
+    pimg.addEventListener('mousemove', mostraDica);
+    pimg.addEventListener('click', mostraDica);          // toque no celular
+    pimg.addEventListener('mouseleave', () => { dica.style.display = 'none'; });
     pimg.addEventListener('load', () => document.body.classList.add('painel'));
     pimg.addEventListener('error', () => { if (!pimg.naturalWidth) document.body.classList.remove('painel'); });
     load();
@@ -202,6 +252,7 @@
   // do Frigate do bnu. Clicar abre a gravação do trecho (/painel/det/<id>.mp4). ?det=0 desliga.
   const det = document.getElementById('det');
   const clip = document.getElementById('clip');
+  const baixar = document.getElementById('baixar');
   const LENTES = PATH === 'mosaico' ? ['canteiro_fixa', 'canteiro']      // esquerda | direita
                : [PATH === 'canteiro' ? 'canteiro' : 'canteiro_fixa'];
   const DET_ON = new URLSearchParams(location.search).get('det') !== '0';
@@ -292,12 +343,19 @@
       (i.objetos.length ? ' · ' + objetos(i) : '') + ' — clique fora para fechar';
     const old = clip.querySelector('video, img');
     if (old) old.remove();
+    // nome do arquivo: lente + data e hora de Brasília do início da detecção
+    const d = new Date(i.start * 1000).toLocaleString('sv-SE', { timeZone: 'America/Sao_Paulo' });
+    baixar.href = '/painel/det/' + i.id + '.mp4';
+    baixar.download = 'canteiro-' + (cam === 'canteiro' ? 'pt' : 'fixa') + '-' +
+      d.replace(/[-:]/g, '').replace(' ', '-') + '.mp4';
+    baixar.hidden = false;
     const cv = document.createElement('video');
     cv.controls = true; cv.autoplay = true; cv.muted = true; cv.playsInline = true;
     cv.addEventListener('error', () => {           // sem gravação (já apagada): mostra o GIF grande
       const big = document.createElement('img');
       big.src = '/painel/det/' + i.id + '.gif';
       big.style.width = 'min(94vw, 960px)';
+      baixar.hidden = true;                        // não há gravação para baixar
       cv.replaceWith(big);
     });
     cv.src = '/painel/det/' + i.id + '.mp4';
@@ -310,6 +368,7 @@
     if (m) { if (m.pause) m.pause(); m.remove(); }
     clip.classList.remove('show');
   }
+  baixar.addEventListener('click', e => e.stopPropagation());
   clip.addEventListener('click', closeClip);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeClip(); });
 

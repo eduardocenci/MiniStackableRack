@@ -10,12 +10,15 @@ missing half: a 1920x540 PNG with five blocks, redrawn every minute —
   VENCIMENTOS         titles falling due in the next 7 days (the ones with no payment scheduled
                       first, item by item) + the ones overdue up to 7 days and
                       still open, each "agendado DD/MM" (a scheduling slip was filed) or "sem
-                      agendamento" (sheet tab Financeiro, same spreadsheet as the plan)
+                      agendamento" (sheet tab Financeiro, same spreadsheet as the plan). Under a
+                      title FALLING DUE with no payment scheduled: PAGAR / NÃO PAGAR / A CONFERIR
+                      and what it is about, up to 3 lines (the "[pagar: …]" mark in Observações)
   ENTREGAS            deliveries of the last Diário de Obra (Drive Diario/<date>/diario.json)
   PLANO DA SEMANA     the week's planned activities (sheet PlanejadoRealizado; with the Diário's
                       status marks when the last Diário is of the same week)
 
-and serves it on HTTP :8557 (/painel.png and /painel.json to PAINEL_ALLOW only; /health to anyone) to
+and serves it on HTTP :8557 (/painel.png, /painel.json and /zonas.json - the hover texts of the
+/live page - to PAINEL_ALLOW only; /health to anyone) to
   - canteiro-mosaico (bnu Frigate LXC 105), which stacks it under the TV output `mosaico-tv`;
   - the /live page (tailscale serve /painel -> 127.0.0.1:8557), which shows it under the video.
 
@@ -433,6 +436,25 @@ def _itens(txt: str) -> list[str]:
 TAX_RE = re.compile(r"^\s*(ISS|INSS|IRRF|PIS|COFINS|CSLL|CSRF)\b", re.I)
 VENC_RE = re.compile(r"venc(?:imento|e|\.)?\s*(?:normal\s*|em\s*|:\s*)?(\d{2})/(\d{2})(?:/(\d{4}))?", re.I)
 BR_DATE = re.compile(r"^\s*(\d{2})/(\d{2})/(\d{4})\s*$")
+# Payment guidance written by the /atualiza scrutiny at the start of Observações (W), pedido Eduardo
+# 24/11/2026: "[pagar: sim — até seg 30/11 · taxa dos Bombeiros …]" / "[pagar: não — motivo]".
+# No mark = nobody checked the title yet ("A CONFERIR").
+PAGAR_RE = re.compile(r"\[\s*pagar\s*:\s*(sim|n[ãa]o)\b[\s—–\-:·,;]*([^\]]*)\]", re.I)
+
+
+def pagar_marca(obs: str) -> tuple[str, str, str]:
+    """Observações -> (pagar: "sim" | "nao" | "", the mark's text, the note without the mark)."""
+    m = PAGAR_RE.search(obs or "")
+    if not m:
+        return "", "", " ".join((obs or "").split())
+    resto = (obs[:m.start()] + " " + obs[m.end():]).strip(" |\n\t")
+    return ("sim" if m.group(1).lower() == "sim" else "nao"), " ".join(m.group(2).split()), " ".join(resto.split())
+
+
+def dia_util(d: dt.date) -> dt.date:
+    """A due date on a weekend is payable on the next working day (regra Eduardo 24/11/2026).
+    Holidays are not known here - the scrutiny writes the real deadline in the mark's text."""
+    return d + dt.timedelta(days={5: 2, 6: 1}.get(d.weekday(), 0))
 # Financeiro tab, 0-based columns (layout v7 — home-ara finance/sheets_client.py FIELD)
 FC = {"id": 0, "fornecedor": 3, "parcela": 9, "data_nf": 10, "numero": 11, "valor_nf": 14, "pago": 20, "obs": 22}
 
@@ -475,7 +497,8 @@ def src_venc() -> dict:
     Due date: a retention guia (Parcela = ISS/INSS/IRRF…) or a parcel without NF number carries it
     in the Data column (K); an invoiced row carries the NF date in K and its boleto's due date in
     Observações ("venc. DD/MM/AAAA") — an invoiced row with no such note is skipped rather than
-    guessed."""
+    guessed. Each title also carries the payment guidance of its Observações ("pagar", "desc" -
+    pagar_marca) and the rest of that note ("obs", the hover text of the /live page)."""
     if not SHEET_ID or not Path(GSA_KEYFILE).exists():
         raise RuntimeError("sheet not configured")
     import gspread  # noqa: WPS433
@@ -526,8 +549,9 @@ def src_venc() -> dict:
             o_que = "NF " + r[FC["numero"]].strip().lstrip("0")
         else:
             o_que = "parcela " + parcela if parcela else "parcela"
+        pagar, desc, nota = pagar_marca(obs)
         tit.append({"venc": venc.isoformat(), "quem": _vendor(forn), "contrato": cid, "o_que": o_que,
-                    "valor": round(valor, 2), "agendado": ag})
+                    "valor": round(valor, 2), "agendado": ag, "pagar": pagar, "desc": desc, "obs": nota})
     tit.sort(key=lambda t: (t["venc"], -t["valor"]))
     return {"titulos": tit, "antigos_n": antigos_n, "antigos_total": round(antigos_total, 2)}
 
@@ -653,6 +677,7 @@ def age_txt(k: str) -> tuple[str, tuple]:
 def render() -> Image.Image:
     im = Image.new("RGB", (W, H), BG)
     dr = ImageDraw.Draw(im)
+    zonas: list[dict] = []     # hover rectangles of this frame (/zonas.json), swapped in at the end
     f_t, f_s, f_b, f_bs, f_n = font(F_HEAD, 30), font(F_SEMI, 22), font(F_BODY, 24), font(F_BODY, 20), font(F_HEAD, 56)
     now = dt.datetime.now(TZ)
     pad, gap, top, bot = 14, 12, 10, H - 10
@@ -806,11 +831,51 @@ def render() -> Image.Image:
             ye -= 30
             dr.text((xa, ye + 6), fit(dr, f"+ {d['antigos_n']} mais antigos sem baixa · R$ {brl(d['antigos_total'])}",
                                       f_bs, int(xb - xa)), font=f_bs, fill=DIM)
-        avencer = [t for t in d["titulos"] if t["venc"] >= hoje.isoformat()]
-        vencidos = [t for t in d["titulos"] if t["venc"] < hoje.isoformat()][::-1]   # most recent first
+        # a title due on a weekend is still "falling due" until the next working day (24/11/2026)
+        prazo = lambda t: dia_util(dt.date.fromisoformat(t["venc"]))
+        avencer = [t for t in d["titulos"] if prazo(t) >= hoje]
+        vencidos = [t for t in d["titulos"] if prazo(t) < hoje][::-1]   # most recent first
+        f_pl = font(F_HEAD, 20)
+        PILL = {"sim": ("PAGAR", GREEN), "nao": ("NÃO PAGAR", RED), "": ("A CONFERIR", DIM)}
+        maxl: dict[int, int] = {}      # id(title) -> guidance lines it may take (3, fewer when the card is full)
+
+        def orient(t: dict, late: bool, draw: bool) -> int:
+            """Guidance under a title FALLING DUE with no payment scheduled (pedido Eduardo
+            24/11/2026): pay or not, and what the title is about, in up to 3 lines. Returns its height."""
+            if late or t["agendado"]:
+                return 0
+            lab, col = PILL[t.get("pagar", "")]
+            pw = int(dr.textlength(lab, font=f_pl)) + 14
+            txt = t.get("desc") or ("" if t.get("pagar") else "ainda sem conferência do /atualiza")
+            n = maxl.get(id(t), 3)
+            # the first line is shorter (the pill sits on it): wrap word by word against each line's width
+            lines, cur, words = [], "", txt.split()
+            for i, w in enumerate(words):
+                lim = int(xb - xa - pw - 8) if not lines else int(xb - xa)
+                if not cur or dr.textlength(cur + " " + w, font=f_bs) <= lim:
+                    cur = (cur + " " + w).strip()
+                    continue
+                if len(lines) == n - 1:
+                    cur = cur + " " + " ".join(words[i:])     # out of lines: the rest is cut with "…"
+                    break
+                lines.append(cur)
+                cur = w
+            lines.append(fit(dr, cur, f_bs, int(xb - xa - pw - 8) if not lines else int(xb - xa)))
+            if draw:
+                if t.get("pagar"):
+                    dr.rounded_rectangle((xa, y + 2, xa + pw, y + 24), radius=5, fill=col)
+                    dr.text((xa + 7, y + 1), lab, font=f_pl, fill=CARD)
+                else:
+                    dr.rounded_rectangle((xa, y + 2, xa + pw, y + 24), radius=5, outline=col, width=2)
+                    dr.text((xa + 7, y + 1), lab, font=f_pl, fill=col)
+                dr.text((xa + pw + 8, y), lines[0], font=f_bs, fill=FG if t.get("pagar") else DIM)
+                for i, ln in enumerate(lines[1:], 1):
+                    dr.text((xa, y + 25 * i), ln, font=f_bs, fill=FG)
+            return 27 + 25 * (len(lines) - 1) + 3
 
         def linha(t: dict, late: bool) -> None:
             nonlocal y
+            y0 = y
             dd = dt.date.fromisoformat(t["venc"])
             v = "R$ " + brl(t["valor"]) if t["valor"] else "valor a definir"
             vw = dr.textlength(v, font=f_b)
@@ -827,6 +892,14 @@ def render() -> Image.Image:
             quando = "hoje" if dd == hoje else f"{WD_PT[dd.weekday()]} {dd:%d/%m}"
             dr.text((xa, y), fit(dr, f"{quando} · {t['o_que']}", f_bs, int(xb - xa - sw - 34)), font=f_bs, fill=DIM)
             y += 29
+            y += orient(t, late, True)
+            # hover on /live: the whole note of the sheet (and the whole guidance, when it was cut)
+            if t.get("obs") or t.get("desc"):
+                lab = PILL[t.get("pagar", "")][0]
+                zonas.append({"x": int(xa), "y": int(y0), "w": int(xb - xa), "h": int(y - y0),
+                              "titulo": f"{t['quem']} · R$ {brl(t['valor'])} · vence {dd:%d/%m}",
+                              "pagar": f"{lab} — {t['desc']}" if t.get("desc") else "",
+                              "texto": t.get("obs", "")})
 
         # What can still be acted on in time comes first (pedido Eduardo 18/11/2026): titles
         # FALLING DUE without a payment scheduled (amber), item by item, soonest first - then the
@@ -841,8 +914,19 @@ def render() -> Image.Image:
             for (_, lista, late), k in zip(secs, sel):
                 if not lista and late:
                     continue
-                h += 27 + (57 * len(k) + (26 if len(k) < len(lista) else 0) if lista else 30) + 4
+                itens = sum(57 + orient(lista[i], late, False) for i in k)
+                h += 27 + (itens + (26 if len(k) < len(lista) else 0) if lista else 30) + 4
             return h
+
+        # Before an open title falling due is left out, its guidance gives up lines - one at a
+        # time, the tallest (then the later) first - down to one line each.
+        abertos = [t for t in avencer if not t["agendado"]]
+        so_abertos = [{i for i, t in enumerate(avencer) if not t["agendado"]}, set()]
+        while abertos and altura(so_abertos) > ye - y:
+            alto = max(abertos, key=lambda t: (orient(t, False, False), t["venc"]))
+            if maxl.get(id(alto), 3) == 1:
+                break
+            maxl[id(alto)] = maxl.get(id(alto), 3) - 1
 
         fila = ([(0, i) for i, t in enumerate(avencer) if not t["agendado"]]
                 + [(1, i) for i, t in enumerate(vencidos) if not t["agendado"]]
@@ -1084,6 +1168,8 @@ def render() -> Image.Image:
                     break
                 dr.text((xa, y), fit(dr, "· " + it, f_bs, int(xb - xa)), font=f_bs, fill=DIM)
                 y += 26
+    with LOCK:
+        ZONAS[:] = zonas
     return im
 
 
@@ -1468,6 +1554,7 @@ def tv_loop_yuv(key: str) -> bytes | None:
 # ------------------------------------------------------------------ serve
 LOCK = threading.Lock()
 LAST = {"png": b"", "ts": 0.0}
+ZONAS: list[dict] = []       # hover rectangles of the last frame, in the PNG's own pixels (W x H)
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -1488,6 +1575,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             snap = {"ts": LAST["ts"], "fontes": {k: {"ok_ts": c["ok_ts"], "erro": c["erro"]} for k, c in CACHE.items()}}
             if path.endswith("/painel.json"):
                 snap["dados"] = {k: c["data"] for k, c in CACHE.items()}
+            body, ctype = json.dumps(snap, ensure_ascii=False).encode(), "application/json; charset=utf-8"
+        elif path.endswith("/zonas.json"):
+            with LOCK:
+                snap = {"ts": LAST["ts"], "w": W, "h": H, "zonas": list(ZONAS)}
             body, ctype = json.dumps(snap, ensure_ascii=False).encode(), "application/json; charset=utf-8"
         elif path.endswith("/det.json"):
             with DET_LOCK:
