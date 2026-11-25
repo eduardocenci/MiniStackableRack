@@ -496,7 +496,14 @@ them at night.
   `enp6s18`), which Matter needs. First Matter node: **Tapo P316M** 6-outlet
   strip "Power Strip Rack" at **`192.168.2.52`** (UCG reservation, IoT power
   block; MAC `58-D8-12-37-0C-DA`, fw 1.3.0, serial `58D812370CDA`), per-outlet
-  power/energy — entity map in `scripts/kasa/mia-hs300/README.md`. Tapo
+  power/energy — Matter endpoint N = outlet N (`switch.den_power_strip_rack_switch_N`,
+  `sensor.den_power_strip_rack_power_N`; the meters sat on endpoints 7–12 for
+  one day, moved to 1–6 on 2026-09-05 and the `_7..12` sensors stayed
+  unavailable until removed 2026-11-24 — an 'offline' rack strip on the Power
+  dashboard or a dead Power row on globalnet means the entity ids moved, not
+  the strip: compare `unique_id` endpoints in `config/entity_registry/list`);
+  names + dashboard in `scripts/proxmox/homeassistant/mia-homeassistant/dashboards/`
+  (`power_panel.py`, README → Power). Tapo
   Matter devices pair over **Bluetooth** (BLE name `P316M_xxxxxxxx`, seen from
   mia-raspberrypi's `bluetoothctl scan on`), they do NOT open a Wi-Fi setup
   AP, so the python-kasa/`pi_ap.sh` route does not apply — commissioned from
