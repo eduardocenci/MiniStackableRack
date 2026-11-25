@@ -191,13 +191,13 @@ in the FancyLEDs section of the yaml.
 
 `power_panel.py` holds the P316M outlet → name mapping (`P316M_OUTLETS`) and
 names the switch, its `power_on_behavior` select and the five meter sensors of
-each outlet (Matter endpoint N ↔ meter N+6). Auth comes from `MIA_HA_URL` /
+each outlet (Matter endpoint N = outlet N: `switch_N` and meters `*_N`). Auth comes from `MIA_HA_URL` /
 `MIA_HA_TOKEN` through `scripts/devtool.py` (`devtool.ENV`); needs the local
 `websockets` and `pyyaml` packages.
 
 The Tapo has no strip-level meter, so the heading badge uses
 `sensor.power_strip_rack_total_power` — a **Template helper** (UI-created,
-2026-09-04, via the `template` config flow: sum of `sensor.den_power_strip_rack_power_7..12`,
+2026-09-04, via the `template` config flow: sum of `sensor.den_power_strip_rack_power_1..6`,
 unit W, device_class power, state_class measurement). Its display precision
 and the P316M meters' (`options.sensor.display_precision = 1`) were set via
 `config/entity_registry/update` so all three strips show one decimal.

@@ -1,0 +1,215 @@
+# "Power" dashboard (sidebar 'Power', url_path power-strips) — all three mia power strips:
+# per-outlet on/off, live watts, and a history graph per strip.
+# Storage-mode dashboard: applied over the websocket API by power_panel.py in this folder
+# (lovelace/dashboards/create once, then lovelace/config/save), not read by HA from this file.
+# Quick rename from the panel: tap any row -> gear icon (top-right of the dialog) -> Name -> Update.
+# Entity ids: Tapo P316M via Matter (den_power_strip_rack_*, endpoint N = outlet N: switch_N and its meters *_N — the meters sat on
+# endpoints 7-12 until 2026-09-05, when the strip re-presented them on 1-6),
+# HS300s via tplink (tp_link_power_strip_f845_* desk strip .50, tp_link_power_strip_fdb8_* living-room strip .51).
+title: Power
+views:
+- title: Power
+  path: power
+  icon: mdi:power-plug-outline
+  type: sections
+  max_columns: 3
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Power Strip Rack · Tapo P316M (.52)
+      heading_style: title
+      badges:
+      - type: entity
+        entity: sensor.power_strip_rack_total_power
+        name: total
+    - type: entities
+      state_color: true
+      entities:
+      - entity: switch.den_power_strip_rack_switch_1
+        name: 1 · Verizon 5G Home
+        icon: mdi:power-socket-us
+      - entity: sensor.den_power_strip_rack_power_1
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.den_power_strip_rack_switch_2
+        name: 2 · (empty)
+        icon: mdi:power-socket-us
+      - entity: sensor.den_power_strip_rack_power_2
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.den_power_strip_rack_switch_3
+        name: 3 · (empty)
+        icon: mdi:power-socket-us
+      - entity: sensor.den_power_strip_rack_power_3
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.den_power_strip_rack_switch_4
+        name: 4 · Rack (excl. NAS & Pi)
+        icon: mdi:power-socket-us
+      - entity: sensor.den_power_strip_rack_power_4
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.den_power_strip_rack_switch_5
+        name: 5 · NAS
+        icon: mdi:power-socket-us
+      - entity: sensor.den_power_strip_rack_power_5
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.den_power_strip_rack_switch_6
+        name: 6 · Raspberry Pi + Monitor
+        icon: mdi:power-socket-us
+      - entity: sensor.den_power_strip_rack_power_6
+        name: '      power'
+        icon: mdi:flash
+    - type: history-graph
+      title: Power Strip Rack outlets (W)
+      hours_to_show: 6
+      entities:
+      - entity: sensor.den_power_strip_rack_power_1
+        name: Verizon 5G Home
+      - entity: sensor.den_power_strip_rack_power_4
+        name: Rack
+      - entity: sensor.den_power_strip_rack_power_5
+        name: NAS
+      - entity: sensor.den_power_strip_rack_power_6
+        name: Pi + Monitor
+  - type: grid
+    cards:
+    - type: heading
+      heading: Power Strip Desk · Kasa HS300 (.50)
+      heading_style: title
+      badges:
+      - type: entity
+        entity: sensor.tp_link_power_strip_f845_current_consumption
+        name: total
+    - type: entities
+      state_color: true
+      entities:
+      - entity: switch.tp_link_power_strip_f845_plug1
+        name: 1 · Fully Stand-Up Desk
+        icon: mdi:power-socket-us
+      - entity: sensor.tp_link_power_strip_f845_plug1_current_consumption
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.tp_link_power_strip_f845_anker_usbchub
+        name: 2 · Anker USB Charger
+        icon: mdi:power-socket-us
+      - entity: sensor.tp_link_power_strip_f845_anker_usbchub_current_consumption
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.tp_link_power_strip_f845_desktop
+        name: 3 · Desktop
+        icon: mdi:power-socket-us
+      - entity: sensor.tp_link_power_strip_f845_desktop_current_consumption
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.tp_link_power_strip_f845_minirack_main
+        name: 4 · Sonos Era 100
+        icon: mdi:power-socket-us
+      - entity: sensor.tp_link_power_strip_f845_minirack_main_current_consumption
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.tp_link_power_strip_f845_minirack_ups_nas
+        name: 5 · LED Strip
+        icon: mdi:power-socket-us
+      - entity: sensor.tp_link_power_strip_f845_minirack_ups_nas_current_consumption
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.tp_link_power_strip_f845_minirack_aux_rasp
+        name: 6 · Monitor
+        icon: mdi:power-socket-us
+      - entity: sensor.tp_link_power_strip_f845_minirack_aux_rasp_current_consumption
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.tp_link_power_strip_f845_led
+        name: status LED
+        icon: mdi:led-on
+    - type: history-graph
+      title: Power Strip Desk outlets (W)
+      hours_to_show: 6
+      entities:
+      - entity: sensor.tp_link_power_strip_f845_plug1_current_consumption
+        name: Fully Stand-Up Desk
+      - entity: sensor.tp_link_power_strip_f845_anker_usbchub_current_consumption
+        name: Anker USB Charger
+      - entity: sensor.tp_link_power_strip_f845_desktop_current_consumption
+        name: Desktop
+      - entity: sensor.tp_link_power_strip_f845_minirack_main_current_consumption
+        name: Sonos Era 100
+      - entity: sensor.tp_link_power_strip_f845_minirack_ups_nas_current_consumption
+        name: LED Strip
+      - entity: sensor.tp_link_power_strip_f845_minirack_aux_rasp_current_consumption
+        name: Monitor
+  - type: grid
+    cards:
+    - type: heading
+      heading: Power Strip Living Room · Kasa HS300 (.51)
+      heading_style: title
+      badges:
+      - type: entity
+        entity: sensor.tp_link_power_strip_fdb8_current_consumption
+        name: total
+    - type: entities
+      state_color: true
+      entities:
+      - entity: switch.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_0
+        name: 1 · LED Strip (Bottom Cabinet)
+        icon: mdi:power-socket-us
+      - entity: sensor.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_0_current_consumption
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_1
+        name: 2 · (empty)
+        icon: mdi:power-socket-us
+      - entity: sensor.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_1_current_consumption
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_2
+        name: 3 · LED Strip (Ambient Light TV)
+        icon: mdi:power-socket-us
+      - entity: sensor.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_2_current_consumption
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_3
+        name: 4 · Apple TV
+        icon: mdi:power-socket-us
+      - entity: sensor.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_3_current_consumption
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_4
+        name: 5 · Sonos Arc Ultra
+        icon: mdi:power-socket-us
+      - entity: sensor.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_4_current_consumption
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_5
+        name: 6 · TV 75"
+        icon: mdi:power-socket-us
+      - entity: sensor.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_5_current_consumption
+        name: '      power'
+        icon: mdi:flash
+      - entity: switch.tp_link_power_strip_fdb8_led
+        name: status LED
+        icon: mdi:led-on
+    - type: history-graph
+      title: Power Strip Living Room outlets (W)
+      hours_to_show: 6
+      entities:
+      - entity: sensor.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_0_current_consumption
+        name: LED Strip (Bottom Cabinet)
+      - entity: sensor.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_2_current_consumption
+        name: LED Strip (Ambient Light TV)
+      - entity: sensor.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_3_current_consumption
+        name: Apple TV
+      - entity: sensor.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_4_current_consumption
+        name: Sonos Arc Ultra
+      - entity: sensor.tp_link_power_strip_fdb8_kasa_smart_plug_fdb8_5_current_consumption
+        name: TV 75"
+  - type: grid
+    column_span: 3
+    cards:
+    - type: markdown
+      content: '**Rename an outlet:** tap its row → ⚙ (top-right of the dialog) → edit **Name** (and Entity ID if you like)
+        → Update. The switch row and its "power" row are separate entities — rename the switch; the meter follows the naming
+        in `power_panel.py` (`--names` applies the repo mapping again).'
