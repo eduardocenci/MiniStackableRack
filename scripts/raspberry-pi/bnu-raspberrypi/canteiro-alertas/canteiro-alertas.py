@@ -475,6 +475,8 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
         last = float(e.get("end_time") or now)
         if motor.visto(eid):
             motor.atualizar(eid, last)
+            if e.get("end_time") and motor.a_rever(eid):     # regra 2i: julgado aberto, relido no fim
+                changed = rejulgar_evento(motor, e, eid, start, last, now) or changed
             if APRENDER and eid in PENDENTES:
                 if last - start >= HR_MIN_DUR:
                     PENDENTES.pop(eid)
@@ -556,6 +558,49 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
         jsonl(rec)
         changed = True
     return saidas_da_rodada(motor, classify, now) or changed
+
+
+def rejulgar_evento(motor: Motor, e: dict, eid: str, start: float, last: float, now: float) -> bool:
+    """Regra 2i (home-ara, 26/11/2026): um evento de caminhão julgado ainda ABERTO como parado
+    ENCERROU — a trilha inteira diz saindo e passa pelos vetos da 2g? Então é a saída (candidata
+    da 2h, com a foto do trecho final). Antes a direção era lida uma vez só: a carroceria de
+    26/11/2026 saiu às 15:44 dentro de um evento lido "parado" às 15:41 e o grupo não soube."""
+    cam = e.get("camera") or FRIGATE_CAMERA
+    data = e.get("data") or {}
+    trilha, box = data.get("path_data") or [], data.get("box")
+    d = veto = None
+    if cam == ENTRADA_LENTE:
+        d = direcao_trilha(trilha, False, last - start, ENTRADA_SENTIDO)
+        if d == "saindo":
+            _ok, veto = saida_observada(trilha, box, last, eventos_abertos(cam, eid), ENTRADA_SENTIDO,
+                                        min_pts=SAIDA_MIN_PTS, y_rua=SAIDA_Y_RUA)
+    saindo = d == "saindo" and (veto is None or SAIDA_REGRA != "v1")
+    msgs = motor.rejulgar(eid, last, now, saindo)
+    if cam != ENTRADA_LENTE:
+        return False
+    raw = None
+    pend = motor.s.get("saida_pend")
+    if saindo and (msgs or (pend and pend["evento"] == eid)):
+        fim = [float(p[1]) for p in trilha if float(p[1]) >= last - 12] or [last - 3]
+        ts = max(fim, key=lambda t: (Q.nota_trilha(trilha, box, t) or 0.0, -t))   # o caminhão ainda inteiro no quadro
+        raw = quadro_gravacao(ts, cam)
+        if raw and pend and pend["evento"] == eid:
+            CAM_DIR.mkdir(parents=True, exist_ok=True)
+            (CAM_DIR / f"saida-{eid}.jpg").write_bytes(raw)
+    rec = {"ts": now, "tipo": "rejulgado", "id": eid, "camera": cam, "inicio": start, "fim": last,
+           "dur_s": round(last - start), "direcao": d, **({"saida_veto": veto} if veto else {}),
+           "saindo": saindo, "mensagens": []}
+    img = jpeg_envio(raw) if raw and msgs else None
+    for m in msgs:
+        try:
+            dest = deliver(m, img)
+        except Exception as ex:  # noqa: BLE001
+            dest = f"FALHOU: {ex}"
+            log(f"envio falhou ({m.tipo}): {ex}")
+        rec["mensagens"].append({"tipo": m.tipo, "destino": dest, "texto": m.texto})
+    log(f"{eid}: rejulgado no fim — {d}" + (f" (veto: {veto})" if veto else "") + (" → saída candidata" if saindo else ""))
+    jsonl(rec)
+    return True
 
 
 # ---------------------------------------------------------------- quadros da gravação (adendo 0010, 29/10/2026)
