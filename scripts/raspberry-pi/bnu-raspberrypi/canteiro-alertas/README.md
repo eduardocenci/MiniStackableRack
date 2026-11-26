@@ -96,6 +96,13 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
   (home-ara `python -m canteiro.saidas backtest`): current rule 10 right / 1 false / 0 missed,
   v1 10 / 0 / 0. **Rollout: shadow first** (`SAIDA_REGRA=v1` on `canteiro-alertas-sombra`),
   **LIVE since 2026-11-22 20:06** (Eduardo's OK; set in compose.yml on both containers); rollback = remove the variable and recreate.
+- **Event re-read when it ends (home-ara rule 2i, 2026-11-26).** Direction used to be read once
+  per event, while it was still open. A truck event judged open as `parado` (or with no
+  direction) is now re-read when Frigate closes it: if the WHOLE track reads `saindo` and passes
+  the 2g vetoes, the engine opens the departure from the END of the event (a 2h candidate, photo
+  = the last frame with the truck whole). Precedent: the Casas da Água flatbed left at 15:44 on
+  2026-11-26 inside an event read "parado" at 15:41 — no message. `alertas.jsonl` gets a
+  `rejulgado` line (`direcao`, `saida_veto`, `saindo`).
 - **Departure confirmed with a delay (home-ara rule 2h, phase 2, 2026-11-22).** Eduardo: the
   "saindo" notice may arrive late, but only when the camera really saw the truck leave. With
   `SAIDA_ESPERA_S` > 0 (seconds; 0 = off, the notice goes at once) an accepted "saindo" track is
@@ -162,16 +169,26 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
 
 ## Vehicle registry (home-ara decision 0011, since 09/10/2026)
 
-Every car/van that stays ≥ 20 s (not a truck) is **learned**: the service crops it
-from the Frigate **recording** frame (2304×1296, ~10× the snapshot), asks the
-Decisions API for descriptors (type, colour, make, sharpness) and "is it the SAME
-vehicle?" against the reference crops, and files it under a stable `V-NNN`:
+**Only the fixed lens learns** (`VEICULOS_LENTE`, default = `ENTRADA_LENTE` = `canteiro_fixa`;
+regra Eduardo 26/11/2026 — until then it was the PT lens, and only cars parked ≥ 20 s: a car
+that parks out of the PT frame was never seen). On the entrance lens every car/van (not a
+truck, P(car) ≥ 0.5) whose track reads **chegando** or **saindo** is an observation — no
+20 s wait, the car crosses the frame in 5–16 s and may park out of sight; with no clear
+direction (parado / passando) the event must last `VEICULOS_MIN_DUR_S` (5 s), less than that
+is street traffic. The service crops the vehicle from the Frigate **recording** frame
+(2304×1296) at the instant it is whole in the frame (track position, `canteiro.quadros`),
+retrying up to `VEICULOS_REVER_MAX` rounds while the recording is not there yet, asks the
+Decisions API for descriptors (type, colour, make, sharpness) and "is it the SAME vehicle?"
+against the reference crops, and files it under a stable `V-NNN`. Fixed-lens vehicles are
+their own domain (`camera: fixa`): never compared with the ids learned on the PT lens
+(`nova`), same `V-NNN` sequence. Two events in the same direction ≤ `TRAVESSIA_GAP_S` (30 s)
+apart are one crossing.
 
 | file (`/var/lib/canteiro-alertas/veiculos/`) | |
 |---|---|
 | `veiculos.json` | operational registry — descriptors + reference ids, **no identity** (seeded from the home-ara backfill, same `V-NNN` sequence) |
 | `refs/<event>.jpg` | high-res reference crops |
-| `veiculos.jsonl` | one line per new visit (`veiculo`, `novo`, descriptors) |
+| `veiculos.jsonl` | one line per new visit/observation (`veiculo`, `novo`, descriptors; on the fixed lens also `lente`, `dom`, `direcao`, `fim`) |
 | `abertas.json` | visits in progress |
 
 Who a vehicle belongs to lives only in home-ara `docs/diario/veiculos.yaml`
