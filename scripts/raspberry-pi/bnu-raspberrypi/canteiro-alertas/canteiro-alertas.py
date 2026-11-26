@@ -74,11 +74,19 @@ MODE (env):
 O aviso de pausa por teto vai sempre ao TEST_JID. Os destinos vêm só do env —
 nunca de conteúdo. Falha da OpenAI = sem alerta (só log), nunca o Frigate cru.
 
-Cadastro de veículos (home-ara decisão 0011, desde 09/10/2026): todo carro/van
-(não caminhão) PARADO ≥ 20 s entra numa VISITA; a 1ª de cada visita é descrita
-(tipo, cor, marca) a partir do recorte em alta da GRAVAÇÃO (2304×1296) e casada
-com STATE_DIR/veiculos/veiculos.json pela pergunta "é o mesmo veículo?" com o
-recorte de referência (refs/). Log em veiculos.jsonl. Só
+Cadastro de veículos (home-ara decisão 0011, desde 09/10/2026) — SÓ na lente
+VEICULOS_LENTE, que é a FIXA da iM9 (`canteiro_fixa`, a da entrada) desde
+26/11/2026 (regra Eduardo: "exclusivamente na lente fixa"; até então era a PT,
+onde quem estaciona fora do quadro nunca era visto). Nela todo carro/van (não
+caminhão) que a trilha mostra CHEGANDO ou SAINDO é uma observação — o carro cruza
+o quadro em 5–16 s e pode estacionar fora da imagem, não há "parado ≥ 20 s" a
+esperar; sem direção clara (parado, passando) basta o evento durar
+VEICULOS_MIN_DUR_S (5 s) — menos que isso é quem passou na rua. Cada observação é descrita (tipo, cor, marca) a partir do recorte em alta
+da GRAVAÇÃO (2304×1296) no instante em que o veículo aparece inteiro (trilha do
+Frigate) e casada com STATE_DIR/veiculos/veiculos.json pela pergunta "é o mesmo
+veículo?" com o recorte de referência (refs/). O cadastro da lente fixa é um
+domínio próprio ("fixa"): não se compara com os V-NNN aprendidos na lente PT.
+Log em veiculos.jsonl (`lente`, `dom`, `direcao`). Só
 descritores e referências — a identidade (de quem é) fica no home-ara
 (docs/diario/veiculos.yaml, interno). DESCONHECIDOS=1 (desligado até o OK do
 Eduardo, ~23/10/2026) avisa veículo nunca visto.
@@ -112,9 +120,9 @@ from canteiro.decisions import (MAX_SIDE, BudgetExceeded, Client, build_payload,
                                 data_url, estimate_image_tokens, estimate_text_tokens,
                                 prepare_image, usd)
 from canteiro.questions import CAMINHOES, contexto, question_set  # noqa: E402
-from canteiro.veiculos import (CONTEXTO_GALERIA_CAMINHOES, HR_MIN_DUR, Desc, Registro,  # noqa: E402
+from canteiro.veiculos import (CONTEXTO_GALERIA_CAMINHOES, DOM_FIXA, HR_MIN_DUR, Desc, Registro,  # noqa: E402
                                Visita, VisitasAbertas, apelido_auto, casar_galeria,
-                               payload_descricao, payload_galeria, recorte_alta,
+                               payload_descricao, payload_galeria, recorte_alta, recorte_instante,
                                registro_from_json, registro_to_json)
 
 TZ = ZoneInfo("America/Sao_Paulo")
@@ -128,7 +136,7 @@ INTERNO_JID = E("INTERNO_JID", "")             # "Casa Céu Azul" (ARA_ALERTAS_G
 TEST_JID = E("TEST_JID", "")                   # Casa SmokeTests
 OPENAI_API_KEY = E("OPENAI_API_KEY", "")       # a mesma chave do bnu HA (allowlist de IP do bnu)
 FRIGATE_URL = E("FRIGATE_URL", "http://bnu-frigate:5000")
-FRIGATE_CAMERA = E("FRIGATE_CAMERA", "canteiro")   # a lente PRINCIPAL (PT): cadastro de veículos, --test-alert
+FRIGATE_CAMERA = E("FRIGATE_CAMERA", "canteiro")   # a lente PRINCIPAL (PT): padrão das chamadas, --test-alert
 LABELS = E("LABELS", "car,bus,motorcycle")
 STATE_DIR = Path(E("STATE_DIR", "/var/lib/canteiro-alertas"))
 POLL_S = int(E("POLL_S", "15"))
@@ -147,6 +155,13 @@ P_NOVO = float(E("P_NOVO", "0.8"))                 # galeria: P(nenhum) para "no
 CROPS_DIAS = int(E("CROPS_DIAS", "60"))            # recortes de toda visita guardados por N dias
 P_MESMO_CAMINHAO = float(E("P_MESMO_CAMINHAO", "0.8"))  # galeria do dia: P(id) para "o mesmo caminhão" (ou P(nenhum) ≤ 1 − isto)
 ENTRADA_LENTE = E("ENTRADA_LENTE", "canteiro_fixa")  # lente da passagem: a trilha do evento dá chegada/saída (regra 2d)
+# Cadastro de carros/vans: a ÚNICA lente que aprende (regra Eduardo 26/11/2026 — a fixa da iM9).
+# Igual à ENTRADA_LENTE ⇒ aprende a cada chegada/saída lida na trilha; outra lente ⇒ só parado ≥ 20 s.
+VEICULOS_LENTE = E("VEICULOS_LENTE", ENTRADA_LENTE)
+VEIC_DOM = DOM_FIXA if VEICULOS_LENTE == ENTRADA_LENTE else None   # domínio das referências (None = pela data)
+VEICULOS_MIN_DUR_S = int(E("VEICULOS_MIN_DUR_S", "5"))   # lente da entrada, sem direção clara: evento mínimo (era 20 s; < isto = passou na rua)
+REVER_MAX = int(E("VEICULOS_REVER_MAX", "8"))        # rodadas à espera da gravação antes de desistir da observação
+TRAVESSIA_GAP_S = int(E("TRAVESSIA_GAP_S", "30"))    # 2 eventos do Frigate na mesma direção a ≤ isto = a mesma travessia
 ENTRADA_SENTIDO = int(E("ENTRADA_SENTIDO", "-1"))    # sinal de dx de quem CHEGA (−1: x caindo = entrando, lente fixa 09/11/2026)
 DIRECAO_ESPERA_S = int(E("DIRECAO_ESPERA_S", "30"))  # evento aberto sem direção clara: espera até isto antes de avaliar
 # Saída observada (regra 2g, 22/11/2026): atual = só registra `saida_veto`; v1 = a recusa vale ("parado")
@@ -446,6 +461,11 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
                         fh.write(json.dumps({"tipo": "fim", "visita": v["key"], "veiculo": v["veiculo"],
                                              "inicio": v["inicio"], "fim": v["fim"]}) + "\n")
             CADASTRO.salvar()
+    for eid in list(REVER):                      # observação à espera da gravação (lente da entrada)
+        r = REVER.pop(eid)
+        aprender(eid, r["start"], r["last"], r["box"], classify, now, direcao=r["direcao"],
+                 trilha=r["trilha"], tentativa=r["n"] + 1)
+        changed = True
     for m in motor.tick(now, saidas=False):      # a candidata de saída decide-se no FIM da rodada (2h)
         dest = deliver(m, None)
         jsonl({"ts": now, "tipo": m.tipo, "destino": dest, "texto": m.texto})
@@ -516,13 +536,21 @@ def one_round(motor: Motor, classify: Classifier, first: bool) -> bool:
                 log(f"envio falhou ({m.tipo}): {ex}")
             rec["mensagens"].append({"tipo": m.tipo, "destino": dest, "texto": m.texto})
             log(f"{m.tipo} → {dest}: {m.texto.splitlines()[0]}")
-        # cadastro de veículos (0011) só na lente principal: o box da fixa não é comparável e a sua
-        # gravação é 640×480 — a lente fixa alimenta alertas de caminhão, não o veiculos.json
-        if APRENDER and cam == FRIGATE_CAMERA and c is not None and c.p_truck < CFG.thr and not msgs:
+        # cadastro de veículos (0011) só na VEICULOS_LENTE — a fixa (entrada) desde 26/11/2026, regra
+        # Eduardo. Na lente da entrada a trilha diz chegando/saindo: cada travessia é uma observação
+        # (o carro cruza o quadro em 5–16 s); sem direção = passou na rua, não entra.
+        if APRENDER and cam == VEICULOS_LENTE and c is not None and c.p_truck < CFG.thr and not msgs:
             p_carro = (c.probs.get("van_equipe") or 0.0) + (c.probs.get("carro_picape") or 0.0)
             if p_carro >= 0.5:
-                if last - start >= HR_MIN_DUR:
-                    rec["veiculo"] = aprender(eid, start, last, box, classify, now)
+                if cam == ENTRADA_LENTE:
+                    # sem esperar 20 s (Eduardo 26/11/2026: "o carro pode estacionar numa parte não
+                    # visível da imagem e apenas passar na frente da lente"): chegando/saindo sempre;
+                    # parado/sem direção a partir de VEICULOS_MIN_DUR_S (menos que isso = rua)
+                    if direcao in ("chegando", "saindo") or last - start >= VEICULOS_MIN_DUR_S:
+                        rec["veiculo"] = aprender(eid, start, last, box, classify, now, direcao=direcao or "passando",
+                                                  trilha=(e.get("data") or {}).get("path_data") or [])
+                elif last - start >= HR_MIN_DUR:
+                    rec["veiculo"] = aprender(eid, start, last, box, classify, now, direcao=direcao)
                 elif not e.get("end_time"):
                     PENDENTES[eid] = start      # aprende quando completar 20 s parado
         jsonl(rec)
@@ -745,17 +773,57 @@ class Cadastro:
 
 CADASTRO: Cadastro | None = None
 PENDENTES: dict[str, float] = {}       # carro/van visto com < 20 s, ainda em curso
+REVER: dict[str, dict] = {}            # travessia cuja gravação ainda não existe: tenta nas próximas rodadas
+ULTIMA_TRAVESSIA: dict = {}            # {"fim", "direcao", "veiculo"} da última travessia aprendida
 
 
-def aprender(eid, start, last, box, classify, now) -> str | None:
-    """Uma visita nova de carro/van parado → recorte em alta + descrição + casamento."""
+def recorte_travessia(start: float, last: float, box, trilha) -> bytes | None:
+    """Recorte em alta de um veículo que CRUZA o quadro: o instante em que ele aparece inteiro
+    (canteiro.quadros, o mais perto da câmera primeiro), centrado na posição da trilha."""
+    for _nome, ts in Q.candidatos(trilha, box, start, last, True, n=3):
+        pos = Q.posicao(trilha, ts)
+        raw = recorte_instante(FRIGATE_URL, VEICULOS_LENTE, ts, pos, box) if pos else None
+        if raw is not None:
+            return raw
+    return None
+
+
+def aprender(eid, start, last, box, classify, now, direcao=None, trilha=None, tentativa=0) -> str | None:
+    """Uma observação nova de carro/van → recorte em alta + descrição + casamento. Parado: uma
+    VISITA (mesmo lugar, ≤ 20 min). Travessia da lente da entrada (``direcao`` chegando |
+    saindo): cada uma é uma observação; duas na mesma direção a ≤ TRAVESSIA_GAP_S são o mesmo
+    carro (o Frigate às vezes parte uma passagem em dois eventos)."""
     global CADASTRO
     CADASTRO = CADASTRO or Cadastro()
-    vis, nova = CADASTRO.abertas.observar(eid, start, last, box)
-    if not nova:
-        CADASTRO.salvar()
-        return vis.get("veiculo")
-    raw = recorte_alta(FRIGATE_URL, FRIGATE_CAMERA, start, last - start, box)
+    travessia = trilha is not None           # lente da entrada: recorte pela trilha, sem os 20 s
+    if travessia:
+        u = ULTIMA_TRAVESSIA
+        if u and u.get("direcao") == direcao and 0 <= start - u["fim"] <= TRAVESSIA_GAP_S and tentativa == 0:
+            u["fim"] = max(u["fim"], last)
+            return u.get("veiculo")
+        if direcao in ("chegando", "saindo"):
+            vis, nova = {"key": eid, "veiculo": None}, True
+        elif tentativa:                          # já contado como visita na 1ª tentativa
+            vis, nova = next((x for x in CADASTRO.abertas.abertas if eid in x["eventos"]),
+                             {"key": eid, "veiculo": None}), True
+        else:                                    # parado/passando: o mesmo lugar em ≤ 20 min é a mesma visita
+            vis, nova = CADASTRO.abertas.observar(eid, start, last, box)
+            if not nova:
+                CADASTRO.salvar()
+                return vis.get("veiculo")
+        raw = recorte_travessia(start, last, box, trilha)
+        if raw is None and last - start >= HR_MIN_DUR:
+            raw = recorte_alta(FRIGATE_URL, VEICULOS_LENTE, start, last - start, box)
+        if raw is None and tentativa < REVER_MAX:   # a gravação do trecho ainda não chegou: próxima rodada
+            REVER[eid] = {"start": start, "last": last, "box": box, "direcao": direcao,
+                          "trilha": trilha, "n": tentativa}
+            return None
+    else:
+        vis, nova = CADASTRO.abertas.observar(eid, start, last, box)
+        if not nova:
+            CADASTRO.salvar()
+            return vis.get("veiculo")
+        raw = recorte_alta(FRIGATE_URL, VEICULOS_LENTE, start, last - start, box)
     if raw is None:                          # sem gravação: não aprende (só log)
         log(f"{eid}: sem quadro da gravação — visita não aprendida")
         CADASTRO.salvar()
@@ -767,6 +835,7 @@ def aprender(eid, start, last, box, classify, now) -> str | None:
     desc = Desc.from_answers(ans) if ans else None
     v = Visita(dt.datetime.fromtimestamp(start, TZ).strftime("%Y-%m-%d"), start, last, box, [eid], eid,
                (box[2] * box[3]) if box else 0.0, desc)
+    v.dom, v.direcao = VEIC_DOM, direcao
     probs_log: dict = {}
 
     def galeria(cands):
@@ -790,11 +859,17 @@ def aprender(eid, start, last, box, classify, now) -> str | None:
     if vid and any(eid in x.referencias for x in CADASTRO.reg.veiculos):
         (REFS / f"{eid}.jpg").write_bytes(raw)
     vis["veiculo"] = vid
+    if travessia:
+        ULTIMA_TRAVESSIA.clear()
+        ULTIMA_TRAVESSIA.update({"fim": last, "direcao": direcao, "veiculo": vid})
     novo_veiculo = desfecho == "novo"
     with VEIC_LOG.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps({"ts": now, "visita": eid, "inicio": start, "box": box, "veiculo": vid,
                              "novo": novo_veiculo, "desfecho": desfecho, "galeria": probs_log,
-                             "desc": desc.to_json() if desc else None}, ensure_ascii=False) + "\n")
+                             "desc": desc.to_json() if desc else None,
+                             "lente": VEICULOS_LENTE, **({"dom": VEIC_DOM} if VEIC_DOM else {}),
+                             **({"direcao": direcao} if direcao else {}),
+                             **({"fim": last} if travessia else {})}, ensure_ascii=False) + "\n")
     CADASTRO.salvar()
     if novo_veiculo:
         log(f"veículo novo {vid}: {apelido_auto(desc)}")
@@ -877,7 +952,7 @@ def main() -> int:
     motor = Motor(CFG, load_state())
     classify = Classifier()
     log(f"canteiro-alertas MODE={MODE} limiar={CFG.thr} lentes={CAMERAS} perguntas={VERSION} "
-        f"quadros={QUADROS} teto_dia={CFG.cap_day} cadastro={'on' if APRENDER else 'off'} "
+        f"quadros={QUADROS} teto_dia={CFG.cap_day} cadastro={('on@' + VEICULOS_LENTE) if APRENDER else 'off'} "
         f"desconhecidos={'on' if DESCONHECIDOS else 'off'} saida={SAIDA_REGRA}/espera {SAIDA_ESPERA_S}s")
     falhas = 0
     first = True

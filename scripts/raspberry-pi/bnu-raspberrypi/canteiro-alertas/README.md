@@ -162,16 +162,26 @@ Frigate (bnu LXC 105) ──/api/events──▶ canteiro-alertas (bnu-raspberry
 
 ## Vehicle registry (home-ara decision 0011, since 09/10/2026)
 
-Every car/van that stays ≥ 20 s (not a truck) is **learned**: the service crops it
-from the Frigate **recording** frame (2304×1296, ~10× the snapshot), asks the
-Decisions API for descriptors (type, colour, make, sharpness) and "is it the SAME
-vehicle?" against the reference crops, and files it under a stable `V-NNN`:
+**Only the fixed lens learns** (`VEICULOS_LENTE`, default = `ENTRADA_LENTE` = `canteiro_fixa`;
+regra Eduardo 26/11/2026 — until then it was the PT lens, and only cars parked ≥ 20 s: a car
+that parks out of the PT frame was never seen). On the entrance lens every car/van (not a
+truck, P(car) ≥ 0.5) whose track reads **chegando** or **saindo** is an observation — no
+20 s wait, the car crosses the frame in 5–16 s and may park out of sight; with no clear
+direction (parado / passando) the event must last `VEICULOS_MIN_DUR_S` (5 s), less than that
+is street traffic. The service crops the vehicle from the Frigate **recording** frame
+(2304×1296) at the instant it is whole in the frame (track position, `canteiro.quadros`),
+retrying up to `VEICULOS_REVER_MAX` rounds while the recording is not there yet, asks the
+Decisions API for descriptors (type, colour, make, sharpness) and "is it the SAME vehicle?"
+against the reference crops, and files it under a stable `V-NNN`. Fixed-lens vehicles are
+their own domain (`camera: fixa`): never compared with the ids learned on the PT lens
+(`nova`), same `V-NNN` sequence. Two events in the same direction ≤ `TRAVESSIA_GAP_S` (30 s)
+apart are one crossing.
 
 | file (`/var/lib/canteiro-alertas/veiculos/`) | |
 |---|---|
 | `veiculos.json` | operational registry — descriptors + reference ids, **no identity** (seeded from the home-ara backfill, same `V-NNN` sequence) |
 | `refs/<event>.jpg` | high-res reference crops |
-| `veiculos.jsonl` | one line per new visit (`veiculo`, `novo`, descriptors) |
+| `veiculos.jsonl` | one line per new visit/observation (`veiculo`, `novo`, descriptors; on the fixed lens also `lente`, `dom`, `direcao`, `fim`) |
 | `abertas.json` | visits in progress |
 
 Who a vehicle belongs to lives only in home-ara `docs/diario/veiculos.yaml`
