@@ -33,31 +33,31 @@ views:
         name: '      power'
         icon: mdi:flash
       - entity: switch.den_power_strip_rack_switch_2
-        name: 2 · (empty)
+        name: 2 · Milwaukee Battery Charger
         icon: mdi:power-socket-us
       - entity: sensor.den_power_strip_rack_power_2
         name: '      power'
         icon: mdi:flash
       - entity: switch.den_power_strip_rack_switch_3
-        name: 3 · (empty)
+        name: 3 · Rack (MiniPC, network, KVM)
         icon: mdi:power-socket-us
       - entity: sensor.den_power_strip_rack_power_3
         name: '      power'
         icon: mdi:flash
       - entity: switch.den_power_strip_rack_switch_4
-        name: 4 · Rack (excl. NAS & Pi)
+        name: 4 · NAS
         icon: mdi:power-socket-us
       - entity: sensor.den_power_strip_rack_power_4
         name: '      power'
         icon: mdi:flash
       - entity: switch.den_power_strip_rack_switch_5
-        name: 5 · NAS
+        name: 5 · Anker USB Power Supply (Pi, Monitor)
         icon: mdi:power-socket-us
       - entity: sensor.den_power_strip_rack_power_5
         name: '      power'
         icon: mdi:flash
       - entity: switch.den_power_strip_rack_switch_6
-        name: 6 · Raspberry Pi + Monitor
+        name: 6 · (empty)
         icon: mdi:power-socket-us
       - entity: sensor.den_power_strip_rack_power_6
         name: '      power'
@@ -68,11 +68,11 @@ views:
       entities:
       - entity: sensor.den_power_strip_rack_power_1
         name: Verizon 5G Home
-      - entity: sensor.den_power_strip_rack_power_4
+      - entity: sensor.den_power_strip_rack_power_3
         name: Rack
-      - entity: sensor.den_power_strip_rack_power_5
+      - entity: sensor.den_power_strip_rack_power_4
         name: NAS
-      - entity: sensor.den_power_strip_rack_power_6
+      - entity: sensor.den_power_strip_rack_power_5
         name: Pi + Monitor
   - type: grid
     cards:
