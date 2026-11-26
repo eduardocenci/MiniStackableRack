@@ -1,0 +1,9 @@
+# The ONLY account. No "actions", no "instcmds": nobody can set a variable or send a
+# command (beeper, shutdown, test) to the UPS through this server.
+#
+# monuser / secret is not a secret: it is the fixed account every Synology DSM uses
+# when its UPS type is "Synology UPS server" (it cannot be changed in the DSM UI).
+# It only allows reading the status and registering as a monitoring client.
+[monuser]
+  password = secret
+  upsmon secondary
