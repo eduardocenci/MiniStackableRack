@@ -22,9 +22,9 @@ services:
     env_file: ups-monitor.env
     environment:
       TZ: America/New_York             # message clock (the Pi itself runs America/Manaus)
-      MODE: shadow                     # log | shadow (SmokeTests) | live — shadow until Eduardo picks the mia group
+      MODE: live                       # log | shadow (SmokeTests) | live — live since 26/11/2026 (Eduardo created Casa Miami)
       SITE_LABEL: MIA
-      ALERT_JID: ""                    # the mia group: not chosen yet (no MIA_WHATSAPP_GROUP_JID in .env)
+      ALERT_JID: "120363429486096634@g.us"   # Casa Miami (= MIA_WHATSAPP_GROUP_JID)
       TEST_JID: "120363410899542847@g.us"    # Casa SmokeTests (= SMOKETESTS_WHATSAPP_GROUP_JID): shadow + POST /api/test
       UPS_DEV: ups@127.0.0.1:3493      # nut-upsd on this Pi
       PORT: "8795"

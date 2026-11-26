@@ -2,7 +2,8 @@
 
 The mia rack nobreak — a **CyberPower CP1000PFCLCD** (1000 VA / 600 W) — is plugged
 into the USB of `mia-raspberrypi` since 26/11/2026 (`0764:0501`, standard HID Power
-Device). This container owns that USB interface (NUT 2.8.0, driver `usbhid-ups`) and
+Device). It feeds a TP-Link Tapo P316M power strip, and through it essentially every
+device of the site (Eduardo 26/11/2026). This container owns that USB interface (NUT 2.8.0, driver `usbhid-ups`) and
 serves the readings on **`:3493`** (NUT protocol), on the LAN and on the tailnet.
 
 **Consumers**
