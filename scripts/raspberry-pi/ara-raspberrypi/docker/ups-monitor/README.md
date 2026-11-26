@@ -24,6 +24,12 @@ the first real one).
 Runbook (rule, sample messages, operate, failure modes): globalnet
 `docs/runbooks/ups-monitor.md`.
 
+**What the station powers** (Eduardo, 26/11/2026): the Raspberry Pi, the two iM9
+cameras and the Starlink kit (dish + router) — the whole canteiro stack. In a
+grid outage (falta de energia) cameras, uplink and alerts keep working until the
+battery runs out; then everything stops together and the queued messages leave
+when the grid is back.
+
 ## The station
 
 | | |
