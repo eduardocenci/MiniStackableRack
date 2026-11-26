@@ -1,0 +1,22 @@
+# Authoritative copy: scripts/raspberry-pi/ara-raspberrypi/canteiro-relay-vigia/
+# Live copy:          ara-raspberrypi2:/etc/systemd/system/canteiro-relay-vigia.service
+# Reopens a camera stream whose video stopped while its audio goes on (see the .py docstring).
+[Unit]
+Description=canteiro-relay-vigia - reopen a canteiro camera stream that lost its video
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/canteiro-relay-vigia.py
+Environment=MODE=live
+DynamicUser=yes
+RuntimeDirectory=canteiro-relay-vigia
+RuntimeDirectoryMode=0755
+StateDirectory=canteiro-relay-vigia
+StateDirectoryMode=0755
+Restart=always
+RestartSec=10
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

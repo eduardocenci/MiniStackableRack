@@ -40,7 +40,11 @@ hls: no
 webrtc: no
 srt: no
 moq: no                 # default-on in v1.20+; would open :8892/:8893
-api: no
+# API on loopback only (2026-11-26): read every 5 s by canteiro-relay-vigia
+# (../../canteiro-relay-vigia/), which also PATCHes a path's config to reopen a camera
+# stream that lost its video while its audio goes on.
+api: yes
+apiAddress: 127.0.0.1:9997
 metrics: no
 pprof: no
 

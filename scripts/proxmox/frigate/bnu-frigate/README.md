@@ -344,6 +344,13 @@ VAAPI in three processes works: 2 publishers, 15 fps, unit memory ~410–435 MB 
 
 Still to observe: a night of real uplink holes against the watchdog's heal count.
 
+**One lens held for minutes while everything upstream looks alive** (2026-11-26): the fixed
+lens had 92 holes ≥ 30 s in three days, the PT lens none over 12 s. The feeder is not the cause
+and cannot cure it: the camera stops sending the VIDEO of that stream and keeps the audio, so
+go2rtc's producer never times out and every restarted feeder reads the same half-dead session.
+The cure is at the source — [`canteiro-relay-vigia`](../../../raspberry-pi/ara-raspberrypi/canteiro-relay-vigia/README.md)
+on ara-raspberrypi2 reopens the camera session after 15 s of audio-only.
+
 ## canteiro-mosaico: últimas detecções on the TV (2026-11-23)
 
 Pedido Eduardo 23/11/2026: the last three Frigate detections of each lens as small moving
