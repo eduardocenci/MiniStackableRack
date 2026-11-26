@@ -1,0 +1,16 @@
+# Arms Wake-on-LAN (magic packet) on the MiniPC's wired NIC at every boot.
+# The r8169 driver comes up with "Wake-on: d", so without this a shut-down MiniPC
+# cannot be woken from mia-raspberrypi (BIOS side is already on: AMD PBS -> Wake on PME).
+# Live copy: mia-proxmox:/etc/systemd/system/wol-nic0.service (systemctl enable --now).
+[Unit]
+Description=Arm Wake-on-LAN on nic0
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/ethtool -s nic0 wol g
+
+[Install]
+WantedBy=multi-user.target
