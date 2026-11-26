@@ -1,0 +1,20 @@
+# nut-upsd (mia) - NUT server (upsd :3493) for the mia rack nobreak, a CyberPower
+# CP1000PFCLCD on the Pi's USB. Read by: ups-monitor (this Pi, WhatsApp alerts +
+# globalnet card) and mia-nas-ds918plus (DSM "Synology UPS server" client).
+#
+# Authoritative copy: scripts/raspberry-pi/mia-raspberrypi/docker/nut-upsd/
+# Live copy:          mia-raspberrypi:~/nut-upsd/   (docker compose up -d --build)
+services:
+  nut-upsd:
+    build: .
+    image: nut-upsd:local
+    container_name: nut-upsd
+    network_mode: host               # :3493 on the LAN (NAS) and on the tailnet
+    restart: unless-stopped
+    init: true
+    volumes:
+      # the whole usbfs tree (not `devices:`), so a re-plugged UPS (new device number)
+      # is found again; the cgroup rule allows only USB device nodes.
+      - /dev/bus/usb:/dev/bus/usb
+    device_cgroup_rules:
+      - "c 189:* rmw"                # /dev/bus/usb/* (usb_device major 189)

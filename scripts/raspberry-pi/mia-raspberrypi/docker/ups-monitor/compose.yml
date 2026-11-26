@@ -1,0 +1,39 @@
+# ups-monitor (mia) — the mia rack nobreak (CyberPower CP1000PFCLCD) → WhatsApp (queda ·
+# bateria < 20 % · volta) + activation stats for globalnet (pedido Eduardo 26/11/2026).
+#
+# Authoritative copy: scripts/raspberry-pi/mia-raspberrypi/docker/ups-monitor/
+# Live copy:          mia-raspberrypi:~/ups-monitor/   (docker compose up -d --build)
+#
+# Reads the UPS from the nut-upsd container of this Pi (127.0.0.1:3493) - it needs no
+# device. Host network: WAHA is reached over the tailnet (bnu-proxmox:3001) and
+# globalnet reads http://mia-raspberrypi:8795. user 1000 = eduardocenci (owns
+# /var/lib/ups-monitor).
+services:
+  ups-monitor:
+    build: .
+    image: ups-monitor:local
+    container_name: ups-monitor
+    network_mode: host
+    user: "1000:1000"
+    restart: unless-stopped
+    init: true
+    # WAHA_URL / WAHA_KEY / WAHA_SESSION — chmod 600, NOT in git; a live copy of the
+    # root .env BNU_WAHA_API_KEY. See README "First install".
+    env_file: ups-monitor.env
+    environment:
+      TZ: America/New_York             # message clock (the Pi itself runs America/Manaus)
+      MODE: shadow                     # log | shadow (SmokeTests) | live — shadow until Eduardo picks the mia group
+      SITE_LABEL: MIA
+      ALERT_JID: ""                    # the mia group: not chosen yet (no MIA_WHATSAPP_GROUP_JID in .env)
+      TEST_JID: "120363410899542847@g.us"    # Casa SmokeTests (= SMOKETESTS_WHATSAPP_GROUP_JID): shadow + POST /api/test
+      UPS_DEV: ups@127.0.0.1:3493      # nut-upsd on this Pi
+      PORT: "8795"
+      STATE_DIR: /var/lib/ups-monitor
+      POLL_S: "1"                      # nut-upsd polls the UPS every 1 s (pollinterval); faster reads only repeat
+      ALERT_AFTER_S: "10"              # shorter transfers to battery are counted, not messaged
+      RESTORE_CONFIRM_S: "10"
+      LOW_BATTERY_PCT: "20"
+      INPUT_MIN_V: "80"                # 120 V grid; the UPS itself transfers below 88 V
+    volumes:
+      - /var/lib/ups-monitor:/var/lib/ups-monitor          # ups.db (episodes, outbox, samples)
+      - /usr/share/zoneinfo:/usr/share/zoneinfo:ro
