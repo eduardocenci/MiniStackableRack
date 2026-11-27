@@ -14,7 +14,7 @@ reach, pair, update and back them up.
 |---|---|---|---|
 | `senior-waha` | `devlikeapro/waha:noweb-2026.9.2` | `192.168.2.23:3000` (LAN) | running since 2026-10-29 |
 | `senior-postgres` | `postgres:17.10-alpine` | — (compose network only) | running, healthcheck `pg_isready` |
-| `senior-n8n` | `n8nio/n8n:2.43.7` | `192.168.2.23:5678` (LAN) | running since 2026-11-01, 6 workflows published |
+| `senior-n8n` | `n8nio/n8n:2.43.7` | `192.168.2.23:5678` (LAN) | running since 2026-11-01, 6 workflows published; workflows 7 and 8 (gap bridge) staged in the application repo on 2026-11-10, not deployed yet |
 | `senior-whisper` | `onerahmet/openai-whisper-asr-webservice:v1.10.0` | — | running since 2026-11-01 (faster-whisper `small`, int8, CPU) |
 | `senior-mcp` | `senior-acervo:local` | — | running since 2026-11-01 |
 | `senior-agente` | `senior-acervo:local` | — | running since 2026-11-01 |
@@ -71,7 +71,8 @@ limit, half of it `senior-whisper` with the model loaded.
   `psql`, not a re-run of `/docker-entrypoint-initdb.d`.
 - `TZ: UTC` in this container; `senior-waha` runs in `America/Sao_Paulo`.
 - Also holds database **`n8n`** (n8n's own state). Migrations for an existing
-  `acervo_bot` are idempotent `psql -f` runs (`002_fase1.sql`).
+  `acervo_bot` are idempotent `psql -f` runs (`002_fase1.sql`,
+  `003_ponte_lacunas.sql`); `setup-senior.sh` runs them all.
 
 ### senior-n8n
 
@@ -82,7 +83,15 @@ limit, half of it `senior-whisper` with the model loaded.
   encrypted with it; without it they cannot be restored (it travels in the
   nightly backup).
 - Three credentials, created by `setup-senior.sh` from `.env`: Postgres
-  (`acervo_bot`), WAHA API key, and the webhook header.
+  (`acervo_bot`), WAHA API key, and the webhook header — plus a fourth,
+  `seniorGithubIssues` (header `Authorization: Bearer …`), only when
+  `MIA_SENIOR_GITHUB_ISSUES_TOKEN` is in `.env`. Workflow 7 (*Lacunas
+  sugeridas*: a suggested knowledge gap becomes a GitHub issue labelled
+  `lacuna-sugerida`) is imported but **not published** without it.
+- Workflow 8 (*Aviso de lacuna fechada*) is the only place where the bot
+  writes to a shareholder unprompted: one short notice when a gap they
+  raised is closed. Kill switches live in `parametros` (`aviso_lacuna`,
+  `ponte_lacunas`); see the application repo, `bot/README.md#lacunas`.
 - Workflows are imported from staged JSON and published with the CLI. In
   n8n 2.43, `n8n execute`/`publish:workflow` inside the running container
   need `-e N8N_RUNNERS_BROKER_PORT=5690` (the server holds 5679), and a
@@ -134,6 +143,7 @@ the values.
 | `MIA_SENIOR_POSTGRES_PASSWORD` | Postgres user `senior` | generated on the LXC by `setup-senior.sh` |
 | `MIA_SENIOR_N8N_ENCRYPTION_KEY` | n8n credential encryption | generated on the LXC by `setup-senior.sh` |
 | `MIA_SENIOR_WEBHOOK_TOKEN` | header `X-Senior-Token`, WAHA → n8n | generated on the LXC by `setup-senior.sh` |
+| `MIA_SENIOR_GITHUB_ISSUES_TOKEN` | n8n workflow 7: opens `lacuna-sugerida` issues in `eduardocenci/senior-sistemas` | created by Eduardo: fine-grained token, that repository only, **Issues: read and write** and nothing else; staged as `github.env` |
 | `MIA_SENIOR_ANTHROPIC_API_KEY` | `senior-agente` | created by Eduardo (own workspace, monthly limit); copied to `/opt/senior/.env` from the root `.env` on 2026-11-01 |
 
 The values generated on the LXC were created there, so if the two copies
@@ -155,11 +165,14 @@ Update the root `.env` in the same session.
    cannot chown to Windows uids):
    - `docker-compose.yml`, `setup-senior.sh`, `backup-senior.sh` (this folder);
    - from the application repo (kept outside this one): `001_esquema.sql`,
-     `002_fase1.sql`, `servicos/` (with `sistema.md`), `n8n/*.json`;
+     `002_fase1.sql`, `003_ponte_lacunas.sql`, `servicos/` (with
+     `sistema.md`), `n8n/*.json`;
    - `900_contatos_locais.sql`, written by hand **on the server only** (an
      empty file is fine);
    - optionally `anthropic.env`, the one `MIA_SENIOR_ANTHROPIC_API_KEY=` line
-     from the root `.env` (the script appends it and deletes the file).
+     from the root `.env` (the script appends it and deletes the file);
+   - optionally `github.env`, the one `MIA_SENIOR_GITHUB_ISSUES_TOKEN=` line
+     (same handling). Without it everything else works and workflow 7 waits.
 3. Run `setup-senior.sh` detached, because `devtool` cuts sessions after
    about two minutes:
 
