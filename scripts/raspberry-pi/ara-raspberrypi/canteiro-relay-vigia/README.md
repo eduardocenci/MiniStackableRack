@@ -101,6 +101,9 @@ Rollback: `sudo systemctl disable --now canteiro-relay-vigia` (the relay is unto
 
 ## Still open
 
+(The mosaic's substream fallback was seen against 4 real stalls on 2026-11-27 09:25–09:40 —
+table in the bnu-frigate README.)
+
 - Why the camera's encoder of one stream stalls, and whether a setting of the camera (bitrate,
   smart codec) avoids it. Not looked into: the camera is configured through the Mibo app.
 - The camera and this Pi are both on the Starlink Wi-Fi (`eth0` down). On 26/11 a ping to the

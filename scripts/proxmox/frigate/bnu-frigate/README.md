@@ -372,7 +372,19 @@ still describe the MAIN, so the hole counts stay comparable with before; the new
 
 **Provoked on 2026-11-27 09:08 BRT** (`kill -STOP` on the fixed lens' main feeder): held at
 5 s, substream on screen 13 s after the last main frame, `back on the main` 10 s after the
-restarted feeder delivered again; encoder never restarted. Tests of the pump side:
+restarted feeder delivered again; encoder never restarted.
+
+**First real stalls, same morning** (the camera itself, fixed lens' main):
+
+| Main without video (BRT) | For | Substream on screen after |
+|---|---|---|
+| 09:25:55 | 17 s | 11 s (feeder cold) |
+| 09:35:07 | 167 s | 11 s |
+| 09:38:16 | 72 s | 8 s (feeder still warm) |
+| 09:39:39 | 55 s | 8 s |
+
+311 s of main without video, ~38 s of held picture; `back on the main` 10 s after each
+return; encoder started once; the composer at ~8 % of a core. Tests of the pump side:
 `python -m pytest scripts/proxmox/frigate/bnu-frigate/test_canteiro_mosaico_sub.py -q`.
 Previous script on the LXC: `/usr/local/bin/canteiro-mosaico.py.bak-20261127`.
 
