@@ -45,6 +45,14 @@ reachable by bare name** (MagicDNS) with no VPN or port forwarding.
   the pattern.
 - `tailscale status` lists nodes and their `100.x` IPs. **A name resolving does
   not mean the device is up** — offline nodes still resolve.
+- **Exit nodes:** `bnu-raspberrypi` (since 2026-10-18;
+  `scripts/raspberry-pi/bnu-raspberrypi/tailscale-exit-node/`) and
+  `mia-homeassistant` (HA add-on). `tailscale set --advertise-exit-node` on
+  the device is not enough — there is no Tailscale API key in `.env`, so each
+  one is approved by hand in the admin console (Machines → ⋯ → *Edit route
+  settings*). Never switch **this** machine to an exit node from a Claude
+  session to test one — all its traffic, the session included, then depends
+  on it; test from a Linux node with `--exit-node-allow-lan-access`.
 - **Docker containers on the Pis do NOT automatically get MagicDNS.** Docker
   snapshots the host's `/etc/resolv.conf` when a container is *created*; after
   a Pi reboot `docker.service` starts the containers ~2 s **before** `tailscaled`
