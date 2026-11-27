@@ -21,7 +21,8 @@ go2rtc on bnu-raspberrypi
   │     └─ canteiro-mosaico.service in that LXC (VAAPI): both mains from Frigate's own go2rtc → H.264 2560×720 15 fps
   │           └─ publishes rtsp://10.1.1.123:8555/mosaico (canteiro-hls path `mosaico`) ─▶ /hls/mosaico → the /live page
   ├─ `canteiro_mosaico` ◀─ rtsp://127.0.0.1:8555/mosaico
-  └─ /api/stream.mp4?src=canteiro_mosaico → 55" TV (Cast)
+  ├─ /api/stream.mp4?src=canteiro_mosaico → 55" TV (Cast)
+  └─ /api/stream.mp4?src=canteiro_mosaico_tv (1920×540, ◀─ :8555/mosaico-tv) ─tailnet─▶ bg-proxmox :1984 forward → bg 50" TV (Cast, on demand, 2026-10-29)
 ```
 
 **The mosaic (2026-11-14, decisão Eduardo).** The two lenses were re-aimed
@@ -109,10 +110,8 @@ TV"), which casts the mosaic at 1920x540 as **HLS from canteiro-hls** —
 `application/x-mpegURL`, `extra: {stream_type: LIVE, media_info: {hlsVideoSegmentFormat: fmp4}}`
 — since 2026-11-14 (the HEVC passthrough `stream.mp4?src=canteiro` until then) — to the 55" Neo QLED (`media_player.qn85f1443`, Samsung's 2026
 native Google Cast receiver). The script lives only in the live HA config
-(`/config/scripts.yaml`, backup `.bak-20261114`). bg has the same cast in
-`/config/packages/canteiro_na_tv.yaml` (through its proxy
-`http://192.168.0.120:1984`; backup `/config/canteiro_na_tv.yaml.bak-20261114`;
-repo copy in the open PR MiniStackableRack#53). **Seen on the physical bnu TV on 2026-11-14 evening:** the 2560x720
+(`/config/scripts.yaml`, backup `.bak-20261114`); bg has the same cast — see
+the **bg twin** below. **Seen on the physical bnu TV on 2026-11-14 evening:** the 2560x720
 `src=canteiro_mosaico` leaves the Cast receiver `idle` (it never requests the
 URL) while the HEVC single lens and a 1920x540 H.264 mosaic play — hence
 `canteiro_mosaico_tv`, the second output of the composer in the Frigate LXC
@@ -154,6 +153,23 @@ until a manual `systemctl restart canteiro-mosaico`. bg still casts
 `stream.mp4?src=canteiro_mosaico_tv` through its go2rtc proxy (no HLS proxy
 there). Backup: `scripts.yaml.bak-20261114c`.
 The other findings below are from the HEVC stream.
+
+The **bg twin** (2026-10-29) is bg HA `script.canteiro_na_tv` → the
+living-room 50" QLED (`media_player.50_qled`), fetching
+`stream.mp4?src=canteiro_mosaico_tv` (since the evening of 2026-11-14;
+`src=canteiro_mosaico` earlier that day, `src=canteiro` before; live file
+`/config/packages/canteiro_na_tv.yaml`, backups
+`/config/canteiro_na_tv.yaml.bak-20261114` and `…bak-20261114b`, repo copy
+`scripts/proxmox/homeassistant/bg-homeassistant/packages/`) through the
+`canteiro-tv-proxy` forward on bg-proxmox (`http://192.168.0.120:1984/…`,
+see `scripts/proxmox/bg-proxmox/`) — one more reader of the shared
+producer, so ara's Starlink still carries one copy; bnu's WAN upload
+carries ~1.2 Mbps extra while it plays (through the bg forward: 3.0 MB in
+20 s, 2026-11-15). That is the progressive URL that rebuffers on the bnu
+TV: bg-proxmox forwards only go2rtc's `:1984`, not canteiro-hls `:8888`, so
+the HLS cast is not reachable from the bg LAN yet. Not yet seen on the bg
+TV with any mosaic URL. Its own start/stop links are `BG_TV_WEBHOOK_ON` /
+`BG_TV_WEBHOOK_OFF`.
 
 **One-click control (browser bookmarks).** Two HA webhook automations on
 bnu-homeassistant expose start/stop as plain-GET URLs (no login — the long
