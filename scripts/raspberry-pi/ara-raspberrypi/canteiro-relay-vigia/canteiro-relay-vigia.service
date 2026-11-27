@@ -3,7 +3,7 @@
 # Records (MODE=shadow) or reopens (MODE=live) a camera stream whose video stopped while its
 # audio goes on (see the .py docstring).
 [Unit]
-Description=canteiro-relay-vigia - reopen a canteiro camera stream that lost its video
+Description=canteiro-relay-vigia - long-term record of the canteiro camera streams (stalls, rates, link)
 After=docker.service network-online.target
 Wants=network-online.target
 
@@ -13,7 +13,9 @@ ExecStart=/usr/bin/python3 /usr/local/bin/canteiro-relay-vigia.py
 # README) - the unit records every stall; the picture is kept live by the mosaic's substream
 # fallback (scripts/proxmox/frigate/bnu-frigate/canteiro-mosaico.py).
 Environment=MODE=shadow
-DynamicUser=yes
+# eduardocenci (docker group): the Wi-Fi readings go through `docker exec starlink-names`.
+# Not DynamicUser: the record must be readable without sudo (/var/lib/canteiro-relay-vigia).
+User=eduardocenci
 RuntimeDirectory=canteiro-relay-vigia
 RuntimeDirectoryMode=0755
 StateDirectory=canteiro-relay-vigia

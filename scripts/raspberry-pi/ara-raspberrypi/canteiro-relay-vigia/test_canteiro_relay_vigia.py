@@ -73,3 +73,30 @@ def test_sub_stream_floor():
     assert ev == []
     ev, _, _ = run(p, [AUDIO] * 4, t=2000.0, b=10**7)
     assert [k for _, k, _ in ev][:2] == ["parou", "reabrir"]
+
+
+def test_minute_row():
+    m = vigia.Minute()
+    assert m.row() is None
+    for r in (150.0, 4.0, None):
+        m.add(r is not None, r)
+    assert m.row() == {"pronto": 0.67, "kB_s": 51.3, "min": 4.0, "max": 150.0}
+
+
+def test_parse_ping():
+    out = ("5 packets transmitted, 3 received, 40% packet loss, time 801ms\n"
+           "rtt min/avg/max/mdev = 1.983/8.625/39.548/11.763 ms")
+    assert vigia.parse_ping(out) == {"perda": 40, "rtt": 8.6, "rtt_max": 39.5}
+    lost = vigia.parse_ping("5 packets transmitted, 0 received, 100% packet loss, time 4100ms")
+    assert lost == {"perda": 100, "rtt": None, "rtt_max": None}
+
+
+def test_parse_wifi_keeps_the_camera_line():
+    raw = ('{"wifiGetClients":{"clients":[{"ipAddress":"192.168.1.9"},{"ipAddress":"192.168.1.56",'
+           '"signalStrength":-41,"snr":53,"iface":"RF_2GHZ","associatedTimeS":49428,'
+           '"txStats":{"rateMbps":72,"mcs":7,"throughputMbpsLast15sAvg":4.0992584},'
+           '"rxStats":{"rateMbps":86,"mcs":8}}]}}')
+    w = vigia.parse_wifi(raw, "192.168.1.56")
+    assert w == {"sinal_dBm": -41, "snr": 53, "banda": "2GHZ", "tx_Mbps": 72, "tx_mcs": 7,
+                 "rx_Mbps": 86, "rx_mcs": 8, "vazao_Mbps": 4.1, "associado_s": 49428}
+    assert vigia.parse_wifi(raw, "192.168.1.200") is None

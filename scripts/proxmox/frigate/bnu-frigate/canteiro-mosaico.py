@@ -88,6 +88,21 @@ journal lines ("no frame for 5 s" / "frames again after N s") keep describing th
 hole statistics stay comparable; "showing the substream" / "back on the main" are extra lines.
 No substream either (the camera is off the LAN) = the held, dimmed frame as before.
 
+EVENT RECORD (2026-11-27)
+The journal is rotated by size; what happened to the picture is also kept for good, one JSON
+line per event, in /var/lib/canteiro-mosaico/eventos-YYYY-MM.jsonl (EVENTS_DIR; "" = off):
+  inicio             the composer started
+  principal_parou    a lens' main without a frame for 5 s      (ultimo = time of its last frame)
+  principal_voltou   main frames again                         (s = how long it was without)
+  sub_entrou         the substream went on screen              (espera_s = since the last main frame)
+  sub_saiu           back on the main                          (s = how long the substream was shown)
+  sub_parou          the substream stopped while on screen
+  feeder_reiniciado  a main feeder up 30 s without a frame, or grey
+  encoder_reiniciado with the reason
+The other half of the same story is recorded at the source, on ara-raspberrypi2
+(canteiro-relay-vigia: byte rates, stalls, the camera's link); canteiro-camera-saude.py
+(scripts/raspberry-pi/ara-raspberrypi/canteiro-relay-vigia/) joins the two.
+
 State for humans: /run/canteiro-painel/mosaico-estado.json (rewritten every 5 s).
 MOSAICO_HW=0 swaps VAAPI for software decode + libx264 (tests away from the LXC).
 Stdlib only: it runs on the Frigate LXC's system python (3.11; written to run on 3.8+).
@@ -119,6 +134,7 @@ SRC_ALT = {"fixa": E("SRC_FIXA_ALT", "rtsp://127.0.0.1:8554/canteiro_fixa_sub"),
 ALT_AFTER_S = float(E("ALT_AFTER_S", "8"))    # main without a frame for this long -> substream
 ALT_BACK_S = float(E("ALT_BACK_S", "10"))     # main frames steady for this long -> back to it
 ALT_LINGER_S = float(E("ALT_LINGER_S", "120"))  # keep the substream feeder warm after going back
+EVENTS_DIR = E("EVENTS_DIR", "/var/lib/canteiro-mosaico")     # "" = no event record
 OUT = E("OUT_BASE", "rtsp://10.1.1.123:8555")          # + /mosaico and /mosaico-tv
 PAINEL_URL = E("PAINEL_URL", "http://10.1.1.123:8557/painel.png")
 RUN = E("RUN_DIR", "/run/canteiro-painel")
@@ -154,6 +170,20 @@ mono = time.monotonic
 
 def log(msg):
     print("canteiro-mosaico: " + msg, file=sys.stderr, flush=True)
+
+
+def event(kind, **data):
+    """One line in the month's event file; never lets a full disk or a typo stop the pump."""
+    if not EVENTS_DIR:
+        return
+    try:
+        t = time.time()
+        row = dict(ts=datetime.fromtimestamp(t, BRT).strftime("%Y-%m-%dT%H:%M:%S-0300"), ev=kind, **data)
+        name = "eventos-%s.jsonl" % datetime.fromtimestamp(t, BRT).strftime("%Y-%m")
+        with open(os.path.join(EVENTS_DIR, name), "a") as f:
+            f.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+    except Exception:
+        pass
 
 
 def grow_pipe(fd):
@@ -227,6 +257,9 @@ class Lens:
         self.alt_new = None            # when the last substream frame was shown
         self.alt_shows = 0
         self.main_run = None           # start of the current steady run of main frames
+        self.alt_since = 0.0
+        self.raw_seen = False          # the start-up "frames again" is not a hole
+        self.other = None              # the other lens (set in main): was it live when this stopped?
         self.main_last = None
 
     # ---- feeder side (own thread) -------------------------------------------------------
@@ -377,12 +410,16 @@ class Lens:
                 self.alt_on = False
                 self.alt_until = now + ALT_LINGER_S
                 log("lens %s: back on the main" % self.name)
+                event("sub_saiu", lente=self.name, s=round(now - self.alt_since))
                 self.set_label(" ")
             if not self.alt_on:
                 self.shown = self.raw
             if not self.live:
                 if self.since is not None:
                     log("lens %s: frames again after %.0f s" % (self.name, now - self.since))
+                    if self.raw_seen:
+                        event("principal_voltou", lente=self.name, s=round(now - self.since, 1))
+                self.raw_seen = True
                 self.live, self.since = True, now
                 if not self.alt_on:
                     self.set_label(" ")
@@ -391,6 +428,8 @@ class Lens:
             when = datetime.fromtimestamp(self.new_wall, BRT)
             log("lens %s: no frame for %.0f s - holding the last one (%s BRT)"
                 % (self.name, STALE_S, when.strftime("%H:%M:%S")))
+            event("principal_parou", lente=self.name, ultimo=when.strftime("%H:%M:%S"),
+                  outra_viva=self.other.live if self.other else None)
             if not self.alt_on:
                 self.hold(when)
         elif not self.live and self.raw is None and self.label == " " and now - self.since > 20:
@@ -407,6 +446,7 @@ class Lens:
                 and not self.q:
             self.started = now
             log("lens %s: feeder up 30 s without a frame - restarting it" % self.name)
+            event("feeder_reiniciado", lente=self.name, motivo="30 s sem quadro")
             self.kill_feeder()
         return self.shown
 
@@ -440,6 +480,8 @@ class Lens:
             if not self.alt_on:
                 self.alt_on = True
                 self.alt_shows += 1
+                self.alt_since = now
+                event("sub_entrou", lente=self.name, espera_s=round(now - self.new_mono, 1))
                 when = datetime.fromtimestamp(self.new_wall, BRT).strftime("%H:%M:%S")
                 log("lens %s: showing the substream (main without video since %s BRT)"
                     % (self.name, when))
@@ -447,6 +489,7 @@ class Lens:
         elif self.alt_on and now - self.alt_new > STALE_S:
             self.alt_on = False                          # the substream stopped too
             log("lens %s: the substream stopped too" % self.name)
+            event("sub_parou", lente=self.name, s=round(now - self.alt_since))
             if self.live:
                 self.shown = self.raw
                 self.set_label(" ")
@@ -656,6 +699,7 @@ class Encoder:
         if p is None:
             return
         log("encoder: %s - restarting it" % why)
+        event("encoder_reiniciado", motivo=why)
         if not reap(p, 5):
             self.stuck = p
         try:
@@ -781,6 +825,7 @@ def watch_loop(lenses, enc, panel, stats, thumbs):
                         log("lens %s: grey for 90 s (%.2f of its cells) - restarting its feeder"
                             % (l.name, s))
                         l.grey = 0
+                        event("feeder_reiniciado", lente=l.name, motivo="cinza %.2f" % s)
                         l.kill_feeder()
                     elif l.grey == 3:
                         log("lens %s: grey (%.2f) but %d restarts in the last hour - leaving it"
@@ -810,6 +855,13 @@ def watch_loop(lenses, enc, panel, stats, thumbs):
 def main():
     os.makedirs(RUN, exist_ok=True)
     lenses = [Lens(n, u) for n, u in SRC]
+    lenses[0].other, lenses[1].other = lenses[1], lenses[0]
+    if EVENTS_DIR:
+        try:
+            os.makedirs(EVENTS_DIR, exist_ok=True)
+        except OSError as e:
+            log("event record off: %s" % e)
+    event("inicio", hw=HW, sub={l.name: bool(l.alt_url) for l in lenses})
     panel = Panel()
     enc = Encoder(lenses)
     thumbs = Thumbs()

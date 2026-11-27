@@ -1,4 +1,4 @@
-# canteiro-relay-vigia — records every camera stream that lost its video (ara-raspberrypi2)
+# canteiro-relay-vigia — the long-term record of the canteiro camera's streams (ara-raspberrypi2)
 
 systemd unit on the Pi of the obra, next to the [`canteiro-relay`](../docker/canteiro-relay/README.md)
 container it watches. In production since 2026-11-26 19:32 BRT; `MODE=live` (reopening the
@@ -73,13 +73,59 @@ What a reopen costs downstream (measured 2026-11-26 19:33, by hand on `canteiro-
 `canteiro-hls` logged EOF and was `online` again 6 s later, feeding its card meanwhile; the
 mosaic did not log a hole.
 
+## The long-term record (2026-11-27)
+
+Why the camera's encoder stalls is not known, and the right fix may only be decided months
+from now. So both ends keep, for good, what happened and what led to it; nothing is deleted.
+
+**At the source — this unit** (`/var/lib/canteiro-relay-vigia/`, readable without sudo,
+~20 MB a month):
+
+| File | One line per | What is in it |
+|---|---|---|
+| `amostras-YYYY-MM.jsonl` | minute | per path: share of the minute `pronto` (ready), average / lowest / highest kB/s; `ping` (5 pings each to the camera and to the router every 30 s: `perda` %, `rtt`, `rtt_max`); `wifi` (the camera's line in the Starlink router's client list every 60 s: `sinal_dBm`, `snr`, `banda`, `tx_Mbps`/`tx_mcs`, `rx_Mbps`/`rx_mcs`, `vazao_Mbps`, `associado_s`) |
+| `eventos-YYYY-MM.jsonl` | event | `parou` (a ready path under its floor for 15 s — with `antes`: the 5 s rates of EVERY path over the 2 min before, and the `ping`/`wifi` of that moment) · `reabriria` / `reaberto` · `voltou` (`s` it took) · `fonte_caiu` / `fonte_voltou` (a path stopped / started being ready: the camera off its LAN, or a relay restart) · `camera_reassociou` (its Wi-Fi association time went back to zero) · `relay_fora` / `relay_voltou` · `inicio` (the unit started — a gap in the samples before it = it was down) |
+
+The Wi-Fi reading goes through `docker exec starlink-names grpcurl` (the unit runs as
+`eduardocenci`, docker group); without that container the `wifi` field is `null` and the rest
+goes on. `eventos.jsonl.migrado` is the single file of 26–27/11, already copied into the
+monthly one.
+
+**At the picture — `canteiro-mosaico`** (bnu Frigate LXC 105,
+`/var/lib/canteiro-mosaico/eventos-YYYY-MM.jsonl`): `principal_parou` / `principal_voltou` per
+lens, `sub_entrou` (`espera_s` = how long the picture stood still) / `sub_saiu` / `sub_parou`,
+`feeder_reiniciado`, `encoder_reiniciado`, `inicio`. `journal-ate-2026-11-27.txt.gz` there is
+the composer's journal from 14/11 to the day the record started.
+
+**Reading both — [`canteiro-camera-saude.py`](canteiro-camera-saude.py)**, from the dev PC:
+
+```bash
+python scripts/raspberry-pi/ara-raspberrypi/canteiro-relay-vigia/canteiro-camera-saude.py              # today
+python scripts/raspberry-pi/ara-raspberrypi/canteiro-relay-vigia/canteiro-camera-saude.py 2026-11-27 2026-12-03
+python scripts/raspberry-pi/ara-raspberrypi/canteiro-relay-vigia/canteiro-camera-saude.py --json > saude.json
+```
+
+Per day: stalls of each stream at the source (count, audio-only, total / median / p90 /
+longest, rate before, by hour), in how many of them every other stream dipped just before
+(a hiccup of the camera's link) and how long before, ping loss at that moment; the camera's
+link over the day (minutes with ping loss, Wi-Fi signal / SNR / PHY rate, re-associations);
+on the mosaic, main holes per lens, how often the substream came in and after how long, and
+the seconds the picture actually stood still; and whether every stall at the source had the
+substream on screen. Run from a clone without the repo-root `.env`, point `MSR_ROOT` at a
+checkout that has it (the mosaic's file is read through `devtool.py`).
+
+Questions the record is meant to settle: does the stall follow a link hiccup or come out of
+nothing; does it track bitrate (daylight, motion), PHY rate or time of day; do the substreams
+or the PT main ever stall; did a firmware or setting change make a difference (compare weeks).
+Not yet done: a second copy off the SD card / the LXC disk.
+
 ## State and events
 
 ```bash
-ssh eduardocenci@ara-raspberrypi2 "cat /run/canteiro-relay-vigia/estado.json; sudo tail -20 /var/lib/canteiro-relay-vigia/eventos.jsonl; journalctl -u canteiro-relay-vigia -n 20 --no-pager"
+ssh eduardocenci@ara-raspberrypi2 "cat /run/canteiro-relay-vigia/estado.json; tail -20 /var/lib/canteiro-relay-vigia/eventos-$(date +%Y-%m).jsonl; journalctl -u canteiro-relay-vigia -n 20 --no-pager"
 ```
 
-`eventos.jsonl`, one line per event: `parou` (rate during the stall, rate before, `so_audio`),
+Events, one line each: `parou` (rate during the stall, rate before, `so_audio`),
 `reaberto` (n-th reopen of this stall), `voltou` (`s` = seconds from the start of the stall to
 the video being back, `reaberturas`). The other side of the same hole is the composer's
 journal in the Frigate LXC (`lens fixa: frames again after N s`).

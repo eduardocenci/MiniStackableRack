@@ -388,6 +388,16 @@ return; encoder started once; the composer at ~8 % of a core. Tests of the pump 
 `python -m pytest scripts/proxmox/frigate/bnu-frigate/test_canteiro_mosaico_sub.py -q`.
 Previous script on the LXC: `/usr/local/bin/canteiro-mosaico.py.bak-20261127`.
 
+**Event record (2026-11-27 13:35 BRT).** The journal rotates; what happened to the picture is
+also kept for good in `/var/lib/canteiro-mosaico/eventos-YYYY-MM.jsonl` (`EVENTS_DIR`; "" =
+off), one JSON line per event: `inicio`, `principal_parou` (`ultimo` = time of the last frame,
+`outra_viva` = was the other lens live), `principal_voltou` (`s`), `sub_entrou` (`espera_s` =
+how long the picture stood still), `sub_saiu` (`s` on the substream), `sub_parou`,
+`feeder_reiniciado`, `encoder_reiniciado` (`motivo`). `journal-ate-2026-11-27.txt.gz` in the
+same folder is the journal from 14/11 until then. The other half — what the camera delivered,
+and its link — is recorded on ara-raspberrypi2; one report from both:
+[`canteiro-camera-saude.py`](../../../raspberry-pi/ara-raspberrypi/canteiro-relay-vigia/README.md).
+
 ## canteiro-mosaico: últimas detecções on the TV (2026-11-23)
 
 Pedido Eduardo 23/11/2026: the last three Frigate detections of each lens as small moving

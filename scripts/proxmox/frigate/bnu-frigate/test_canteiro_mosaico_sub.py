@@ -13,6 +13,8 @@ try:
 except ImportError:                      # Windows: the pump side under test never touches it
     sys.modules["fcntl"] = types.ModuleType("fcntl")
 os.environ["RUN_DIR"] = tempfile.mkdtemp(prefix="mosaico-test-")
+os.environ["EVENTS_DIR"] = os.path.join(os.environ["RUN_DIR"], "ev")
+os.makedirs(os.environ["EVENTS_DIR"])
 spec = importlib.util.spec_from_file_location(
     "mosaico", os.path.join(os.path.dirname(__file__), "canteiro-mosaico.py"))
 m = importlib.util.module_from_spec(spec)
@@ -105,3 +107,16 @@ def test_fallback_off_without_url():
     s.run(3, main=200)
     s.run(30, main=None, sub=90)
     assert not s.l.alt_want and s.label().startswith("SEM SINAL")
+
+
+def test_events_are_recorded():
+    import glob
+    import json
+    s = Sim()
+    s.run(3, main=200)
+    s.run(12, main=None, sub=90)
+    s.run(12, main=200, sub=90)
+    rows = [json.loads(x) for f in glob.glob(os.path.join(m.EVENTS_DIR, "eventos-*.jsonl")) for x in open(f)]
+    mine = [r for r in rows if r.get("lente") == "fixa"][-4:]
+    assert [r["ev"] for r in mine] == ["principal_parou", "sub_entrou", "principal_voltou", "sub_saiu"]
+    assert 8 <= mine[1]["espera_s"] <= 9 and 11 <= mine[2]["s"] <= 13
