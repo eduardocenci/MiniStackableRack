@@ -687,8 +687,10 @@ def _points(fid):
 
 
 def _history(icao_a, icao_b, exclude_fid, before_ts=None):
-    """Previous flights between two airports (both directions), newest first,
-    each with its track points."""
+    """Previous flights from `icao_a` to `icao_b`, newest first, each with its
+    track points. The return legs (b→a, "volta") are only a fallback: as soon
+    as one same-direction flight exists they are left out, because they
+    clutter the comparison (decisão Eduardo 20/11/2026)."""
     if not icao_a or not icao_b:
         return []
     rows = _rows("SELECT * FROM flights WHERE fr24_id != ? AND dep_ts < ? AND"
@@ -696,7 +698,9 @@ def _history(icao_a, icao_b, exclude_fid, before_ts=None):
                  (exclude_fid or "", before_ts or 4e9, icao_a, icao_b, icao_b, icao_a))
     for r in rows:
         r["pts"] = _points(r["fr24_id"])
-    return [r for r in rows if len(r["pts"]) > 5]
+    rows = [r for r in rows if len(r["pts"]) > 5]
+    same = [r for r in rows if r["o_icao"] == icao_a]
+    return same or rows
 
 
 def _metar_at(icao, lat, lon, at_ts):
