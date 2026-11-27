@@ -57,6 +57,12 @@ credential mirror (listed in `REMOTE_ACCESS.md` §5).
 
 ## Troubleshooting
 
+- One lens "SEM SINAL" on the mosaic for minutes while the other is live and Frigate shows
+  signal → the camera stopped sending the VIDEO of that stream and kept its audio, so nothing
+  times out. [`canteiro-relay-vigia`](../../canteiro-relay-vigia/README.md) (systemd unit on
+  this Pi, 2026-11-26) reads this relay's API (`127.0.0.1:9997`) and lists every such stall in
+  its `eventos.jsonl`; reopening the session does not cure it (2026-11-27), so the mosaic
+  shows the lens' substream until the main is back.
 - `401` in the journal → wrong/missing chave de acesso (factory sticker key,
   not the app-changed one; reset the camera if the sticker key was rotated).
 - `403 Forbidden` after 401s → the camera's anti-bruteforce lockout; stop

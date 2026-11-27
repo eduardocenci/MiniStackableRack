@@ -344,6 +344,60 @@ VAAPI in three processes works: 2 publishers, 15 fps, unit memory ~410–435 MB 
 
 Still to observe: a night of real uplink holes against the watchdog's heal count.
 
+### Substream fallback — one lens without video for minutes (2026-11-27)
+
+**The problem.** The fixed lens stood "SEM SINAL" for 0.5–6 min at a time while the PT lens,
+Frigate and every log were fine: 92 holes ≥ 30 s in three days, against none over 12 s of the
+PT lens. The camera stops sending the VIDEO of one stream (the fixed lens' main, by day) and
+keeps its audio, so go2rtc's producer never times out and every restarted feeder reads the
+same half-dead session. Reopening the camera session from the relay does not bring the video
+back either (tried 2026-11-27, 12 real stalls —
+[`canteiro-relay-vigia`](../../../raspberry-pi/ara-raspberrypi/canteiro-relay-vigia/README.md),
+which now only records them). The substream of the same lens goes on all the while.
+
+**What the composer does.** A lens whose main has had no frame for 8 s (`ALT_AFTER_S`) gets a
+second feeder on its substream (`SRC_FIXA_ALT` / `SRC_PT_ALT`, default Frigate's go2rtc
+`canteiro_fixa_sub` / `canteiro_sub`; software decode; 640×480 stretched to 1280×720, the same
+field of view) and shows it under the label **"BAIXA RESOLUÇÃO · desde HH:MM:SS"** (time of the
+last main frame) until the main has delivered frames steadily for 10 s (`ALT_BACK_S` — a 6 s
+"sem sinal" card of a reconnect does not end it). The substream feeder stays up 2 min more
+(`ALT_LINGER_S`; the holes come in clusters) and is then stopped. No substream either (camera
+off the LAN) = the held, dimmed frame and "SEM SINAL" as before. `SRC_FIXA_ALT=""` turns it off.
+
+`live`, `last_frame_age_s` and the journal lines `no frame for 5 s` / `frames again after N s`
+still describe the MAIN, so the hole counts stay comparable with before; the new lines are
+`lens fixa: showing the substream (main without video since HH:MM:SS BRT)` and
+`lens fixa: back on the main`, and the state file has `fonte` (`principal` | `sub`),
+`sub_feeder_up`, `sub_vezes` per lens.
+
+**Provoked on 2026-11-27 09:08 BRT** (`kill -STOP` on the fixed lens' main feeder): held at
+5 s, substream on screen 13 s after the last main frame, `back on the main` 10 s after the
+restarted feeder delivered again; encoder never restarted.
+
+**First real stalls, same morning** (the camera itself, fixed lens' main):
+
+| Main without video (BRT) | For | Substream on screen after |
+|---|---|---|
+| 09:25:55 | 17 s | 11 s (feeder cold) |
+| 09:35:07 | 167 s | 11 s |
+| 09:38:16 | 72 s | 8 s (feeder still warm) |
+| 09:39:39 | 55 s | 8 s |
+
+311 s of main without video, ~38 s of held picture; `back on the main` 10 s after each
+return; encoder started once; the composer at ~8 % of a core. Tests of the pump side:
+`python -m pytest scripts/proxmox/frigate/bnu-frigate/test_canteiro_mosaico_sub.py -q`.
+Previous script on the LXC: `/usr/local/bin/canteiro-mosaico.py.bak-20261127`.
+
+**Event record (2026-11-27 13:35 BRT).** The journal rotates; what happened to the picture is
+also kept for good in `/var/lib/canteiro-mosaico/eventos-YYYY-MM.jsonl` (`EVENTS_DIR`; "" =
+off), one JSON line per event: `inicio`, `principal_parou` (`ultimo` = time of the last frame,
+`outra_viva` = was the other lens live), `principal_voltou` (`s`), `sub_entrou` (`espera_s` =
+how long the picture stood still), `sub_saiu` (`s` on the substream), `sub_parou`,
+`feeder_reiniciado`, `encoder_reiniciado` (`motivo`). `journal-ate-2026-11-27.txt.gz` in the
+same folder is the journal from 14/11 until then. The other half — what the camera delivered,
+and its link — is recorded on ara-raspberrypi2; one report from both:
+[`canteiro-camera-saude.py`](../../../raspberry-pi/ara-raspberrypi/canteiro-relay-vigia/README.md).
+
 ## canteiro-mosaico: últimas detecções on the TV (2026-11-23)
 
 Pedido Eduardo 23/11/2026: the last three Frigate detections of each lens as small moving
