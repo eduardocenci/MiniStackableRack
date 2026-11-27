@@ -506,7 +506,16 @@ them at night.
   dashboard or a dead Power row on globalnet means the entity ids moved, not
   the strip: compare `unique_id` endpoints in `config/entity_registry/list`);
   names + dashboard in `scripts/proxmox/homeassistant/mia-homeassistant/dashboards/`
-  (`power_panel.py`, README → Power). Tapo
+  (`power_panel.py`, README → Power). Outlets since 2026-11-26 (Eduardo; the
+  2026-09-04 list had rack/NAS/Pi one outlet too high): 1 Verizon 5G Home ·
+  2 Milwaukee battery charger ·
+  3 rack strip (MiniPC, network devices, KVM) ·
+  4 NAS · 5 Anker USB power supply (Pi, monitor) · 6 empty.
+  The strip is fed by the mia nobreak (CyberPower, `nut-upsd` on mia-raspberrypi);
+  the NAS is a NUT client of it — DSM UPS settings are read/set as root with
+  `synowebapi --exec api=SYNO.Core.ExternalDevice.UPS version=1 method=get|set`
+  (root on the NAS = password piped to `sudo -S` over paramiko; see
+  `scripts/raspberry-pi/mia-raspberrypi/docker/nut-upsd/README.md`). Tapo
   Matter devices pair over **Bluetooth** (BLE name `P316M_xxxxxxxx`, seen from
   mia-raspberrypi's `bluetoothctl scan on`), they do NOT open a Wi-Fi setup
   AP, so the python-kasa/`pi_ap.sh` route does not apply — commissioned from

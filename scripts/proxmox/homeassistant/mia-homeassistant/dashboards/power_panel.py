@@ -31,14 +31,16 @@ DASHBOARD = dict(url_path=URL_PATH, title="Power", icon="mdi:power-plug-outline"
 # Tapo P316M "Power Strip Rack": Matter endpoint N (1-6) = outlet N — its switch AND its meters.
 # (Commissioned 2026-09-04 with the meters on endpoints 7-12; on 2026-09-05 the strip re-presented
 # them on 1-6, HA created new *_1..6 sensors and the *_7..12 ones went unavailable for good —
-# fixed here 2026-11-24.) Outlet names from Eduardo, 2026-09-04.
+# fixed here 2026-11-24.) Outlet names from Eduardo, 2026-11-26 - the 2026-09-04 list had the
+# rack, the NAS and the Pi one outlet too high (4/5/6); the meters agree with the new one
+# (3 ~49 W, 4 ~44 W, 5 ~22 W, 6 reads 0 W). The strip is fed by the mia nobreak.
 P316M_OUTLETS = {
     1: "Verizon 5G Home",
-    2: "Outlet 2 (empty)",
-    3: "Outlet 3 (empty)",
-    4: "Rack (excl. NAS & Pi)",
-    5: "NAS",
-    6: "Raspberry Pi + Monitor",
+    2: "Milwaukee Battery Charger",
+    3: "Rack (MiniPC, network, KVM)",
+    4: "NAS",
+    5: "Anker USB Power Supply (Pi, Monitor)",
+    6: "Outlet 6 (empty)",
 }
 METERS = {"power": "power", "energy": "energy", "energy_exported": "energy exported",
           "effective_voltage": "voltage", "effective_current": "current"}

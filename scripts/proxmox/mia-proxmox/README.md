@@ -48,3 +48,21 @@ stream). pyatv lives in `/opt/pyatv-venv`. Revisit when pyatv gains AirPlay 2
 video. The Apple TV ("Entertainment Room", 192.168.2.80, pairing mandatory)
 remains paired with mia HA; its AirPlay credential lives in HA's
 `core.config_entries` and is read at runtime by the script, never stored.
+
+## Wake-on-LAN (power-off rule for the nobreak)
+
+The MiniPC can be shut down cleanly and woken over the network — tested 26/11/2026
+from mia-raspberrypi:
+
+| | |
+|---|---|
+| BIOS (AMI Aptio) | Advanced → AMD PBS → **Wake on PME** `Enabled`; Advanced → AMD CBS → FCH Common Options → Ac Power Loss Options → **Ac Loss Control** `Always On` (both were already set) |
+| Linux | the NIC (`nic0`, r8169, MAC `b0:41:6f:07:e3:42`) boots with `Wake-on: d`; `systemd/wol-nic0.service` (live at `/etc/systemd/system/`, enabled) sets `wol g` at every boot |
+| Shutdown | `shutdown -h now` → guests 100/101/102 stopped in 31 s, host log closed 40 s after the command (guest timeout 180 s each) |
+| Wake | magic packet to `192.168.2.255` ports 9/7 sent from the Pi with the host off for 45 s → answering ping 37 s later; the three guests (`onboot: 1`) came up by themselves |
+
+Check: `ethtool nic0 | grep Wake-on` → `g`. Not built yet: the NUT client that shuts
+the host down on low battery, and the Pi-side wake when the grid is back.
+
+Seen on the same day: the host clock ran ~75 s behind the Pi and `chronyc sources`
+listed no source (`System clock synchronized: no`) — not fixed.

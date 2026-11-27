@@ -22,7 +22,7 @@ the battery is below 20 %, when the grid is back):
 Messages go through a persistent outbox (SQLite), oldest first, retried with backoff
 for up to 24 h. Every text carries its own clock time, so a message delayed by a
 dead uplink still reads right. MODE: log (no sends) | shadow (SmokeTests,
-"[sombra]") | live (ALERT_JID = the mia group, not chosen yet).
+"[sombra]") | live (ALERT_JID = Casa Miami).
 
 HTTP (PORT 8795): /health (poller alive) · /health/ups (UPS answered < 30 s ago) ·
 /api/status · /api/stats (activations 24h/7d/30d/all, read by globalnet) ·

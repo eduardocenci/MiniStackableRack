@@ -2,13 +2,14 @@
 
 Same service as the bnu and ara `ups-monitor` (same rule, outbox and HTTP API on
 `:8795`), for the mia rack nobreak — a **CyberPower CP1000PFCLCD** connected to
-`mia-raspberrypi` on 26/11/2026 (pedido Eduardo). What differs: it does not touch the
+`mia-raspberrypi` on 26/11/2026 (pedido Eduardo). The nobreak feeds a TP-Link Tapo
+P316M power strip, and through it essentially every device of the site. What differs: it does not touch the
 USB; it reads the UPS from the **`nut-upsd`** container of the same Pi
 (`../nut-upsd/`, `127.0.0.1:3493`) with `nut_client.py`, read-only (`LIST VAR`).
 
 | | |
 |---|---|
-| Mode | **`shadow`** since 26/11/2026 — messages go to Casa SmokeTests with `[sombra]`. `live` needs the mia group JID in `ALERT_JID` (there is no `MIA_WHATSAPP_GROUP_JID` in `.env` yet) and Eduardo's OK |
+| Mode | **`live`** since 26/11/2026 — messages go to the WhatsApp group **Casa Miami** (`MIA_WHATSAPP_GROUP_JID`, created by Eduardo that day). It ran in `shadow` (Casa SmokeTests, `[sombra]`) for its first hours |
 | Poll | `POLL_S=1` (nut-upsd itself polls the UPS every 1 s) |
 | Readings | input/output V, load % and estimated watts (`load_w` = % × 600 W), battery %, runtime (the UPS's estimate), battery V. No temperature |
 | Outage | `ups.status` contains `OB` and no self-test is running, or input < 80 V |
