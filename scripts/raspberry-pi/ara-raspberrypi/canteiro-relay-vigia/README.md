@@ -1,7 +1,25 @@
-# canteiro-relay-vigia — reopens a camera stream that lost its video (ara-raspberrypi2)
+# canteiro-relay-vigia — records every camera stream that lost its video (ara-raspberrypi2)
 
 systemd unit on the Pi of the obra, next to the [`canteiro-relay`](../docker/canteiro-relay/README.md)
-container it watches. In production since 2026-11-26 19:32 BRT, `MODE=live`.
+container it watches. In production since 2026-11-26 19:32 BRT; `MODE=live` (reopening the
+camera session) until 2026-11-27 09:04, **`MODE=shadow` since then** — reopening turned out not
+to cure the stall (below), so the unit is the RECORD of the failure and the picture is kept
+live elsewhere: the mosaic shows the lens' substream while its main has no video
+([`canteiro-mosaico`](../../../proxmox/frigate/bnu-frigate/README.md), 2026-11-27).
+
+## Result of the first morning (2026-11-27, `MODE=live`)
+
+12 real stalls between 04:52 and 08:54 BRT, all on `canteiro-alt` (fixed lens, main):
+
+- **It is the camera.** Each one was 3.8–4.3 kB/s at the relay's input — the audio alone.
+- **Reopening does not cure it.** 5 of the 12 needed 2–5 reopens: the new session came up
+  audio-only too. Video back after 40–200 s, median 62 s — the day before, without this unit,
+  the median hole was 50 s. The stall is in the camera's encoder of that stream, not in the
+  RTSP session; it ends by itself.
+- Each reopen also put 6 s of the bnu "sem sinal" card into the feed, for nothing.
+- Camera Wi-Fi at 09:10: 2.4 GHz, signal −41 dBm, SNR 53, 72–86 Mbps PHY for ~4.1 Mbps sent —
+  a strong link; weak signal is not the trigger. It re-associated at 19:26 the night before
+  (`associatedTimeS`), which is the "camera off the LAN" event seen at the relay.
 
 ## The problem (diagnosed 2026-11-26)
 
@@ -34,7 +52,7 @@ each period amount to (≈ 480 s and 55 s at ~160 kB/s). That points at the came
 channel 2 main), not at the relay; `eventos.jsonl` below records the rate the relay received
 at every stall, which settles it with the first real one.
 
-## What it does
+## What it does (in `MODE=live`; `shadow` logs `reabriria` instead of reopening)
 
 [`canteiro-relay-vigia.py`](canteiro-relay-vigia.py) (stdlib Python; rationale in its
 docstring). Every 5 s it reads the relay's API (`127.0.0.1:9997/v3/paths/list`) and takes the
@@ -58,7 +76,7 @@ mosaic did not log a hole.
 ## State and events
 
 ```bash
-ssh eduardocenci@ara-raspberrypi2 "cat /run/canteiro-relay-vigia/estado.json; tail -20 /var/lib/canteiro-relay-vigia/eventos.jsonl; journalctl -u canteiro-relay-vigia -n 20 --no-pager"
+ssh eduardocenci@ara-raspberrypi2 "cat /run/canteiro-relay-vigia/estado.json; sudo tail -20 /var/lib/canteiro-relay-vigia/eventos.jsonl; journalctl -u canteiro-relay-vigia -n 20 --no-pager"
 ```
 
 `eventos.jsonl`, one line per event: `parou` (rate during the stall, rate before, `so_audio`),
@@ -83,8 +101,9 @@ Rollback: `sudo systemctl disable --now canteiro-relay-vigia` (the relay is unto
 
 ## Still open
 
-- Not yet seen against a real stall (installed at night; the long ones happen by day).
+- Why the camera's encoder of one stream stalls, and whether a setting of the camera (bitrate,
+  smart codec) avoids it. Not looked into: the camera is configured through the Mibo app.
 - The camera and this Pi are both on the Starlink Wi-Fi (`eth0` down). On 26/11 a ping to the
   camera lost 60 % for some seconds with the router at 0 %, and the camera left the LAN
-  altogether three times (15:47, 17:39, 19:26). The watchdog treats the symptom; the trigger
-  is that link.
+  altogether three times (15:47, 17:39, 19:26) — with a strong signal (above), so interference
+  on 2.4 GHz or the camera's own Wi-Fi stack, not distance.

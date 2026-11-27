@@ -74,6 +74,20 @@ x=0, three at x=640) over 96 rows of mask (235 where there is a thumbnail, 16 el
 encoder cuts the two groups, uses the mask as alpha and overlays them on the TV branch - so an
 empty slot, an unreachable panel (5 min) or MINIATURAS_URL="" is simply nothing drawn.
 
+SUBSTREAM FALLBACK (2026-11-27)
+The iM9 stops sending the VIDEO of one stream - nearly always the main of the fixed lens, by
+day - for 0.5 to 6 min and keeps its audio, so the session never times out anywhere (92 holes
+>= 30 s of the fixed lens in three days against none over 12 s of the PT lens). Reopening the
+camera session does not bring the video back (tried on 2026-11-27 from the relay: the new
+session is audio-only too); the substream of the same lens goes on. So a lens whose main has
+had no frame for 8 s gets a second feeder on its substream (software decode, 640x480 stretched
+to 1280x720 - the same field of view) and shows it, labelled "BAIXA RESOLUÇÃO · desde
+HH:MM:SS" (the time of the last main frame), until the main has delivered frames steadily for 10 s. The substream
+feeder stays up 2 min more (the holes come in clusters) and is then stopped. `live` and the
+journal lines ("no frame for 5 s" / "frames again after N s") keep describing the MAIN, so the
+hole statistics stay comparable; "showing the substream" / "back on the main" are extra lines.
+No substream either (the camera is off the LAN) = the held, dimmed frame as before.
+
 State for humans: /run/canteiro-painel/mosaico-estado.json (rewritten every 5 s).
 MOSAICO_HW=0 swaps VAAPI for software decode + libx264 (tests away from the LXC).
 Stdlib only: it runs on the Frigate LXC's system python (3.11; written to run on 3.8+).
@@ -98,6 +112,13 @@ HW = E("MOSAICO_HW", "1") != "0"
 DRI = E("MOSAICO_DRI", "/dev/dri/renderD128")
 SRC = [("fixa", E("SRC_FIXA", "rtsp://127.0.0.1:8554/canteiro_fixa")),
        ("pt", E("SRC_PT", "rtsp://127.0.0.1:8554/canteiro"))]
+# the same lens' substream (640x480, the same picture squeezed to 4:3): shown, stretched back to
+# 16:9, while the main has no video - see SUBSTREAM FALLBACK in the docstring. "" = off.
+SRC_ALT = {"fixa": E("SRC_FIXA_ALT", "rtsp://127.0.0.1:8554/canteiro_fixa_sub"),
+           "pt": E("SRC_PT_ALT", "rtsp://127.0.0.1:8554/canteiro_sub")}
+ALT_AFTER_S = float(E("ALT_AFTER_S", "8"))    # main without a frame for this long -> substream
+ALT_BACK_S = float(E("ALT_BACK_S", "10"))     # main frames steady for this long -> back to it
+ALT_LINGER_S = float(E("ALT_LINGER_S", "120"))  # keep the substream feeder warm after going back
 OUT = E("OUT_BASE", "rtsp://10.1.1.123:8555")          # + /mosaico and /mosaico-tv
 PAINEL_URL = E("PAINEL_URL", "http://10.1.1.123:8557/painel.png")
 RUN = E("RUN_DIR", "/run/canteiro-painel")
@@ -196,6 +217,17 @@ class Lens:
         self.label = None
         self.label_path = os.path.join(RUN, "sem-sinal-%s.txt" % name)
         self.set_label(" ")
+        # substream fallback
+        self.alt_url = SRC_ALT.get(name) or ""
+        self.altq = collections.deque()
+        self.alt_proc = None
+        self.alt_want = False          # the alt feeder should be running
+        self.alt_until = 0.0           # ...at least until this instant (linger)
+        self.alt_on = False            # the substream is what is being shown
+        self.alt_new = None            # when the last substream frame was shown
+        self.alt_shows = 0
+        self.main_run = None           # start of the current steady run of main frames
+        self.main_last = None
 
     # ---- feeder side (own thread) -------------------------------------------------------
     def cmd(self):
@@ -251,8 +283,60 @@ class Lens:
             self.restarts += 1
             STOP.wait(3)
 
+    def alt_cmd(self):
+        return [FFMPEG, "-hide_banner", "-loglevel", E("FEEDER_LOGLEVEL", "error"), "-nostdin",
+                "-rtsp_transport", "tcp", SRC_TIMEOUT_OPT, str(SRC_TIMEOUT_S * 1000000),
+                "-analyzeduration", "1000000", "-i", self.alt_url, "-an",
+                "-vf", "fps=%d,scale=%d:%d" % (FPS, W, H), "-pix_fmt", "yuv420p",
+                "-f", "rawvideo", "pipe:1"]
+
+    def alt_loop(self):
+        """The substream feeder: runs only while the pump wants it (software decode, no GPU)."""
+        while not STOP.is_set():
+            if not self.alt_want:
+                STOP.wait(0.5)
+                continue
+            try:
+                p = subprocess.Popen(self.alt_cmd(), stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.PIPE, bufsize=0)
+            except OSError as e:
+                log("lens %s: cannot start the substream feeder: %s" % (self.name, e))
+                STOP.wait(10)
+                continue
+            grow_pipe(p.stdout.fileno())
+            self.alt_proc = p
+            while self.alt_want:
+                buf = bytearray(FRAME)
+                mv = memoryview(buf)
+                off = 0
+                while off < FRAME:
+                    n = p.stdout.readinto(mv[off:])
+                    if not n:
+                        break
+                    off += n
+                if off < FRAME:
+                    break
+                with self.lock:
+                    self.altq.append(buf)
+                    while len(self.altq) > Q_HIGH:       # always the newest: no backlog to play
+                        self.altq.popleft()
+            self.alt_proc = None
+            reap(p)
+            with self.lock:
+                self.altq.clear()
+            STOP.wait(2)
+
     def kill_feeder(self):
         p = self.proc
+        if p is not None:
+            try:
+                p.kill()
+            except OSError:
+                pass
+
+    def kill_alt(self):
+        self.alt_want = False
+        p = self.alt_proc
         if p is not None:
             try:
                 p.kill()
@@ -285,22 +369,30 @@ class Lens:
             buf, wall = item
             mv = memoryview(buf)
             self.raw = (mv[:YS], mv[YS:YS + CS], mv[YS + CS:])
-            self.shown = self.raw
+            if self.main_last is None or now - self.main_last > 1.0:
+                self.main_run = now                      # a new steady run of main frames
+            self.main_last = now
             self.new_mono, self.new_wall = now, wall
+            if self.alt_on and now - self.main_run >= ALT_BACK_S:
+                self.alt_on = False
+                self.alt_until = now + ALT_LINGER_S
+                log("lens %s: back on the main" % self.name)
+                self.set_label(" ")
+            if not self.alt_on:
+                self.shown = self.raw
             if not self.live:
                 if self.since is not None:
                     log("lens %s: frames again after %.0f s" % (self.name, now - self.since))
                 self.live, self.since = True, now
-                self.set_label(" ")
+                if not self.alt_on:
+                    self.set_label(" ")
         elif self.live and now - self.new_mono > STALE_S:
             self.live, self.since = False, self.new_mono
-            y, u, v = self.raw
-            self.shown = (bytes(y).translate(DIM_Y), bytes(u).translate(DIM_C),
-                          bytes(v).translate(DIM_C))
             when = datetime.fromtimestamp(self.new_wall, BRT)
             log("lens %s: no frame for %.0f s - holding the last one (%s BRT)"
                 % (self.name, STALE_S, when.strftime("%H:%M:%S")))
-            self.set_label("SEM SINAL  ·  último quadro " + when.strftime("%H:%M:%S"))
+            if not self.alt_on:
+                self.hold(when)
         elif not self.live and self.raw is None and self.label == " " and now - self.since > 20:
             # (20 s, not STALE_S: an ordinary start waits up to a 4 s GOP for its first frame)
             self.set_label("SEM SINAL")
@@ -308,6 +400,7 @@ class Lens:
               and now - self.new_mono > 43200 and "/" not in self.label):
             when = datetime.fromtimestamp(self.new_wall, BRT)        # held for 12 h: add the date
             self.set_label("SEM SINAL  ·  último quadro " + when.strftime("%d/%m %H:%M:%S"))
+        self.tick_alt(now)
         # a feeder that is up but delivers nothing (hung decode): the RTSP timeout does not see it
         p = self.proc
         if p is not None and now - self.started > 30 and now - (self.new_mono or self.started) > 30 \
@@ -316,6 +409,49 @@ class Lens:
             log("lens %s: feeder up 30 s without a frame - restarting it" % self.name)
             self.kill_feeder()
         return self.shown
+
+    def hold(self, when):
+        y, u, v = self.raw
+        self.shown = (bytes(y).translate(DIM_Y), bytes(u).translate(DIM_C),
+                      bytes(v).translate(DIM_C))
+        self.set_label("SEM SINAL  ·  último quadro " + when.strftime("%H:%M:%S"))
+
+    def tick_alt(self, now):
+        """The substream while the main has no video (see SUBSTREAM FALLBACK in the docstring)."""
+        if not self.alt_url:
+            return
+        main_gone = (not self.live and self.raw is not None and self.new_mono is not None
+                     and now - self.new_mono > ALT_AFTER_S)
+        if main_gone:
+            self.alt_want = True
+            self.alt_until = now + ALT_LINGER_S
+        elif self.alt_want and not self.alt_on and now > self.alt_until:
+            self.kill_alt()
+        if not (main_gone or self.alt_on):
+            return
+        buf = None
+        with self.lock:
+            if self.altq:
+                buf = self.altq.popleft()
+        if buf is not None:
+            mv = memoryview(buf)
+            self.shown = (mv[:YS], mv[YS:YS + CS], mv[YS + CS:])
+            self.alt_new = now
+            if not self.alt_on:
+                self.alt_on = True
+                self.alt_shows += 1
+                when = datetime.fromtimestamp(self.new_wall, BRT).strftime("%H:%M:%S")
+                log("lens %s: showing the substream (main without video since %s BRT)"
+                    % (self.name, when))
+                self.set_label("BAIXA RESOLUÇÃO  ·  desde " + when)
+        elif self.alt_on and now - self.alt_new > STALE_S:
+            self.alt_on = False                          # the substream stopped too
+            log("lens %s: the substream stopped too" % self.name)
+            if self.live:
+                self.shown = self.raw
+                self.set_label(" ")
+            else:
+                self.hold(datetime.fromtimestamp(self.new_wall, BRT))
 
 
 class Panel:
@@ -661,6 +797,8 @@ def watch_loop(lenses, enc, panel, stats, thumbs):
                 "live": l.live, "queue": len(l.q), "feeder_up": l.proc is not None,
                 "feeder_exits": l.restarts, "stuck": l.stuck is not None,
                 "last_frame_age_s": None if l.new_mono is None else round(now - l.new_mono, 1),
+                "fonte": "sub" if l.alt_on else "principal", "sub_feeder_up": l.alt_proc is not None,
+                "sub_vezes": l.alt_shows,
                 "label": l.label.strip()} for l in lenses},
         }
         try:
@@ -683,6 +821,7 @@ def main():
     signal.signal(signal.SIGINT, stop)
 
     threads = [threading.Thread(target=l.feeder_loop, daemon=True) for l in lenses]
+    threads += [threading.Thread(target=l.alt_loop, daemon=True) for l in lenses if l.alt_url]
     threads.append(threading.Thread(target=panel.loop, daemon=True))
     threads.append(threading.Thread(target=watch_loop, args=(lenses, enc, panel, stats, thumbs), daemon=True))
     if MINIATURAS_URL:
@@ -713,6 +852,7 @@ def main():
         STOP.set()
         for l in lenses:
             l.kill_feeder()
+            l.kill_alt()
         if enc.proc is not None:
             reap(enc.proc, 3)
     return 0

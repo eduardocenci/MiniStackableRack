@@ -29,6 +29,16 @@ Guards: 40 s of grace after a reopen; at most 12 reopens per path per hour (beyo
 only logs); a path that is not `ready` is left to mediamtx's own retry; MODE=shadow logs what
 it would do and touches nothing.
 
+RESULT OF THE FIRST MORNING (2026-11-27, MODE=live, 12 real stalls 04:52-08:54 BRT)
+Every stall was the fixed lens' main at 3.8-4.3 kB/s - audio only, measured HERE, at the
+relay's input: it is the camera that stops the video. But reopening does not cure it: 5 of the
+12 needed 2 to 5 reopens (the new session came up audio-only as well) and the video was back
+after 40-200 s, median 62 s - no better than the 50 s median of the day before without this
+unit. The stall is inside the camera (the encoder of that stream), not in the session. Since
+2026-11-27 the unit runs MODE=shadow: it RECORDS every stall (`parou`, `reabriria`, `voltou`)
+and touches nothing; what keeps the picture live is the mosaic's substream fallback
+(scripts/proxmox/frigate/bnu-frigate/canteiro-mosaico.py). MODE=live stays available.
+
 State:  /run/canteiro-relay-vigia/estado.json (every tick)
 Events: /var/lib/canteiro-relay-vigia/eventos.jsonl - one line per stall (`parou`), reopen
         (`reaberto`) and return of the video (`voltou`, with the seconds it took).
@@ -41,7 +51,7 @@ import urllib.request
 
 E = os.environ.get
 API = E("API", "http://127.0.0.1:9997").rstrip("/")
-MODE = E("MODE", "live")                      # live | shadow
+MODE = E("MODE", "shadow")                    # shadow (records) | live (also reopens)
 TICK_S = float(E("TICK_S", "5"))
 STALL_S = float(E("STALL_S", "15"))           # under the floor for this long = video gone
 GRACE_S = float(E("GRACE_S", "40"))           # after a reopen, before judging the path again
